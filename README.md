@@ -1,117 +1,122 @@
-# Slack AI Bot
+# GemBot: Your Intelligent Slack Assistant
 
-A TypeScript-based Slack bot built with the Slack Bolt framework.
+GemBot is a powerful, AI-driven Slack bot built with TypeScript and the Slack Bolt framework. It integrates with Google Gemini for advanced language understanding and Vertex AI for image generation, along with various financial APIs to bring real-time data directly into your Slack workspace.
 
-## Features
+## Core Features
 
-- 🤖 Basic message handling
-- 📝 Slash commands
-- 👋 App mentions
-- 🔘 Interactive components
-- 🔒 Environment-based configuration
+-   **🤖 Conversational AI**: Mention the bot or use `!gem` in a thread to have a natural conversation. The bot maintains context within a thread.
+-   **🎨 Image Generation**: Create stunning images directly in Slack with `!image` powered by Google's Imagen 4 model.
+-   **📈 Comprehensive Market Data**: Get real-time stock/crypto quotes, charts, news, and fundamental data from Finnhub and Alpha Vantage.
+-   **Watchlist Management**: Track your stock portfolio with a personal watchlist.
+-   **⏰ Scheduled-actions**: Delivers a daily morning greeting with the latest market news.
+-   **🔒 Secure & Configurable**: Manages all API keys and secrets securely using environment variables.
 
 ## Prerequisites
 
-- Node.js (v16 or higher)
-- npm or yarn
-- A Slack workspace where you can install apps
+-   Node.js (v16 or higher)
+-   npm or yarn
+-   A Slack workspace where you can install apps
+-   Google Cloud account with a project set up
+-   API keys for:
+    -   Google Gemini
+    -   Finnhub
+    -   Alpha Vantage
 
 ## Setup
 
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/carmex/GemBot.git
+    cd GemBot
+    ```
 
-2. **Create a Slack app:**
-   - Go to [api.slack.com/apps](https://api.slack.com/apps)
-   - Click "Create New App" → "From scratch"
-   - Give your app a name and select your workspace
+2.  **Install Dependencies**
+    ```bash
+    npm install
+    ```
 
-3. **Configure your Slack app:**
-   - Go to "OAuth & Permissions" and add these scopes:
-     - `chat:write` - Send messages
-     - `app_mentions:read` - Read mentions
-     - `commands` - Add slash commands
-   - Install the app to your workspace
-   - Copy the "Bot User OAuth Token" (starts with `xoxb-`)
+3.  **Create a Slack App**
+    -   Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app "From scratch".
+    -   Go to **OAuth & Permissions** and add the following Bot Token Scopes:
+        -   `app_mentions:read`
+        -   `chat:write`
+        -   `commands`
+        -   `files:write`
+    -   Go to **Socket Mode** and enable it.
+    -   Go to **Basic Information**, scroll down to "App-Level Tokens", and generate a new token with the `connections:write` scope.
+    -   Install the app to your workspace.
 
-4. **Set up Socket Mode:**
-   - Go to "Basic Information" → "App-Level Tokens"
-   - Create a new token with `connections:write` scope
-   - Copy the token (starts with `xapp-`)
+4.  **Set up Google Cloud & APIs**
+    -   Go to the [Google Cloud Console](https://console.cloud.google.com/).
+    -   Enable the **Vertex AI API** for your project.
+    -   Create a **Service Account** with the `Vertex AI User` role.
+    -   Create a JSON key for this service account and download it.
+    -   Enable the **Gemini API**. You can get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-5. **Configure environment variables:**
-   ```bash
-   cp env.example .env
-   ```
-   Then edit `.env` with your tokens:
-   ```
-   SLACK_BOT_TOKEN=xoxb-your-bot-token-here
-   SLACK_SIGNING_SECRET=your-signing-secret-here
-   SLACK_APP_TOKEN=xapp-your-app-token-here
-   ```
+5.  **Configure Environment Variables**
+    -   Rename the `gcloud-credentials.json.example` file you downloaded to `gcloud-credentials.json` and place it in the root of the project.
+    -   Copy the example environment file:
+        ```bash
+        cp env.example .env
+        ```
+    -   Edit the `.env` file and fill in all the required tokens and API keys from the previous steps.
 
-6. **Add slash commands (optional):**
-   - Go to "Slash Commands" in your Slack app settings
-   - Create a new command `/ping` with description "Ping the bot"
+    ```dotenv
+    # Slack API credentials
+    SLACK_BOT_TOKEN=xoxb-your-bot-token
+    SLACK_SIGNING_SECRET=your-signing-secret-from-basic-info-page
+    SLACK_APP_TOKEN=xapp-your-app-token
+    
+    # Gemini API Key for !gem command
+    GEMINI_API_KEY=your-gemini-api-key
+    
+    # Google Cloud project details for !image command
+    GCLOUD_PROJECT=your-gcloud-project-id
+    GCLOUD_LOCATION=us-central1
+    GOOGLE_APPLICATION_CREDENTIALS=./gcp-credentials.json
+    
+    # Finnhub API Key for !q command
+    FINNHUB_API_KEY=your-finnhub-api-key
+    
+    # Alpha Vantage API Key for !q and !chart commands
+    ALPHA_VANTAGE_API_KEY=your-alpha-vantage-api-key
+    ```
 
 ## Development
 
-**Start in development mode:**
+**Start the bot:**
 ```bash
 npm run dev
 ```
-
-**Start with auto-reload:**
-```bash
-npm run watch
-```
-
-**Build for production:**
-```bash
-npm run build
-npm start
-```
+The bot will connect to Slack and be ready for commands.
 
 ## Available Commands
 
-- `npm run dev` - Start development server
-- `npm run watch` - Start with auto-reload
-- `npm run build` - Build TypeScript to JavaScript
-- `npm start` - Start production server
-- `npm run clean` - Clean build directory
+### AI & Fun
 
-## Project Structure
+-   `!gem <prompt>`: Starts a new threaded conversation with the Gemini AI.
+-   `@<BotName> <prompt>`: Mention the bot in an existing thread to have it join the conversation with context.
+-   `!image <prompt>`: Generates an image based on your text prompt using Imagen 4.
 
-```
-src/
-├── index.ts      # Main application entry point
-├── types.ts      # TypeScript type definitions
-└── ...
-```
+### Stocks & Crypto
 
-## Features
+-   `!q <TICKER...>`: Get a real-time stock quote.
+-   `!cq <TICKER...>`: Get a real-time crypto quote (e.g., `!cq BTC ETH`).
+-   `!chart <TICKER> [range]`: Generates a stock chart. Ranges: `1m`, `3m`, `6m`, `1y`, `5y`.
+-   `!stats <TICKER...>`: Get key statistics for a stock (Market Cap, 52-week high/low).
+-   `!earnings <TICKER>`: Get upcoming earnings dates.
+-   `!stocknews`: Fetches the latest general stock market news.
+-   `!cryptonews`: Fetches the latest cryptocurrency news.
 
-### Message Handling
-The bot responds to messages containing "hello" with a friendly greeting.
+### Watchlist
 
-### App Mentions
-When someone mentions the bot (`@your-bot-name`), it responds with a helpful message.
-
-### Slash Commands
-- `/ping` - Responds with "Pong!" and the user who sent it
-
-### Interactive Components
-The bot can handle button clicks and other interactive elements.
+-   `!watchlist`: View your current stock watchlist with P/L.
+-   `!watch <TICKER> [date] [price] [shares]`: Add a stock to your watchlist.
+-   `!unwatch <TICKER>`: Remove a stock from your watchlist.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
 
 ## License
 

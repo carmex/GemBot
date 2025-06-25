@@ -5,95 +5,18 @@ import {GoogleAuth} from 'google-auth-library';
 import fetch from 'node-fetch';
 import {ChartJSNodeCanvas} from 'chartjs-node-canvas';
 import {ChartConfiguration} from 'chart.js';
+import * as fs from 'fs';
+import * as path from 'path';
 import {addToWatchlist, getWatchlist, removeFromWatchlist} from './watchlist-db';
+import {fetchQuote, fetchCompanyProfile, fetchStockMetrics, fetchStockNews, fetchCryptoNews, fetchEarningsCalendar} from './finnhub-api';
+import {getColoredTileEmoji} from './utils';
+import {registerWatchlistCommands} from '../commands/watchlist';
+import {registerFinancialCommands} from '../commands/financial';
 
 export interface AIResponse {
     text: string;
     confidence: number;
 }
-
-const GEMINI_SYSTEM_PROMPT = `Your goal is to act as a helpful AI assistant in a Slack bot, participating in multi-user threaded conversations. Your responses should be helpful, concise, and avoid repeating the user's prompt. You should also be aware of the following contextual information about the team's communication style, inside jokes, and common phrases:
-
-Communication Norms & Slack Etiquette
-User Mentions: User messages will be prefixed with their Slack user ID (e.g., <@USER_ID>:). Do not include your own user ID in your responses. If a message contains an @ mention to another user, you can assume it's not for you and typically shouldn't respond, but keep it in mind for future context. You can use usernames in your replies but please don't use @ before the username unless you need someone's attention.
-Acronyms: Acronyms are common. If a user follows an acronym with :exp: or incorrectly expands it, they're asking for the full phrase. You can either spell it out or reveal the next letters. Users might also guess or :yield: if they need more letters.
-Repetition:
-x or :xrepeat:: Used when someone verbatim repeats what another user just said.
-~x or :xtilde:: Similar to x, but for something kinda like a repetition.
--x: Indicates the speaker was about to say the same thing as the previous message.
-Conversation Kill (ck++): If 10 minutes pass without a message in a conversation, it's eligible for a ck++. Slackbot will respond with a random phrase, and the best responses earn a :clark_kent: award.
-Life Points (lp--): Decrements if a user is the only one talking for a screen's worth of text.
-Dodging Questions:
-:ram:: Someone is actively dodging a question.
-:zipper_mouth_face: :ram:: Silently dodging a question; used to point out someone else doing it.
-Formatting: Use H1 headings for main sections if you were ever to contribute to the team's wiki. Avoid H2 or H3.
-Glossary & Common Phrases
-144: (archaic) gross
-1cb: 1-click buy/bought
-:angtft: / :angcft:: "ain't nobody got time/cash for that"
-bdb: "but don't bother" (e.g., sfwbdb)
-bh: "black home" - when someone corners you, usually at work, to talk about something you may not care about and can't escape. (Originally a typo of "black hole")
-bitd: "back in the day"
-bm: "boss man," or "bowel movement" (:poop:), or "bad manners"
-bq: "burning question" (important questions about an event)
-bsly: "basically" or "basily" (:bsly:)
-btq: "begs the question" (someone makes an incorrect assumption)
-:cow:: "coworker" / colleague
-ctrl-v: A call for active chatters to paste their current clipboard.
-ctrl-v hard mode: Must paste without checking for embarrassment.
-:day:: "there you go"
-dd(d)* / :dd: / :d:: "d-d-dang"; more d's indicate greater surprise.
-ff: "fun fakt" (a false bit of trivia meant to bamboozle)
-:fin: / :finn:: "fin" / "end of story"
-fyhg: "for you home gamers" (in case you didn't know)
-fzct: "fuzzycat" (used to describe a change in conversation to an unrelated topic)
-gisN &lt;string>: Google Image Search Nth result (e.g., gis1 girls). Omit N for the first result (gis1).
-gism <string>: gis <string> meme
-gisa <string>: gis <string> animated gif
-gist <string>: gis <string> then and now
-gisg <string>: gis <string> girls (auto-appends "girls")
-mkf again if the result contains 3 girls.
-:hasslehoff:: "hassle"
-hdiw: "how does it work?" (prefaced by x: e.g., x: hdiw)
-icba: "I can't be arsed"
-its/idts: "I think so"/"I don't think so"
-:jake:: "just kidding"
-lmt: "lend me tell" (misnomer for "let me know")
-mfk: "marry fuck kill" (a game)
-nasalol/nasa: When something humorous causes air to be exhaled through the nostril with more force than normal breathing.
-nb: "not bad" (sometimes refers to "nick_b")
-pita/pitb: "pain in the ass/butt"
-pg: "pretty good"
-pmc: "productivity, mood, condition" (score); e.g., pmc 548 means productivity 5/10, mood 4/10, condition 8/10. Scores of 10/10 are not permitted.
-getpmc: A call to post your current pmc.
-regInt(x): "register interrupt" (tell me when x happens)
-scay: "scared"
-scm: "supercodingmode"
-seesly/ssly: "seriously" (adverb form of sees)
-:stop:: Indicates intention to discontinue participation in a conversation.
-tcs: "this convo sux"
-tcyb: "take care of your body"
-:ttj:: "thatsthejoke.jpg"
-twtd: "those were the days"
-wa&lt;x>&lt;y>&lt;z>: e.g., wattba for "what a time to be alive!"
-waidwml: "what am I doing with my life"
-:cha: / :wang: / :boltar:: Slang for penis.
--well / :well:: "might as well"
-x: An expression of profanity, often used after unintentionally repeating someone.
-yds: "you don't say"
-:yoshi:: "I mean..."
-:zombie2:: tired
-Modifiers
-These are applied to the previous statement:
-
-+ x: Add x (dealer's choice).
-- x: Subtract x (dealer's choice).
-x > n: Right shift x by n.
-x < n: Left shift x by n.
-Commands
-!urban x: Looks up x on urbandictionary.com.
-!wiki y: Looks up y on wikipedia.org. Also aliased to "teh x is y".
-mtch: Triggers a Slackbot response with a Mitch Hedberg joke. If the user's joke matches the triggered one, they win. Other users can trigger it, but it's sometimes impolite.`;
 
 // Example AI handler - you can replace this with actual AI integration
 export class AIHandler {
@@ -101,6 +24,7 @@ export class AIHandler {
     private gemini: GoogleGenerativeAI;
     private auth: GoogleAuth;
     private disabledThreads: Map<string, boolean> = new Map(); // Track disabled threads by channel+thread_ts
+    private geminiSystemPrompt: string;
 
     constructor(app: App) {
         this.app = app;
@@ -111,129 +35,16 @@ export class AIHandler {
             scopes: 'https://www.googleapis.com/auth/cloud-platform',
         });
 
+        // Load the system prompt from the file
+        const promptFilePath = path.join(__dirname, '../prompts/gemini-system-prompt.txt');
+        this.geminiSystemPrompt = fs.readFileSync(promptFilePath, 'utf-8');
+
         this.setupAIHandlers();
     }
 
-    private getColoredTileEmoji(percentChange: number): string {
-        if (percentChange >= 10) return ':_charles_green5:';
-        if (percentChange >= 6) return ':_charles_green4:';
-        if (percentChange >= 3) return ':_charles_green3:';
-        if (percentChange >= 1) return ':_charles_green2:';
-        if (percentChange > 0) return ':_charles_green1:';
-        if (percentChange === 0) return ':_charles_black_square:';
-        if (percentChange <= -10) return ':_charles_red5:';
-        if (percentChange <= -6) return ':_charles_red4:';
-        if (percentChange <= -3) return ':_charles_red3:';
-        if (percentChange <= -1) return ':_charles_red2:';
-        if (percentChange < 0) return ':_charles_red1:';
-        return ':white_square:'; // Fallback for unexpected cases
-    }
-
     private setupAIHandlers(): void {
-        // New command handler for !watchlist
-        this.app.message(/^!watchlist/i, async ({message, say}) => {
-            if (!('user' in message) || !message.user) return;
-
-            const userWatchlist = await getWatchlist(message.user);
-            if (userWatchlist.length === 0) {
-                await say({
-                    text: "Your watchlist is empty. Add stocks with `!watch <TICKER>`.",
-                });
-                return;
-            }
-
-            let totalPortfolioValue = 0;
-            let totalCostBasis = 0;
-
-            const report = await Promise.all(
-                userWatchlist.map(async (item) => {
-                    const quote = await this.fetchQuoteData(item.ticker);
-                    if (!quote) {
-                        return `*${item.ticker}*: Could not retrieve current price.`;
-                    }
-                    const currentPrice = quote.price;
-                    const gainLoss = (currentPrice - item.purchasePrice) * item.shares;
-                    const gainLossPercent = (gainLoss / (item.purchasePrice * item.shares)) * 100;
-                    const emoji = gainLoss >= 0 ? '📈' : '📉';
-                    const sign = gainLoss >= 0 ? '+' : '';
-
-                    const costBasis = item.purchasePrice * item.shares;
-                    totalCostBasis += costBasis;
-                    totalPortfolioValue += currentPrice * item.shares;
-
-                    return `*${item.ticker}* (${item.shares} @ $${item.purchasePrice.toFixed(2)}): $${(currentPrice * item.shares).toFixed(2)} | P/L: ${sign}$${gainLoss.toFixed(2)} (${sign}${gainLossPercent.toFixed(2)}%) ${emoji}`;
-                })
-            );
-
-            const overallGainLoss = totalPortfolioValue - totalCostBasis;
-            const overallGainLossPercent = (overallGainLoss / totalCostBasis) * 100;
-            const overallSign = overallGainLoss >= 0 ? '+' : '';
-            const overallEmoji = overallGainLoss >= 0 ? '🔼' : '🔽';
-
-            const summary = `*Your Watchlist Summary* ${overallEmoji}\nOverall P/L: ${overallSign}$${overallGainLoss.toFixed(2)} (${overallSign}${overallGainLossPercent.toFixed(2)}%)\n------------------------------------`;
-
-            await say({
-                text: `${summary}\n${report.join('\n')}`,
-            });
-        });
-
-        // New command handler for !watch (help)
-        this.app.message(/^!watch$/i, async ({say}) => {
-            await say({
-                text: 'Usage: `!watch <TICKER> [purchase_date] [purchase_price] [shares]`\n' +
-                    '• `<TICKER>`: The stock symbol (e.g., AAPL).\n' +
-                    '• `[purchase_date]`: Optional. Date of purchase (e.g., 2023-01-15). Defaults to today.\n' +
-                    '• `[purchase_price]`: Optional. Price per share. Defaults to current market price.\n' +
-                    '• `[shares]`: Optional. Number of shares. Defaults to 1.',
-            });
-        });
-
-        // New command handler for !watch (add)
-        this.app.message(/^!watch\s+([A-Z]+)(?:\s+([\d.-]+))?(?:\s+([\d.]+))?(?:\s+(\d+))?/i, async ({message, context, say}) => {
-            if (!('user' in message) || !message.user || !context.matches?.[1]) return;
-
-            const ticker = context.matches[1].toUpperCase();
-            const purchaseDateInput = context.matches[2];
-            const purchasePriceInput = context.matches[3];
-            const sharesInput = context.matches[4];
-
-            let purchasePrice = purchasePriceInput ? parseFloat(purchasePriceInput) : undefined;
-            const purchaseDate = purchaseDateInput ? new Date(purchaseDateInput).toLocaleDateString() : new Date().toLocaleDateString();
-            const shares = sharesInput ? parseInt(sharesInput, 10) : 1;
-
-            if (purchasePrice === undefined) {
-                const quote = await this.fetchQuoteData(ticker);
-                if (!quote) {
-                    await say({text: `Could not fetch the current price for *${ticker}*. Please provide a purchase price or try again later.`});
-                    return;
-                }
-                purchasePrice = quote.price;
-            }
-
-            await addToWatchlist({
-                userId: message.user,
-                ticker,
-                shares,
-                purchaseDate,
-                purchasePrice,
-            });
-
-            await say({text: `*${ticker}* (${shares} shares) has been added to your watchlist at $${purchasePrice.toFixed(2)}/share.`});
-        });
-
-        // New command handler for !unwatch
-        this.app.message(/^!unwatch\s+([A-Z]+)/i, async ({message, context, say}) => {
-            if (!('user' in message) || !message.user || !context.matches?.[1]) return;
-            const ticker = context.matches[1].toUpperCase();
-
-            const success = await removeFromWatchlist(message.user, ticker);
-
-            if (success) {
-                await say({text: `*${ticker}* has been removed from your watchlist.`});
-            } else {
-                await say({text: `*${ticker}* was not found in your watchlist.`});
-            }
-        });
+        registerWatchlistCommands(this.app);
+        registerFinancialCommands(this.app);
 
         // New command handler for !chart
         this.app.message(/^!chart ([A-Z]+)(?:\s+(1m|3m|6m|1y|5y))?/i, async ({message, context, say, client}) => {
@@ -282,79 +93,6 @@ export class AIHandler {
             }
         });
 
-        // New command handler for !cq
-        this.app.message(/^!cq (.+)/i, async ({message, context, say}) => {
-            if (!('user' in message) || !context.matches?.[1]) {
-                return;
-            }
-
-            if (!config.finnhubApiKey) {
-                await say({
-                    text: 'The crypto quote feature is not configured. An API key for Finnhub is required.',
-                });
-                return;
-            }
-
-            const tickers = context.matches[1].trim().toUpperCase().split(/\s+/);
-            if (tickers.length === 0) {
-                await say({
-                    text: 'Please provide at least one crypto ticker. Example: `!cq BTC ETH`',
-                });
-                return;
-            }
-
-            try {
-                const results = await Promise.all(
-                    tickers.map((ticker: string) => {
-                        const cryptoTicker = `BINANCE:${ticker}USDT`;
-                        return this.formatQuote(cryptoTicker, ticker);
-                    })
-                );
-                const reply = results.join('\n');
-                await say({text: reply});
-            } catch (error) {
-                console.error('Finnhub API error:', error);
-                await say({
-                    text: `Sorry, I couldn't fetch the crypto prices. Error: ${(error as Error).message}`,
-                });
-            }
-        });
-
-        // New command handler for !q
-        this.app.message(/^!q (.+)/i, async ({message, context, say}) => {
-            if (!('user' in message) || !context.matches?.[1]) {
-                return;
-            }
-
-            if (!config.finnhubApiKey) {
-                await say({
-                    text: 'The stock quote feature is not configured. An API key for Finnhub is required.',
-                });
-                return;
-            }
-
-            const tickers = context.matches[1].trim().toUpperCase().split(/\s+/);
-            if (tickers.length === 0) {
-                await say({
-                    text: 'Please provide at least one stock ticker. Example: `!q AAPL TSLA`',
-                });
-                return;
-            }
-
-            try {
-                const results = await Promise.all(
-                    tickers.map((ticker: string) => this.formatQuote(ticker))
-                );
-                const reply = results.join('\n');
-                await say({text: reply});
-            } catch (error) {
-                console.error('Finnhub API error:', error);
-                await say({
-                    text: `Sorry, I couldn't fetch the stock prices. Error: ${(error as Error).message}`,
-                });
-            }
-        });
-
         // Enhanced !gem command with thread support
         this.app.message(/^!gem (.+)/i, async ({message, context, client, say}) => {
             if (!('user' in message)) {
@@ -367,7 +105,7 @@ export class AIHandler {
                 try {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
                     const userPrompt = `<@${message.user}>: ${question}`;
-                    const response = await this.processAIQuestion(userPrompt, history, GEMINI_SYSTEM_PROMPT);
+                    const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                     await say({text: response.text, thread_ts: message.thread_ts});
                 } catch (error) {
                     console.error('Gemini API error in-thread (!gem):', error);
@@ -378,7 +116,7 @@ export class AIHandler {
 
             // Otherwise, start a new thread as before.
             try {
-                const response = await this.processAIQuestion(question, [], GEMINI_SYSTEM_PROMPT);
+                const response = await this.processAIQuestion(question, [], this.geminiSystemPrompt);
                 await say({
                     text: `:robot_face: <@${message.user}> asked: "${question}"\n\n${response.text}`,
                     thread_ts: message.ts,
@@ -396,7 +134,7 @@ export class AIHandler {
                     const history = await this.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
                     const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
                     const userPrompt = `<@${event.user}>: ${prompt}`;
-                    const response = await this.processAIQuestion(userPrompt, history, GEMINI_SYSTEM_PROMPT);
+                    const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                     await say({text: response.text, thread_ts: event.thread_ts});
                 } catch (error) {
                     console.error("Error in mention handler:", error);
@@ -422,7 +160,7 @@ export class AIHandler {
                     const hasBotMessages = history.some(content => content.role === 'model');
                     if (hasBotMessages) {
                         const userPrompt = `<@${message.user}>: ${message.text}`;
-                        const response = await this.processAIQuestion(userPrompt, history, GEMINI_SYSTEM_PROMPT);
+                        const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                         await say({text: response.text, thread_ts: message.thread_ts});
                     }
                 } catch (error) {
@@ -488,23 +226,25 @@ export class AIHandler {
             }
         });
 
-        // New command for !stocknews
-        this.app.message(/^!stocknews/i, async ({message, say}) => {
+        // New command for !news (consolidated)
+        this.app.message(/^!news(?:\s+(general|crypto))?/i, async ({message, context, say}) => {
             if (!('user' in message)) {
                 return;
             }
 
             if (!config.finnhubApiKey) {
-                await say({text: 'The stock news feature is not configured. An API key for Finnhub is required.'});
+                await say({text: 'The news feature is not configured. An API key for Finnhub is required.'});
                 return;
             }
 
+            const category = context.matches?.[1] || 'general';
+
             try {
-                const articles = await this.fetchStockNews();
+                const articles = category === 'crypto' ? await fetchCryptoNews() : await fetchStockNews();
 
                 if (!articles || articles.length === 0) {
                     await say({
-                        text: 'I couldn\'t find any recent stock market news.', thread_ts: message.ts
+                        text: `I couldn't find any recent ${category} news.`, thread_ts: message.ts
                     });
                     return;
                 }
@@ -518,55 +258,13 @@ export class AIHandler {
                     .join('\n\n');
 
                 await say({
-                    text: `Here are the latest headlines:\n\n${formattedArticles}`,
+                    text: `Here are the latest ${category} headlines:\n\n${formattedArticles}`,
                     thread_ts: message.ts,
                 });
             } catch (error) {
-                console.error('Stock news error:', error);
+                console.error('News error:', error);
                 await say({
-                    text: `Sorry, I couldn't fetch the stock news. Error: ${(error as Error).message}`,
-                    thread_ts: message.ts,
-                });
-            }
-        });
-
-        // New command for !cryptonews
-        this.app.message(/^!cryptonews/i, async ({message, say}) => {
-            if (!('user' in message)) {
-                return;
-            }
-
-            if (!config.finnhubApiKey) {
-                await say({text: 'The crypto news feature is not configured. An API key for Finnhub is required.'});
-                return;
-            }
-
-            try {
-                const articles = await this.fetchCryptoNews();
-
-                if (!articles || articles.length === 0) {
-                    await say({
-                        text: 'I couldn\'t find any recent crypto news.', thread_ts: message.ts
-                    });
-                    return;
-                }
-
-                // Format the top 5 articles
-                const formattedArticles = articles
-                    .slice(0, 5)
-                    .map(
-                        (article) => `• *${article.headline}* - _${article.source}_\n   <${article.url}|Read More>`
-                    )
-                    .join('\n\n');
-
-                await say({
-                    text: `Here are the latest crypto headlines:\n\n${formattedArticles}`,
-                    thread_ts: message.ts,
-                });
-            } catch (error) {
-                console.error('Crypto news error:', error);
-                await say({
-                    text: `Sorry, I couldn't fetch the crypto news. Error: ${(error as Error).message}`,
+                    text: `Sorry, I couldn't fetch the news. Error: ${(error as Error).message}`,
                     thread_ts: message.ts,
                 });
             }
@@ -587,18 +285,16 @@ export class AIHandler {
             try {
                 const results = await Promise.all(tickers.map(async (ticker: string) => {
                     // Fetch market cap from /stock/profile2
-                    const profileRes = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${config.finnhubApiKey}`);
-                    const profile: any = await profileRes.json();
-                    const marketCap = profile.marketCapitalization;
-                    const companyName = profile.name;
+                    const profile = await fetchCompanyProfile(ticker);
+                    const marketCap = profile?.marketCapitalization;
+                    const companyName = profile?.name;
 
                     // Fetch 52 week high/low from /stock/metric
-                    const metricRes = await fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${config.finnhubApiKey}`);
-                    const metric: any = await metricRes.json();
-                    const high52 = metric.metric?.['52WeekHigh'];
-                    const high52Date = metric.metric?.['52WeekHighDate'];
-                    const low52 = metric.metric?.['52WeekLow'];
-                    const low52Date = metric.metric?.['52WeekLowDate'];
+                    const metric = await fetchStockMetrics(ticker);
+                    const high52 = metric?.['52WeekHigh'];
+                    const high52Date = metric?.['52WeekHighDate'];
+                    const low52 = metric?.['52WeekLow'];
+                    const low52Date = metric?.['52WeekLowDate'];
 
                     if (!marketCap && !high52 && !low52) {
                         return `*${ticker}*: No stats found.`;
@@ -635,15 +331,14 @@ export class AIHandler {
             const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
 
             try {
-                const earningsRes = await fetch(`https://finnhub.io/api/v1/calendar/earnings?from=${today}&to=${today}&symbol=${ticker}&token=${config.finnhubApiKey}`);
-                const earnings: any = await earningsRes.json();
+                const earnings = await fetchEarningsCalendar(ticker);
 
-                if (!earnings.earningsCalendar || earnings.earningsCalendar.length === 0) {
+                if (!earnings || earnings.length === 0) {
                     await say({text: `No upcoming earnings found for *${ticker}*.`});
                     return;
                 }
 
-                const upcomingEarnings = earnings.earningsCalendar
+                const upcomingEarnings = earnings
                     .filter((earning: any) => new Date(earning.date) >= new Date())
                     .slice(0, 5); // Show next 5 earnings
 
@@ -778,66 +473,6 @@ export class AIHandler {
         return await chartJSNodeCanvas.renderToBuffer(configuration);
     }
 
-    private async fetchQuoteData(ticker: string): Promise<{price: number; change: number; percentChange: number} | null> {
-        if (!config.finnhubApiKey) {
-            console.error('Finnhub API key is not configured.');
-            return null;
-        }
-        const url = `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${config.finnhubApiKey}`;
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                console.error(`Finnhub API bad response for ${ticker}: ${response.statusText}`);
-                return null;
-            }
-            const data = (await response.json()) as {c: number; d: number; dp: number};
-
-            if (!data || typeof data.c === 'undefined') {
-                return null;
-            }
-
-            return {
-                price: data.c, // current price
-                change: data.d, // change
-                percentChange: data.dp, // percent change
-            };
-        } catch (error) {
-            console.error(`Error fetching quote for ${ticker}:`, error);
-            return null;
-        }
-    }
-
-    private async formatQuote(ticker: string, displayName?: string): Promise<string> {
-        const displayTicker = displayName || ticker;
-
-        if (!config.finnhubApiKey) {
-            return `*${displayTicker}*: No data found (API key not configured)`;
-        }
-
-        try {
-            // Fetch company name from /stock/profile2
-            const profileRes = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${config.finnhubApiKey}`);
-            const profile: any = await profileRes.json();
-            const companyName = profile?.name || ticker;
-
-            // Fetch price data from /quote
-            const quote = await this.fetchQuoteData(ticker);
-
-            if (!quote) {
-                return `*${ticker} (${companyName})*: No price data found`;
-            }
-
-            const {price, change, percentChange} = quote;
-            const sign = change >= 0 ? '+' : '';
-            const emoji = this.getColoredTileEmoji(percentChange);
-
-            return `${emoji} *${ticker}* (${companyName}): $${price.toFixed(2)} (${sign}${change.toFixed(2)}, ${sign}${percentChange.toFixed(2)}%)`;
-        } catch (error) {
-            console.error(`Error fetching quote for ${ticker}:`, error);
-            return `*${displayTicker}*: Error fetching data`;
-        }
-    }
-
     private async processAIQuestion(question: string, history: Content[], systemPrompt?: string): Promise<AIResponse> {
         // Use Gemini API to generate a response
         const model = this.gemini.getGenerativeModel({
@@ -848,7 +483,7 @@ export class AIHandler {
                 {category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE},
                 {category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE},
             ],
-            systemInstruction: systemPrompt,
+            systemInstruction: systemPrompt || this.geminiSystemPrompt,
         });
 
         const contents: Content[] = [...history, {role: 'user', parts: [{text: question}]}];

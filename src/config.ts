@@ -8,11 +8,13 @@ export interface Config {
         botToken: string;
         signingSecret: string;
         appToken: string;
+        morningGreetingChannelId: string;
     };
     server: {
         port: number;
     };
     environment: string;
+    morningGreetingSchedule: string;
     gemini: {
         apiKey: string;
     };
@@ -29,11 +31,13 @@ export const config: Config = {
         botToken: process.env.SLACK_BOT_TOKEN || '',
         signingSecret: process.env.SLACK_SIGNING_SECRET || '',
         appToken: process.env.SLACK_APP_TOKEN || '',
+        morningGreetingChannelId: process.env.SLACK_MORNING_GREETING_CHANNEL_ID || '',
     },
     server: {
         port: parseInt(process.env.PORT || '3000', 10),
     },
     environment: process.env.NODE_ENV || 'development',
+    morningGreetingSchedule: process.env.MORNING_GREETING_SCHEDULE || '30 9 * * *',
     gemini: {
         apiKey: process.env.GEMINI_API_KEY || '',
     },
@@ -55,6 +59,8 @@ export function validateConfig(): void {
         'GCLOUD_PROJECT',
         'GCLOUD_LOCATION',
         'GOOGLE_APPLICATION_CREDENTIALS',
+        'SLACK_MORNING_GREETING_CHANNEL_ID',
+        'MORNING_GREETING_SCHEDULE',
     ];
 
     const missing = requiredVars.filter(varName => !process.env[varName]);
