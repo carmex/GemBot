@@ -1,0 +1,41 @@
+{
+    "name": "slack-ai-bot",
+    "version": "1.0.0",
+    "description": "A TypeScript Slack bot with AI capabilities",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "dev": "ts-node src/index.ts",
+        "watch": "nodemon",
+        "clean": "rimraf dist"
+    },
+    "keywords": [
+        "slack",
+        "bot",
+        "typescript",
+        "ai"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "@google-cloud/vertexai": "^1.10.0",
+        "@google/generative-ai": "^0.24.1",
+        "@slack/bolt": "^3.17.1",
+        "@types/node-fetch": "^2.6.12",
+        "chart.js": "^4.5.0",
+        "chartjs-node-canvas": "^5.0.0",
+        "dotenv": "^16.3.1",
+        "lowdb": "^7.0.1",
+        "node-cron": "^4.1.1",
+        "node-fetch": "^3.3.2"
+    },
+    "devDependencies": {
+        "@types/node": "^20.8.0",
+        "@types/node-cron": "^3.0.11",
+        "nodemon": "^3.0.1",
+        "rimraf": "^5.0.5",
+        "ts-node": "^10.9.1",
+        "typescript": "^5.2.2"
+    }
+}

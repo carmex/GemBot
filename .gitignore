@@ -99,7 +99,6 @@ Thumbs.db
 
 # Google Cloud Credentials
 gcloud-credentials.json
-*.json
 
 # Newly added db.json
 db.json
