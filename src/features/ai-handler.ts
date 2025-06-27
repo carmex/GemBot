@@ -26,6 +26,7 @@ export class AIHandler {
     private auth: GoogleAuth;
     private disabledThreads: Map<string, boolean> = new Map(); // Track disabled threads by channel+thread_ts
     private enabledChannels: Map<string, boolean> = new Map(); // Track enabled channels
+    private channelNameCache: Map<string, string> = new Map(); // Cache for channel names
     private geminiSystemPrompt: string;
     private disabledThreadsFilePath: string;
     private enabledChannelsFilePath: string;
@@ -110,11 +111,12 @@ export class AIHandler {
             }
 
             const question = context.matches[1].trim();
+            const channelName = await this.getChannelName(message.channel);
 
             if ('thread_ts' in message && message.thread_ts && context.botUserId) {
                 try {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
-                    const userPrompt = `<@${message.user}>: ${question}`;
+                    const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${question}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                     if (response.text.trim() !== '<DO_NOT_RESPOND>') {
                         await say({text: response.text, thread_ts: message.thread_ts});
@@ -129,7 +131,7 @@ export class AIHandler {
 
             // Otherwise, start a new thread as before.
             try {
-                const userPrompt = `<@${message.user}>: ${question}`;
+                const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${question}`;
                 const response = await this.processAIQuestion(userPrompt, [], this.geminiSystemPrompt);
                 if (response.text.trim() !== '<DO_NOT_RESPOND>') {
                     await say({
@@ -150,7 +152,8 @@ export class AIHandler {
                 try {
                     const history = await this.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
                     const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
-                    const userPrompt = `<@${event.user}>: ${prompt}`;
+                    const channelName = await this.getChannelName(event.channel);
+                    const userPrompt = `channel: #${channelName} | user: <@${event.user}>: ${prompt}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                     if (response.text.trim() !== '<DO_NOT_RESPOND>') {
                         await say({text: response.text, thread_ts: event.thread_ts});
@@ -179,7 +182,8 @@ export class AIHandler {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
                     const hasBotMessages = history.some(content => content.role === 'model');
                     if (hasBotMessages) {
-                        const userPrompt = `<@${message.user}>: ${message.text}`;
+                        const channelName = await this.getChannelName(message.channel);
+                        const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${message.text}`;
                         const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                         if (response.text.trim() !== '<DO_NOT_RESPOND>') {
                             await say({text: response.text, thread_ts: message.thread_ts});
@@ -195,7 +199,8 @@ export class AIHandler {
             if (this.enabledChannels.has(message.channel)) {
                 try {
                     const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                    const userPrompt = `<@${message.user}>: ${message.text}`;
+                    const channelName = await this.getChannelName(message.channel);
+                    const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${message.text}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
                     if (response.text.trim() !== '<DO_NOT_RESPOND>') {
                         await say({text: response.text}); // Post in channel, not thread
@@ -737,6 +742,7 @@ export class AIHandler {
                 return history;
             }
 
+            const channelName = await this.getChannelName(channel);
             for (const reply of replies.messages) {
                 if (reply.ts === trigger_ts) {
                     continue;
@@ -745,7 +751,7 @@ export class AIHandler {
                 if (reply.user === botUserId || reply.bot_id) {
                     history.push({role: 'model', parts: [{text: reply.text || ''}]});
                 } else if (reply.user) {
-                    history.push({role: 'user', parts: [{text: `<@${reply.user}>: ${reply.text || ''}`}]});
+                    history.push({role: 'user', parts: [{text: `channel: #${channelName} | user: <@${reply.user}>: ${reply.text || ''}`}]});
                 }
             }
         } catch (error) {
@@ -768,6 +774,7 @@ export class AIHandler {
 
             // Messages are newest-first, so reverse them for chronological order
             const messages = result.messages.reverse();
+            const channelName = await this.getChannelName(channel);
 
             for (const reply of messages) {
                 if (reply.ts === trigger_ts) {
@@ -777,7 +784,7 @@ export class AIHandler {
                 if (reply.user === botUserId || reply.bot_id) {
                     history.push({role: 'model', parts: [{text: reply.text || ''}]});
                 } else if (reply.user) {
-                    history.push({role: 'user', parts: [{text: `<@${reply.user}>: ${reply.text || ''}`}]});
+                    history.push({role: 'user', parts: [{text: `channel: #${channelName} | user: <@${reply.user}>: ${reply.text || ''}`}]});
                 }
             }
         } catch (error) {
@@ -845,5 +852,28 @@ export class AIHandler {
         } catch (error) {
             console.error('Error saving enabled channels file:', error);
         }
+    }
+
+    private async getChannelName(channelId: string): Promise<string> {
+        if (this.channelNameCache.has(channelId)) {
+            return this.channelNameCache.get(channelId)!;
+        }
+
+        try {
+            const result = await this.app.client.conversations.info({
+                channel: channelId,
+                token: config.slack.botToken
+            });
+
+            if (result.ok && result.channel && 'name' in result.channel && result.channel.name) {
+                const name = result.channel.name;
+                this.channelNameCache.set(channelId, name);
+                return name;
+            }
+        } catch (error) {
+            console.error(`Error fetching channel name for ${channelId}:`, error);
+        }
+        // Fallback to channelId if name can't be fetched
+        return channelId;
     }
 }
