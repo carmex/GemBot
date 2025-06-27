@@ -17,6 +17,7 @@ export interface Config {
     morningGreetingSchedule: string;
     gemini: {
         apiKey: string;
+        model: string;
     };
     vertex: {
         projectId: string;
@@ -40,10 +41,11 @@ export const config: Config = {
     morningGreetingSchedule: process.env.MORNING_GREETING_SCHEDULE || '30 9 * * *',
     gemini: {
         apiKey: process.env.GEMINI_API_KEY || '',
+        model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
     },
     vertex: {
-        projectId: process.env.GCLOUD_PROJECT || '',
-        location: process.env.GCLOUD_LOCATION || 'us-central1',
+        projectId: process.env.VERTEX_PROJECT_ID || '',
+        location: process.env.VERTEX_LOCATION || '',
     },
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',

@@ -12,6 +12,7 @@ import {fetchQuote, fetchCompanyProfile, fetchStockMetrics, fetchStockNews, fetc
 import {getColoredTileEmoji} from './utils';
 import {registerWatchlistCommands} from '../commands/watchlist';
 import {registerFinancialCommands} from '../commands/financial';
+import {extract} from '@extractus/article-extractor';
 
 export interface AIResponse {
     text: string;
@@ -24,7 +25,10 @@ export class AIHandler {
     private gemini: GoogleGenerativeAI;
     private auth: GoogleAuth;
     private disabledThreads: Map<string, boolean> = new Map(); // Track disabled threads by channel+thread_ts
+    private enabledChannels: Map<string, boolean> = new Map(); // Track enabled channels
     private geminiSystemPrompt: string;
+    private disabledThreadsFilePath: string;
+    private enabledChannelsFilePath: string;
 
     constructor(app: App) {
         this.app = app;
@@ -35,10 +39,16 @@ export class AIHandler {
             scopes: 'https://www.googleapis.com/auth/cloud-platform',
         });
 
+        // Define file path for disabled threads
+        this.disabledThreadsFilePath = path.join(__dirname, '../../disabled-threads.json');
+        this.enabledChannelsFilePath = path.join(__dirname, '../../enabled-channels.json');
+
         // Load the system prompt from the file
         const promptFilePath = path.join(__dirname, '../prompts/gemini-system-prompt.txt');
         this.geminiSystemPrompt = fs.readFileSync(promptFilePath, 'utf-8');
 
+        this.loadDisabledThreads();
+        this.loadEnabledChannels();
         this.setupAIHandlers();
     }
 
@@ -106,7 +116,10 @@ export class AIHandler {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
                     const userPrompt = `<@${message.user}>: ${question}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                    await say({text: response.text, thread_ts: message.thread_ts});
+                    if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        await say({text: response.text, thread_ts: message.thread_ts});
+                    }
+                    return;
                 } catch (error) {
                     console.error('Gemini API error in-thread (!gem):', error);
                     await say({text: `Sorry <@${message.user}>, I couldn't process your request.`, thread_ts: message.ts});
@@ -116,11 +129,15 @@ export class AIHandler {
 
             // Otherwise, start a new thread as before.
             try {
-                const response = await this.processAIQuestion(question, [], this.geminiSystemPrompt);
-                await say({
-                    text: `:robot_face: <@${message.user}> asked: "${question}"\n\n${response.text}`,
-                    thread_ts: message.ts,
-                });
+                const userPrompt = `<@${message.user}>: ${question}`;
+                const response = await this.processAIQuestion(userPrompt, [], this.geminiSystemPrompt);
+                if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                    await say({
+                        text: `:robot_face: <@${message.user}> asked: "${question}"\n\n${response.text}`,
+                        thread_ts: message.ts,
+                    });
+                }
+                return;
             } catch (error) {
                 console.error('Gemini API error (!gem message):', error);
                 await say({text: `Sorry <@${message.user}>, I couldn't process your request.`, thread_ts: message.ts});
@@ -135,7 +152,9 @@ export class AIHandler {
                     const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
                     const userPrompt = `<@${event.user}>: ${prompt}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                    await say({text: response.text, thread_ts: event.thread_ts});
+                    if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        await say({text: response.text, thread_ts: event.thread_ts});
+                    }
                 } catch (error) {
                     console.error("Error in mention handler:", error);
                 }
@@ -143,28 +162,46 @@ export class AIHandler {
         });
 
         // This handler responds to regular messages in threads where the bot is already participating
+        // OR in channels where the bot has been enabled to listen to everything.
         this.app.message(/^[^!].*/, async ({message, context, client, say}) => {
-            // Only process messages in threads where the bot is already participating
-            if ('thread_ts' in message && message.thread_ts && context.botUserId && 'user' in message) {
-                // Check if gembot is disabled in this thread
+            if (!('user' in message) || !context.botUserId) {
+                return; // Not a user message or no bot context
+            }
+
+            // Case 1: Message is in a thread
+            if ('thread_ts' in message && message.thread_ts) {
                 const threadKey = `${message.channel}-${message.thread_ts}`;
                 if (this.disabledThreads.has(threadKey)) {
-                    return; // Skip responding if disabled
+                    return; // Skip responding if disabled in this thread
                 }
 
-                // Check if this is a thread where the bot has already responded
                 try {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
-
-                    // Only respond if there are bot messages in the history (meaning the bot has participated)
                     const hasBotMessages = history.some(content => content.role === 'model');
                     if (hasBotMessages) {
                         const userPrompt = `<@${message.user}>: ${message.text}`;
                         const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                        await say({text: response.text, thread_ts: message.thread_ts});
+                        if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                            await say({text: response.text, thread_ts: message.thread_ts});
+                        }
                     }
                 } catch (error) {
                     console.error("Error in thread follow-up handler:", error);
+                }
+                return; // Handled thread case
+            }
+
+            // Case 2: Message is in an enabled channel (and not in a thread)
+            if (this.enabledChannels.has(message.channel)) {
+                try {
+                    const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
+                    const userPrompt = `<@${message.user}>: ${message.text}`;
+                    const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
+                    if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        await say({text: response.text}); // Post in channel, not thread
+                    }
+                } catch (error) {
+                    console.error("Error in channel-wide handler:", error);
                 }
             }
         });
@@ -270,52 +307,6 @@ export class AIHandler {
             }
         });
 
-        // New command handler for !stats (now supports multiple tickers)
-        this.app.message(/^!stats ([A-Z.\s]+)$/i, async ({message, context, say}) => {
-            if (!('user' in message) || !context.matches?.[1]) return;
-
-            if (!config.finnhubApiKey) {
-                await say({
-                    text: 'The stats feature is not configured. An API key for Finnhub is required.',
-                });
-                return;
-            }
-
-            const tickers = context.matches[1].toUpperCase().split(/\s+/).filter(Boolean);
-            try {
-                const results = await Promise.all(tickers.map(async (ticker: string) => {
-                    // Fetch market cap from /stock/profile2
-                    const profile = await fetchCompanyProfile(ticker);
-                    const marketCap = profile?.marketCapitalization;
-                    const companyName = profile?.name;
-
-                    // Fetch 52 week high/low from /stock/metric
-                    const metric = await fetchStockMetrics(ticker);
-                    const high52 = metric?.['52WeekHigh'];
-                    const high52Date = metric?.['52WeekHighDate'];
-                    const low52 = metric?.['52WeekLow'];
-                    const low52Date = metric?.['52WeekLowDate'];
-
-                    if (!marketCap && !high52 && !low52) {
-                        return `*${ticker}*: No stats found.`;
-                    }
-
-                    let response = `*${ticker}*`;
-                    if (companyName) response += ` (${companyName})`;
-                    response += ` stats:\n`;
-                    if (marketCap) response += `• Market Cap: ${this.formatMarketCap(marketCap * 1_000_000)}\n`;
-                    if (high52) response += `• 52-Week High: $${high52}` + (high52Date ? ` (on ${high52Date})` : '') + `\n`;
-                    if (low52) response += `• 52-Week Low: $${low52}` + (low52Date ? ` (on ${low52Date})` : '');
-                    return response;
-                }));
-
-                await say({text: results.join('\n\n')});
-            } catch (error) {
-                console.error('Finnhub API error (!stats):', error);
-                await say({text: `Sorry, I couldn't fetch the stats. Error: ${(error as Error).message}`});
-            }
-        });
-
         // New command handler for !earnings
         this.app.message(/^!earnings ([A-Z.]+)$/i, async ({message, context, say}) => {
             if (!('user' in message) || !context.matches?.[1]) return;
@@ -371,6 +362,7 @@ export class AIHandler {
 
             const threadKey = `${message.channel}-${message.thread_ts}`;
             this.disabledThreads.delete(threadKey);
+            this.saveDisabledThreads();
             await say({text: '🤖 Gembot is now enabled in this thread!', thread_ts: message.thread_ts});
         });
 
@@ -383,7 +375,28 @@ export class AIHandler {
 
             const threadKey = `${message.channel}-${message.thread_ts}`;
             this.disabledThreads.set(threadKey, true);
+            this.saveDisabledThreads();
             await say({text: '🤐 Gembot is now disabled in this thread. Use `!gembot on` to re-enable, or `@mention` me for responses.', thread_ts: message.thread_ts});
+        });
+
+        // Command to enable gembot for all messages in a channel
+        this.app.message(/^!gembot channel on$/i, async ({message, say}) => {
+            if (!('user' in message)) {
+                return;
+            }
+            this.enabledChannels.set(message.channel, true);
+            this.saveEnabledChannels();
+            await say({text: '🤖 Gembot will now respond to all messages in this channel. Use `!gembot channel off` to disable.'});
+        });
+
+        // Command to disable gembot for all messages in a channel
+        this.app.message(/^!gembot channel off$/i, async ({message, say}) => {
+            if (!('user' in message)) {
+                return;
+            }
+            this.enabledChannels.delete(message.channel);
+            this.saveEnabledChannels();
+            await say({text: '🤐 Gembot will no longer respond to all messages in this channel.'});
         });
     }
 
@@ -473,10 +486,59 @@ export class AIHandler {
         return await chartJSNodeCanvas.renderToBuffer(configuration);
     }
 
+    private async handleToolCall(toolCode: string): Promise<any> {
+        try {
+            const toolRequest = JSON.parse(toolCode);
+            if (toolRequest.tool_name === 'slack_user_profile') {
+                const userId = toolRequest.parameters.user_id;
+                const result = await this.app.client.users.info({
+                    user: userId,
+                    token: config.slack.botToken
+                });
+
+                if (result.ok) {
+                    return {
+                        tool_name: 'slack_user_profile',
+                        result: {
+                            id: (result.user as any)?.id,
+                            name: (result.user as any)?.name,
+                            real_name: (result.user as any)?.real_name,
+                            email: (result.user as any)?.profile?.email,
+                            tz: (result.user as any)?.tz,
+                            title: (result.user as any)?.profile?.title,
+                        }
+                    };
+                } else {
+                    return {tool_name: 'slack_user_profile', result: {error: result.error}};
+                }
+            } else if (toolRequest.tool_name === 'fetch_url_content') {
+                const url = toolRequest.parameters.url;
+                const charLimit = toolRequest.parameters.char_limit || 8000;
+                try {
+                    const article = await extract(url);
+                    if (!article || !article.content) {
+                        return {
+                            tool_name: 'fetch_url_content',
+                            result: {error: 'Could not extract article content.'}
+                        };
+                    }
+                    const snippet = article.content.substring(0, charLimit);
+                    return {tool_name: 'fetch_url_content', result: {content: snippet}};
+                } catch (e) {
+                    return {tool_name: 'fetch_url_content', result: {error: (e as Error).message}};
+                }
+            }
+            return {tool_name: 'unknown_tool', result: {error: 'Tool not found'}};
+        } catch (error) {
+            console.error('Error handling tool call:', error);
+            return {tool_name: 'error', result: {error: (error as Error).message}};
+        }
+    }
+
     private async processAIQuestion(question: string, history: Content[], systemPrompt?: string): Promise<AIResponse> {
         // Use Gemini API to generate a response
         const model = this.gemini.getGenerativeModel({
-            model: 'gemini-2.5-flash',
+            model: config.gemini.model,
             safetySettings: [
                 {category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE},
                 {category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE},
@@ -488,18 +550,55 @@ export class AIHandler {
 
         const contents: Content[] = [...history, {role: 'user', parts: [{text: question}]}];
 
+        // console.log('--- Sending to LLM (Turn 1) ---');
+        // console.log(JSON.stringify(contents, null, 2));
+        // console.log('-----------------------------');
+
         const result = await model.generateContent({contents});
 
         if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
+            console.log('--- LLM Response Blocked ---');
             return {
                 text: "I'm sorry, I was unable to generate a response. This may be due to the safety settings.",
                 confidence: 0,
             };
         }
 
-        const text = result.response.text();
+        const responseText = result.response.text();
+        // console.log('--- Received from LLM (Turn 1) ---');
+        // console.log(responseText);
+        // console.log('--------------------------------');
+
+        const toolMatch = responseText.match(/<tool_code>([\s\S]*?)<\/tool_code>/);
+        if (toolMatch) {
+            const toolCode = toolMatch[1].trim();
+            const toolResult = await this.handleToolCall(toolCode);
+
+            const toolResultContent = {
+                role: 'user',
+                parts: [{text: `<tool_result>\n${JSON.stringify(toolResult, null, 2)}\n</tool_result>`}]
+            };
+
+            const secondTurnContents: Content[] = [...contents, {role: 'model', parts: [{text: responseText}]}, toolResultContent];
+
+            // console.log('--- Sending to LLM (Turn 2) ---');
+            // console.log(JSON.stringify(secondTurnContents, null, 2));
+            // console.log('-----------------------------');
+
+            const secondResult = await model.generateContent({contents: secondTurnContents});
+            if (secondResult.response && secondResult.response.candidates && secondResult.response.candidates.length > 0) {
+                const finalResponseText = secondResult.response.text();
+                // console.log('--- Received from LLM (Turn 2) ---');
+                // console.log(finalResponseText);
+                // console.log('--------------------------------');
+                return {text: finalResponseText, confidence: 100};
+            } else {
+                return {text: "I was unable to process the tool's result.", confidence: 0};
+            }
+        }
+
         return {
-            text,
+            text: responseText,
             confidence: 100, // Gemini does not provide a confidence score
         };
     }
@@ -655,6 +754,38 @@ export class AIHandler {
         return history;
     }
 
+    private async buildHistoryFromChannel(channel: string, trigger_ts: string, client: any, botUserId: string): Promise<Content[]> {
+        const history: Content[] = [];
+        try {
+            const result = await client.conversations.history({
+                channel,
+                limit: 20, // Fetch last 20 messages for context
+            });
+
+            if (!result.messages) {
+                return history;
+            }
+
+            // Messages are newest-first, so reverse them for chronological order
+            const messages = result.messages.reverse();
+
+            for (const reply of messages) {
+                if (reply.ts === trigger_ts) {
+                    continue;
+                }
+
+                if (reply.user === botUserId || reply.bot_id) {
+                    history.push({role: 'model', parts: [{text: reply.text || ''}]});
+                } else if (reply.user) {
+                    history.push({role: 'user', parts: [{text: `<@${reply.user}>: ${reply.text || ''}`}]});
+                }
+            }
+        } catch (error) {
+            console.error("Error building history from channel:", error);
+        }
+        return history;
+    }
+
     // Helper function to format market cap
     private formatMarketCap(marketCap: number): string {
         if (marketCap >= 1e12) {
@@ -665,6 +796,54 @@ export class AIHandler {
             return `$${(marketCap / 1e6).toFixed(2)}M`;
         } else {
             return `$${marketCap.toFixed(2)}`;
+        }
+    }
+
+    private loadDisabledThreads(): void {
+        try {
+            if (fs.existsSync(this.disabledThreadsFilePath)) {
+                const data = fs.readFileSync(this.disabledThreadsFilePath, 'utf-8');
+                const threadsArray = JSON.parse(data);
+                if (Array.isArray(threadsArray)) {
+                    this.disabledThreads = new Map(threadsArray);
+                    console.log(`Loaded ${this.disabledThreads.size} disabled threads from file.`);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading disabled threads file:', error);
+        }
+    }
+
+    private saveDisabledThreads(): void {
+        try {
+            const threadsArray = Array.from(this.disabledThreads.entries());
+            fs.writeFileSync(this.disabledThreadsFilePath, JSON.stringify(threadsArray, null, 2), 'utf-8');
+        } catch (error) {
+            console.error('Error saving disabled threads file:', error);
+        }
+    }
+
+    private loadEnabledChannels(): void {
+        try {
+            if (fs.existsSync(this.enabledChannelsFilePath)) {
+                const data = fs.readFileSync(this.enabledChannelsFilePath, 'utf-8');
+                const channelsArray = JSON.parse(data);
+                if (Array.isArray(channelsArray)) {
+                    this.enabledChannels = new Map(channelsArray);
+                    console.log(`Loaded ${this.enabledChannels.size} enabled channels from file.`);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading enabled channels file:', error);
+        }
+    }
+
+    private saveEnabledChannels(): void {
+        try {
+            const channelsArray = Array.from(this.enabledChannels.entries());
+            fs.writeFileSync(this.enabledChannelsFilePath, JSON.stringify(channelsArray, null, 2), 'utf-8');
+        } catch (error) {
+            console.error('Error saving enabled channels file:', error);
         }
     }
 }

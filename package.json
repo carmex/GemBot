@@ -19,6 +19,7 @@
     "author": "",
     "license": "MIT",
     "dependencies": {
+        "@extractus/article-extractor": "^8.0.19",
         "@google-cloud/vertexai": "^1.10.0",
         "@google/generative-ai": "^0.24.1",
         "@slack/bolt": "^3.17.1",
