@@ -19,7 +19,7 @@ build/
 *.tsbuildinfo
 
 # Logs
-logs
+logs/
 *.log
 
 # Runtime data
@@ -27,6 +27,10 @@ pids
 *.pid
 *.seed
 *.pid.lock
+dnd-context-*.json
+disabled-threads.json
+dnd-enabled-channels.json
+enabled-channels.json
 
 # Coverage directory used by tools like istanbul
 coverage/
@@ -102,3 +106,6 @@ gcloud-credentials.json
 
 # Newly added db.json
 db.json
+
+# PM2 related files
+.pm2/

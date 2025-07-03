@@ -26,10 +26,11 @@ export class AIHandler {
     private auth: GoogleAuth;
     private disabledThreads: Map<string, boolean> = new Map(); // Track disabled threads by channel+thread_ts
     private enabledChannels: Map<string, boolean> = new Map(); // Track enabled channels
-    private channelNameCache: Map<string, string> = new Map(); // Cache for channel names
+    private dndEnabledChannels: Map<string, boolean> = new Map(); // Track DND-enabled channels
     private geminiSystemPrompt: string;
     private disabledThreadsFilePath: string;
     private enabledChannelsFilePath: string;
+    private dndEnabledChannelsFilePath: string;
 
     constructor(app: App) {
         this.app = app;
@@ -43,6 +44,7 @@ export class AIHandler {
         // Define file path for disabled threads
         this.disabledThreadsFilePath = path.join(__dirname, '../../disabled-threads.json');
         this.enabledChannelsFilePath = path.join(__dirname, '../../enabled-channels.json');
+        this.dndEnabledChannelsFilePath = path.join(__dirname, '../../dnd-enabled-channels.json');
 
         // Load the system prompt from the file
         const promptFilePath = path.join(__dirname, '../prompts/gemini-system-prompt.txt');
@@ -50,12 +52,43 @@ export class AIHandler {
 
         this.loadDisabledThreads();
         this.loadEnabledChannels();
+        this.loadDndEnabledChannels();
         this.setupAIHandlers();
     }
 
     private setupAIHandlers(): void {
         registerWatchlistCommands(this.app);
         registerFinancialCommands(this.app);
+
+        // New command handler for !roll
+        this.app.message(/^!roll (.+)/i, async ({message, context, say, client}) => {
+            if (!('user' in message)) {
+                return;
+            }
+
+            const diceString = context.matches[1].trim();
+
+            try {
+                // Use dynamic import for the 'roll' package
+                const {default: Roll} = await import('roll');
+                const roll = new Roll();
+                const result = roll.roll(diceString);
+
+                // In D&D channels, the handler for all messages will pick this up.
+                // For other channels, this just posts the result.
+                const rollResultText = `User <@${message.user}> rolled *${diceString}* and got: *${result.result}*  _(${result.rolled.join(', ')})_`;
+                await this.app.client.chat.postMessage({
+                    channel: message.channel,
+                    text: rollResultText,
+                });
+
+            } catch (error) {
+                await this.app.client.chat.postMessage({
+                    channel: message.channel,
+                    text: `Sorry, I couldn't roll "${diceString}". Please use standard dice notation (e.g., \`1d20\`, \`2d6+3\`).`,
+                });
+            }
+        });
 
         // New command handler for !chart
         this.app.message(/^!chart ([A-Z]+)(?:\s+(1m|3m|6m|1y|5y))?/i, async ({message, context, say, client}) => {
@@ -111,14 +144,13 @@ export class AIHandler {
             }
 
             const question = context.matches[1].trim();
-            const channelName = await this.getChannelName(message.channel);
 
             if ('thread_ts' in message && message.thread_ts && context.botUserId) {
                 try {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
-                    const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${question}`;
+                    const userPrompt = `channel_id: ${message.channel} | user_id: ${message.user} | message: ${question}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                    if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                         await say({text: response.text, thread_ts: message.thread_ts});
                     }
                     return;
@@ -131,9 +163,9 @@ export class AIHandler {
 
             // Otherwise, start a new thread as before.
             try {
-                const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${question}`;
+                const userPrompt = `channel_id: ${message.channel} | user_id: ${message.user} | message: ${question}`;
                 const response = await this.processAIQuestion(userPrompt, [], this.geminiSystemPrompt);
-                if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                     await say({
                         text: `:robot_face: <@${message.user}> asked: "${question}"\n\n${response.text}`,
                         thread_ts: message.ts,
@@ -152,10 +184,9 @@ export class AIHandler {
                 try {
                     const history = await this.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
                     const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
-                    const channelName = await this.getChannelName(event.channel);
-                    const userPrompt = `channel: #${channelName} | user: <@${event.user}>: ${prompt}`;
+                    const userPrompt = `channel_id: ${event.channel} | user_id: ${event.user} | message: ${prompt}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                    if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                         await say({text: response.text, thread_ts: event.thread_ts});
                     }
                 } catch (error) {
@@ -167,6 +198,50 @@ export class AIHandler {
         // This handler responds to regular messages in threads where the bot is already participating
         // OR in channels where the bot has been enabled to listen to everything.
         this.app.message(/^[^!].*/, async ({message, context, client, say}) => {
+            // First, ensure this is a message we can process.
+            if (message.subtype && message.subtype !== 'bot_message') {
+                return;
+            }
+
+            // Special handler for bot's own roll messages in DND channels
+            const rollRegex = /User <@(.+?)> rolled .* and got: .*/;
+            const rollMatch = 'text' in message && message.text?.match(rollRegex);
+
+            if (
+                context.botId &&
+                message.subtype === 'bot_message' &&
+                'bot_id' in message &&
+                message.bot_id === context.botId &&
+                rollMatch &&
+                this.dndEnabledChannels.has(message.channel)
+            ) {
+                // console.log(`[Flow] Detected bot's own roll message in DND channel. Processing.`);
+                const originalUserId = rollMatch[1]; // Extract original user's ID
+
+                // We also need the bot's USER Id to correctly build history
+                if (!context.botUserId) {
+                    console.error("Could not determine bot user ID for history building.");
+                    return;
+                }
+
+                try {
+                    const dndContext = this.loadDndContext(message.channel);
+                    const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
+                    const dndPrompt = `DND MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(dndContext, null, 2)}\n\n`;
+
+                    // Construct the prompt as if the original user had posted the roll result.
+                    const userPrompt = `${dndPrompt}channel_id: ${message.channel} | user_id: ${originalUserId} | message: ${message.text}`;
+
+                    const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        await say({text: response.text});
+                    }
+                } catch (error) {
+                    console.error("Error in DND roll-follow-up handler:", error);
+                }
+                return; // Stop further processing of this message
+            }
+
             if (!('user' in message) || !context.botUserId) {
                 return; // Not a user message or no bot context
             }
@@ -174,7 +249,9 @@ export class AIHandler {
             // Case 1: Message is in a thread
             if ('thread_ts' in message && message.thread_ts) {
                 const threadKey = `${message.channel}-${message.thread_ts}`;
+                // console.log(`[Flow] Message in thread: ${threadKey}`);
                 if (this.disabledThreads.has(threadKey)) {
+                    // console.log(`[Flow] Thread is disabled. Ignoring.`);
                     return; // Skip responding if disabled in this thread
                 }
 
@@ -182,10 +259,9 @@ export class AIHandler {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
                     const hasBotMessages = history.some(content => content.role === 'model');
                     if (hasBotMessages) {
-                        const channelName = await this.getChannelName(message.channel);
-                        const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${message.text}`;
+                        const userPrompt = `channel_id: ${message.channel} | user_id: ${message.user} | message: ${message.text}`;
                         const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                        if (response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                             await say({text: response.text, thread_ts: message.thread_ts});
                         }
                     }
@@ -197,17 +273,44 @@ export class AIHandler {
 
             // Case 2: Message is in an enabled channel (and not in a thread)
             if (this.enabledChannels.has(message.channel)) {
+                // console.log(`[Flow] Message in enabled channel: ${message.channel}`);
                 try {
                     const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                    const channelName = await this.getChannelName(message.channel);
-                    const userPrompt = `channel: #${channelName} | user: <@${message.user}>: ${message.text}`;
+                    const userPrompt = `channel_id: ${message.channel} | user_id: ${message.user} | message: ${message.text}`;
                     const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
-                    if (response.text.trim() !== '<DO_NOT_RESPOND>') {
-                        await say({text: response.text}); // Post in channel, not thread
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        await say({text: response.text});
                     }
                 } catch (error) {
                     console.error("Error in channel-wide handler:", error);
                 }
+            }
+
+            // Case 3: Message is in a DND-enabled channel
+            else if (this.dndEnabledChannels.has(message.channel)) {
+                // console.log(`[Flow] Message in DND-enabled channel: ${message.channel}`);
+                try {
+                    const dndContext = this.loadDndContext(message.channel);
+                    const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
+
+                    const dndPrompt = `DND MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(dndContext, null, 2)}\n\n`;
+
+                    if (Object.keys(dndContext).length > 0) {
+                        // console.log(`[DND] Prepending DND context to user prompt for channel ${message.channel}.`);
+                    }
+
+                    const userPrompt = `${dndPrompt}channel_id: ${message.channel} | user_id: ${message.user} | message: ${message.text}`;
+
+                    const response = await this.processAIQuestion(userPrompt, history, this.geminiSystemPrompt);
+
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        await say({text: response.text});
+                    }
+                } catch (error) {
+                    console.error("Error in DND handler:", error);
+                }
+            } else {
+                // console.log(`[Flow] Message in non-enabled channel ${message.channel} from user ${message.user}. Ignoring.`);
             }
         });
 
@@ -238,7 +341,10 @@ export class AIHandler {
                         text: `Sorry, I can't generate that image. It was blocked for the following reason: *${result.filteredReason}*`,
                     });
                     if (workingMessage.ts) {
-                        await client.chat.delete({channel: message.channel, ts: workingMessage.ts});
+                        await client.chat.delete({
+                            channel: message.channel,
+                            ts: workingMessage.ts
+                        });
                     }
                     return;
                 }
@@ -403,6 +509,26 @@ export class AIHandler {
             this.saveEnabledChannels();
             await say({text: '🤐 Gembot will no longer respond to all messages in this channel.'});
         });
+
+        // Command to enable DND mode for all messages in a channel
+        this.app.message(/^!gembot dnd on$/i, async ({message, say}) => {
+            if (!('user' in message)) {
+                return;
+            }
+            this.dndEnabledChannels.set(message.channel, true);
+            this.saveDndEnabledChannels();
+            await say({text: '⚔️ DND Mode Enabled! The bot will now act as the Dungeon Master for this channel. All game state will be saved.'});
+        });
+
+        // Command to disable DND mode for all messages in a channel
+        this.app.message(/^!gembot dnd off$/i, async ({message, say}) => {
+            if (!('user' in message)) {
+                return;
+            }
+            this.dndEnabledChannels.delete(message.channel);
+            this.saveDndEnabledChannels();
+            await say({text: '✅ DND Mode Disabled. The bot will no longer act as the Dungeon Master.'});
+        });
     }
 
     private calculateFromTimestamp(now: number, range: string): number {
@@ -533,6 +659,21 @@ export class AIHandler {
                     return {tool_name: 'fetch_url_content', result: {error: (e as Error).message}};
                 }
             }
+            // DND Tool
+            else if (toolRequest.tool_name === 'update_dnd_context') {
+                const {channel_id, context} = toolRequest.parameters;
+                if (!channel_id || !context) {
+                    return {tool_name: 'update_dnd_context', result: {error: 'Missing channel_id or context'}};
+                }
+                try {
+                    const filePath = path.join(__dirname, `../../dnd-context-${channel_id}.json`);
+                    fs.writeFileSync(filePath, JSON.stringify(context, null, 2), 'utf-8');
+                    return {tool_name: 'update_dnd_context', result: {success: true}};
+                } catch (error) {
+                    console.error('Error saving DND context:', error);
+                    return {tool_name: 'update_dnd_context', result: {error: (error as Error).message}};
+                }
+            }
             return {tool_name: 'unknown_tool', result: {error: 'Tool not found'}};
         } catch (error) {
             console.error('Error handling tool call:', error);
@@ -561,22 +702,58 @@ export class AIHandler {
 
         const result = await model.generateContent({contents});
 
-        if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
-            console.log('--- LLM Response Blocked ---');
+        try {
+            if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
+                console.log('--- LLM Response Blocked ---');
+                return {
+                    text: "I'm sorry, I was unable to generate a response. This may be due to the safety settings.",
+                    confidence: 0,
+                };
+            }
+
+            const responseText = result.response.text();
+            // console.log('--- Received from LLM (Turn 1) ---');
+            // console.log(responseText);
+            // console.log('--------------------------------');
+
+            const toolMatch = responseText.match(/<tool_code>([\s\S]*?)<\/tool_code>/);
+            if (toolMatch) {
+                const toolCodeStartIndex = responseText.indexOf('<tool_code>');
+                const conversationalText = responseText.substring(0, toolCodeStartIndex).trim();
+                const toolCode = toolMatch[1].trim();
+
+                if (conversationalText) {
+                    // Scenario 1: Narrative + Tool Call. Send narrative now, update context in background.
+                    this.handleToolContinuation(toolCode, contents, responseText, model).catch(error => {
+                        console.error("Error in background tool continuation:", error);
+                    });
+                    return {text: conversationalText, confidence: 100};
+                } else {
+                    // Scenario 2: Tool Call only. Wait for the tool to finish and return the final text.
+                    const finalResponseText = await this.handleToolContinuation(toolCode, contents, responseText, model);
+                    return {text: finalResponseText, confidence: 100};
+                }
+            }
+
             return {
-                text: "I'm sorry, I was unable to generate a response. This may be due to the safety settings.",
-                confidence: 0,
+                text: responseText,
+                confidence: 100, // Gemini does not provide a confidence score
+            };
+        } catch (error) {
+            console.error('FATAL: Error processing LLM response in processAIQuestion');
+            console.error('LLM Result:', JSON.stringify(result, null, 2));
+            console.error('Error:', error);
+            // Instead of crashing, return a graceful error message to the user.
+            return {
+                text: "I'm sorry, an unexpected error occurred while processing the AI response.",
+                confidence: 0
             };
         }
+    }
 
-        const responseText = result.response.text();
-        // console.log('--- Received from LLM (Turn 1) ---');
-        // console.log(responseText);
-        // console.log('--------------------------------');
-
-        const toolMatch = responseText.match(/<tool_code>([\s\S]*?)<\/tool_code>/);
-        if (toolMatch) {
-            const toolCode = toolMatch[1].trim();
+    private async handleToolContinuation(toolCode: string, contents: Content[], responseText: string, model: any): Promise<string> {
+        try {
+            console.log('[Tool] Continuing with tool call...');
             const toolResult = await this.handleToolCall(toolCode);
 
             const toolResultContent = {
@@ -586,26 +763,23 @@ export class AIHandler {
 
             const secondTurnContents: Content[] = [...contents, {role: 'model', parts: [{text: responseText}]}, toolResultContent];
 
-            // console.log('--- Sending to LLM (Turn 2) ---');
-            // console.log(JSON.stringify(secondTurnContents, null, 2));
-            // console.log('-----------------------------');
-
+            // Make the second call to the LLM to inform it of the tool result.
             const secondResult = await model.generateContent({contents: secondTurnContents});
+
             if (secondResult.response && secondResult.response.candidates && secondResult.response.candidates.length > 0) {
                 const finalResponseText = secondResult.response.text();
                 // console.log('--- Received from LLM (Turn 2) ---');
                 // console.log(finalResponseText);
                 // console.log('--------------------------------');
-                return {text: finalResponseText, confidence: 100};
+                return finalResponseText;
             } else {
-                return {text: "I was unable to process the tool's result.", confidence: 0};
+                console.log('--- LLM Response Blocked (Turn 2) ---');
+                return "I'm sorry, I was unable to process the tool result due to safety settings.";
             }
+        } catch (error) {
+            console.error('Error in tool continuation handler:', error);
+            return `An error occurred while handling the tool call: ${(error as Error).message}`;
         }
-
-        return {
-            text: responseText,
-            confidence: 100, // Gemini does not provide a confidence score
-        };
     }
 
     private async generateImage(prompt: string): Promise<{imageBase64?: string; filteredReason?: string}> {
@@ -742,7 +916,6 @@ export class AIHandler {
                 return history;
             }
 
-            const channelName = await this.getChannelName(channel);
             for (const reply of replies.messages) {
                 if (reply.ts === trigger_ts) {
                     continue;
@@ -751,7 +924,7 @@ export class AIHandler {
                 if (reply.user === botUserId || reply.bot_id) {
                     history.push({role: 'model', parts: [{text: reply.text || ''}]});
                 } else if (reply.user) {
-                    history.push({role: 'user', parts: [{text: `channel: #${channelName} | user: <@${reply.user}>: ${reply.text || ''}`}]});
+                    history.push({role: 'user', parts: [{text: `channel_id: ${channel} | user_id: ${reply.user} | message: ${reply.text || ''}`}]});
                 }
             }
         } catch (error) {
@@ -765,7 +938,7 @@ export class AIHandler {
         try {
             const result = await client.conversations.history({
                 channel,
-                limit: 20, // Fetch last 20 messages for context
+                limit: config.channelHistoryLimit, // Fetch last messages for context
             });
 
             if (!result.messages) {
@@ -774,7 +947,6 @@ export class AIHandler {
 
             // Messages are newest-first, so reverse them for chronological order
             const messages = result.messages.reverse();
-            const channelName = await this.getChannelName(channel);
 
             for (const reply of messages) {
                 if (reply.ts === trigger_ts) {
@@ -784,7 +956,7 @@ export class AIHandler {
                 if (reply.user === botUserId || reply.bot_id) {
                     history.push({role: 'model', parts: [{text: reply.text || ''}]});
                 } else if (reply.user) {
-                    history.push({role: 'user', parts: [{text: `channel: #${channelName} | user: <@${reply.user}>: ${reply.text || ''}`}]});
+                    history.push({role: 'user', parts: [{text: `channel_id: ${channel} | user_id: ${reply.user} | message: ${reply.text || ''}`}]});
                 }
             }
         } catch (error) {
@@ -854,26 +1026,45 @@ export class AIHandler {
         }
     }
 
-    private async getChannelName(channelId: string): Promise<string> {
-        if (this.channelNameCache.has(channelId)) {
-            return this.channelNameCache.get(channelId)!;
-        }
-
+    private loadDndEnabledChannels(): void {
         try {
-            const result = await this.app.client.conversations.info({
-                channel: channelId,
-                token: config.slack.botToken
-            });
-
-            if (result.ok && result.channel && 'name' in result.channel && result.channel.name) {
-                const name = result.channel.name;
-                this.channelNameCache.set(channelId, name);
-                return name;
+            if (fs.existsSync(this.dndEnabledChannelsFilePath)) {
+                const data = fs.readFileSync(this.dndEnabledChannelsFilePath, 'utf-8');
+                const channelsArray = JSON.parse(data);
+                if (Array.isArray(channelsArray)) {
+                    this.dndEnabledChannels = new Map(channelsArray);
+                    console.log(`Loaded ${this.dndEnabledChannels.size} DND-enabled channels from file.`);
+                }
             }
         } catch (error) {
-            console.error(`Error fetching channel name for ${channelId}:`, error);
+            console.error('Error loading DND-enabled channels file:', error);
         }
-        // Fallback to channelId if name can't be fetched
-        return channelId;
+    }
+
+    private saveDndEnabledChannels(): void {
+        try {
+            const channelsArray = Array.from(this.dndEnabledChannels.entries());
+            fs.writeFileSync(this.dndEnabledChannelsFilePath, JSON.stringify(channelsArray, null, 2), 'utf-8');
+        } catch (error) {
+            console.error('Error saving DND-enabled channels file:', error);
+        }
+    }
+
+    private loadDndContext(channelId: string): any {
+        const filePath = path.join(__dirname, `../../dnd-context-${channelId}.json`);
+        // console.log(`[DND] Attempting to load context from: ${filePath}`);
+        if (fs.existsSync(filePath)) {
+            try {
+                const data = fs.readFileSync(filePath, 'utf-8');
+                const context = JSON.parse(data);
+                // console.log(`[DND] Successfully loaded and parsed context for channel ${channelId}.`);
+                return context;
+            } catch (error) {
+                // console.error(`[DND] Error loading or parsing DND context for channel ${channelId}:`, error);
+                return {}; // Return empty object on error
+            }
+        }
+        // console.log(`[DND] Context file not found for channel ${channelId}, returning empty context.`);
+        return {}; // Return empty object if file doesn't exist
     }
 }

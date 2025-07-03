@@ -1,6 +1,6 @@
 {
     "compilerOptions": {
-        "target": "es2020",
+        "target": "es2022",
         "module": "commonjs",
         "moduleResolution": "node",
         "lib": [
@@ -16,5 +16,9 @@
     },
     "include": [
         "src/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        "**/*.spec.ts"
     ]
 }

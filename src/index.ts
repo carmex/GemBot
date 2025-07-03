@@ -4,6 +4,12 @@ import {AIHandler} from './features/ai-handler';
 import * as cron from 'node-cron';
 import {fetchStockNews} from './features/finnhub-api';
 
+// Gracefully handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+    console.error('FATAL: Uncaught exception:', error);
+    process.exit(1);
+});
+
 // Function to post morning greeting with stock news
 async function postMorningGreeting(app: App) {
     console.log('[MorningGreeting] postMorningGreeting called at:', new Date().toString());
@@ -72,7 +78,12 @@ const app = new App({
 });
 
 // Initialize AI handler
-new AIHandler(app);
+try {
+    new AIHandler(app);
+} catch (error) {
+    console.error('Failed to initialize AIHandler:', error);
+    process.exit(1);
+}
 
 // Example slash command
 app.command('/ping', async ({command, ack, respond}) => {

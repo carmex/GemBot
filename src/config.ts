@@ -15,6 +15,7 @@ export interface Config {
     };
     environment: string;
     morningGreetingSchedule: string;
+    channelHistoryLimit: number;
     gemini: {
         apiKey: string;
         model: string;
@@ -39,6 +40,7 @@ export const config: Config = {
     },
     environment: process.env.NODE_ENV || 'development',
     morningGreetingSchedule: process.env.MORNING_GREETING_SCHEDULE || '30 9 * * *',
+    channelHistoryLimit: parseInt(process.env.CHANNEL_HISTORY_LIMIT || '20', 10),
     gemini: {
         apiKey: process.env.GEMINI_API_KEY || '',
         model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
@@ -63,6 +65,7 @@ export function validateConfig(): void {
         'GOOGLE_APPLICATION_CREDENTIALS',
         'SLACK_MORNING_GREETING_CHANNEL_ID',
         'MORNING_GREETING_SCHEDULE',
+        'CHANNEL_HISTORY_LIMIT',
     ];
 
     const missing = requiredVars.filter(varName => !process.env[varName]);
