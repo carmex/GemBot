@@ -1,4 +1,4 @@
-import {App} from '@slack/bolt';
+import {App, SocketModeReceiver} from '@slack/bolt';
 import {config, validateConfig} from './config';
 import {AIHandler} from './features/ai-handler';
 import * as cron from 'node-cron';
@@ -69,12 +69,44 @@ try {
     process.exit(1);
 }
 
+// Initialize the receiver
+const receiver = new SocketModeReceiver({
+    appToken: config.slack.appToken,
+});
+
 // Initialize the Slack app
 const app = new App({
     token: config.slack.botToken,
-    signingSecret: config.slack.signingSecret,
-    socketMode: true,
-    appToken: config.slack.appToken,
+    receiver: receiver,
+});
+
+// Add listeners for Socket Mode client lifecycle events
+receiver.client.on('connecting', () => {
+    console.log('[Socket Mode] Connecting to Slack...');
+});
+
+receiver.client.on('connected', () => {
+    console.log('[Socket Mode] Connected.');
+});
+
+receiver.client.on('reconnecting', () => {
+    console.log('[Socket Mode] Reconnecting...');
+});
+
+receiver.client.on('disconnecting', () => {
+    console.log('[Socket Mode] Disconnecting...');
+});
+
+receiver.client.on('disconnected', (error?: Error) => {
+    if (error) {
+        console.error('[Socket Mode] Disconnected with error:', error);
+    } else {
+        console.log('[Socket Mode] Disconnected normally.');
+    }
+});
+
+receiver.client.on('error', (error: Error) => {
+    console.error('[Socket Mode] An error occurred:', error);
 });
 
 // Initialize AI handler
@@ -131,8 +163,8 @@ app.event('*', async ({event}) => {
 // Start the app
 (async () => {
     try {
-        await app.start(config.server.port);
-        console.log(`⚡️ Bolt app is running on port ${config.server.port}!`);
+        await app.start();
+        console.log(`⚡️ Bolt app is running in Socket Mode!`);
         console.log(`Environment: ${config.environment}`);
         console.log('Bot is ready to receive events!');
         console.log('Current server time:', new Date().toString());
