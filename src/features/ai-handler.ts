@@ -1,3 +1,21 @@
+/*
+ * GemBot: An intelligent Slack assistant with AI capabilities.
+ * Copyright (C) 2025 David Lott
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import {App, SlackEvent, SayFn} from '@slack/bolt';
 import {WebClient} from '@slack/web-api';
 import {GoogleGenerativeAI, Content, HarmCategory, HarmBlockThreshold, FunctionCall} from '@google/generative-ai';
@@ -391,9 +409,7 @@ export class AIHandler {
         if (candles.length > 0) {
             const first = new Date(candles[0].t).toISOString().slice(0, 10);
             const last = new Date(candles[candles.length - 1].t).toISOString().slice(0, 10);
-            console.log(`[Chart Debug] ${ticker} ${range}: ${candles.length} candles, from ${first} to ${last}`);
         } else {
-            console.log(`[Chart Debug] ${ticker} ${range}: 0 candles`);
         }
         return candles;
     }

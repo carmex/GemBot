@@ -1,3 +1,21 @@
+/*
+ * GemBot: An intelligent Slack assistant with AI capabilities.
+ * Copyright (C) 2025 David Lott
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import {App, SocketModeReceiver} from '@slack/bolt';
 import {config} from './config';
 import {AIHandler} from './features/ai-handler';
@@ -55,7 +73,6 @@ new AIHandler(app);
 
 // Example slash command
 app.command('/ping', async ({command, ack, respond}) => {
-    console.log('Received ping command:', command);
     await ack();
     if (respond) {
         await respond({
@@ -67,11 +84,6 @@ app.command('/ping', async ({command, ack, respond}) => {
 // Error handling
 app.error(async (error) => {
     console.error('Error:', error);
-});
-
-// Add general event logging
-app.event('*', async ({event}) => {
-    console.log('Received event:', event.type, event);
 });
 
 // Start the app

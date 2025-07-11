@@ -1,3 +1,21 @@
+/*
+ * GemBot: An intelligent Slack assistant with AI capabilities.
+ * Copyright (C) 2025 David Lott
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import {App} from '@slack/bolt';
 import {AIHandler} from '../features/ai-handler';
 import {config} from '../config';
@@ -250,7 +268,6 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
             return;
         }
 
-        console.log(`[Command] !image command received from ${message.user}: ${context.matches[1]}`);
         const prompt = context.matches[1];
         try {
             const workingMessage = await say({
@@ -548,4 +565,4 @@ The bot tracks usage of the LLM and image generation features. You can check you
         console.log(`Unknown gembot command: ${context.matches[1]}`);
         await say(gembotUsage);
     });
-}
+};
