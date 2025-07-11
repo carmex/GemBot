@@ -147,7 +147,7 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
 
 To run the bot in development mode with hot-reloading:
 ```bash
-npm run dev
+npm run watch
 ```
 The bot will connect to Slack and be ready for commands.
 
