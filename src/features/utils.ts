@@ -1,5 +1,7 @@
 import {config} from '../config';
 import {fetchCompanyProfile, fetchQuote} from './finnhub-api';
+import {App} from '@slack/bolt';
+import {fetchStockNews} from './finnhub-api';
 
 export const getColoredTileEmoji = (percentChange: number): string => {
     if (percentChange >= 10) return ':_charles_green5:';
@@ -63,5 +65,33 @@ export async function formatQuote(ticker: string, displayName?: string): Promise
     } catch (error) {
         console.error(`Error fetching quote for ${ticker}:`, error);
         return `*${displayTicker}*: Error fetching data`;
+    }
+}
+
+// Function to send the morning greeting
+export async function sendMorningGreeting(app: App, channelId: string) {
+    try {
+        let text = 'Good morning everyone! What are your top priorities for today?';
+
+        if (config.finnhubApiKey) {
+            const articles = await fetchStockNews();
+            if (articles && articles.length > 0) {
+                const formattedArticles = articles
+                    .slice(0, 5)
+                    .map((article: {url: string}) => `<${article.url}|.>`)
+                    .join(' ');
+                text += `\n\nHere are the latest general headlines: ${formattedArticles}`;
+            }
+        }
+
+        await app.client.chat.postMessage({
+            token: config.slack.botToken,
+            channel: channelId,
+            text: text,
+        });
+
+        console.log('Morning greeting sent successfully.');
+    } catch (error) {
+        console.error('Failed to send morning greeting:', error);
     }
 } 

@@ -77,50 +77,6 @@ export const registerFinancialCommands = (app: App) => {
         }
     });
 
-    // New command for !news (consolidated)
-    app.message(/^!news(?:\s+(general|crypto))?/i, async ({message, context, say}) => {
-        if (!('user' in message)) {
-            return;
-        }
-
-        if (!config.finnhubApiKey) {
-            await say({text: 'The news feature is not configured. An API key for Finnhub is required.'});
-            return;
-        }
-
-        const category = context.matches?.[1] || 'general';
-
-        try {
-            const articles = category === 'crypto' ? await fetchCryptoNews() : await fetchStockNews();
-
-            if (!articles || articles.length === 0) {
-                await say({
-                    text: `I couldn't find any recent ${category} news.`, thread_ts: message.ts
-                });
-                return;
-            }
-
-            // Format the top 5 articles
-            const formattedArticles = articles
-                .slice(0, 5)
-                .map(
-                    (article) => `• *${article.headline}* - _${article.source}_\n   <${article.url}|Read More>`
-                )
-                .join('\n\n');
-
-            await say({
-                text: `Here are the latest ${category} headlines:\n\n${formattedArticles}`,
-                thread_ts: message.ts,
-            });
-        } catch (error) {
-            console.error('News error:', error);
-            await say({
-                text: `Sorry, I couldn't fetch the news. Error: ${(error as Error).message}`,
-                thread_ts: message.ts,
-            });
-        }
-    });
-
     // New command handler for !stats (now supports multiple tickers)
     app.message(/^!stats ([A-Z.\s]+)$/i, async ({message, context, say}) => {
         if (!('user' in message) || !context.matches?.[1]) return;

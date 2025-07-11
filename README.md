@@ -10,17 +10,18 @@ GemBot is a powerful, AI-driven Slack bot built with TypeScript and the Slack Bo
 -   **Watchlist Management**: Track your stock portfolio with a personal watchlist.
 -   **⏰ Scheduled-actions**: Delivers a daily morning greeting with the latest market news.
 -   **🔒 Secure & Configurable**: Manages all API keys and secrets securely using environment variables.
+-   **🎭 RPG Mode**: Act as a Game Master or a player in a role-playing game channel.
 
 ## Prerequisites
 
--   Node.js (v16 or higher)
+-   Node.js (v18 or higher)
 -   npm or yarn
 -   A Slack workspace where you can install apps
--   Google Cloud account with a project set up
+-   A Google Cloud account with a project set up
 -   API keys for:
     -   Google Gemini
-    -   Finnhub
-    -   Alpha Vantage
+    -   Finnhub (optional, for financial data)
+    -   Alpha Vantage (optional, for financial charts)
 
 ## Setup
 
@@ -37,12 +38,19 @@ GemBot is a powerful, AI-driven Slack bot built with TypeScript and the Slack Bo
 
 3.  **Create a Slack App**
     -   Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app "From scratch".
+    -   Navigate to **Socket Mode** and enable it.
     -   Go to **OAuth & Permissions** and add the following Bot Token Scopes:
         -   `app_mentions:read`
+        -   `channels:history`
         -   `chat:write`
+        -   `chat:write.public`
         -   `commands`
+        -   `files:read`
         -   `files:write`
-    -   Go to **Socket Mode** and enable it.
+        -   `groups:history`
+        -   `im:history`
+        -   `mpim:history`
+        -   `users:read`
     -   Go to **Basic Information**, scroll down to "App-Level Tokens", and generate a new token with the `connections:write` scope.
     -   Install the app to your workspace.
 
@@ -50,41 +58,42 @@ GemBot is a powerful, AI-driven Slack bot built with TypeScript and the Slack Bo
     -   Go to the [Google Cloud Console](https://console.cloud.google.com/).
     -   Enable the **Vertex AI API** for your project.
     -   Create a **Service Account** with the `Vertex AI User` role.
-    -   Create a JSON key for this service account and download it.
-    -   Enable the **Gemini API**. You can get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+    -   Create a JSON key for this service account, download it, and save it in the root of the project directory.
+    -   Enable the **Gemini API**. You can get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
 5.  **Configure Environment Variables**
-    -   Rename the `gcloud-credentials.json.example` file you downloaded to `gcloud-credentials.json` and place it in the root of the project.
     -   Copy the example environment file:
         ```bash
         cp env.example .env
         ```
-    -   Edit the `.env` file and fill in all the required tokens and API keys from the previous steps.
+    -   Edit the `.env` file and fill in all the required tokens and API keys from the previous steps. Make sure the `GOOGLE_APPLICATION_CREDENTIALS` variable points to the name of your downloaded service account JSON file.
 
     ```dotenv
     # Slack API credentials
     SLACK_BOT_TOKEN=xoxb-your-bot-token
-    SLACK_SIGNING_SECRET=your-signing-secret-from-basic-info-page
+    SLACK_SIGNING_SECRET=your-signing-secret-from-the-basic-info-page
     SLACK_APP_TOKEN=xapp-your-app-token
     
-    # Gemini API Key for !gem command
+    # Gemini API Key for conversational features
     GEMINI_API_KEY=your-gemini-api-key
     
     # Google Cloud project details for !image command
-    GCLOUD_PROJECT=your-gcloud-project-id
-    GCLOUD_LOCATION=us-central1
-    GOOGLE_APPLICATION_CREDENTIALS=./gcp-credentials.json
+    GOOGLE_APPLICATION_CREDENTIALS=./your-gcp-credentials-file.json
     
-    # Finnhub API Key for !q command
+    # Vertex AI Configuration for !image generation (optional)
+    VERTEX_PROJECT_ID=your-gcloud-project-id
+    VERTEX_LOCATION=us-central1
+    
+    # Finnhub API Key for financial commands (optional)
     FINNHUB_API_KEY=your-finnhub-api-key
     
-    # Alpha Vantage API Key for !q and !chart commands
+    # Alpha Vantage API Key for !chart command (optional)
     ALPHA_VANTAGE_API_KEY=your-alpha-vantage-api-key
     ```
 
 ## Development
 
-**Start the bot:**
+To run the bot in development mode with hot-reloading:
 ```bash
 npm run dev
 ```
@@ -98,6 +107,7 @@ The bot will connect to Slack and be ready for commands.
 -   `!image <prompt>`: Generates an image based on your text prompt using Imagen 4.
 -   `!gembot on`: Enable Gembot in the current thread.
 -   `!gembot off`: Disable Gembot in the current thread.
+-   `!gembot help`: Shows a list of all available commands in a thread.
 
 ### RPG Mode
 - `!gembot rpg <gm|player|off|status>`: Manage RPG mode for this channel.
@@ -201,6 +211,11 @@ Here are some common PM2 commands to manage your bot:
     ```bash
     pm2 delete slack-ai-bot
     ```
+
+
+## Built With
+
+*   Built with [Cursor](https://cursor.sh), the AI-first code editor.
 
 
 ## Contributing

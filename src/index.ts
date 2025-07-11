@@ -2,27 +2,13 @@ import {App, SocketModeReceiver} from '@slack/bolt';
 import {config} from './config';
 import {AIHandler} from './features/ai-handler';
 import * as cron from 'node-cron';
-import {fetchStockNews} from './features/finnhub-api';
+import {sendMorningGreeting} from "./features/utils";
 
 // Gracefully handle uncaught exceptions
 process.on('uncaughtException', (error) => {
     console.error('FATAL: Uncaught exception:', error);
     process.exit(1);
 });
-
-// Function to send the morning greeting
-async function sendMorningGreeting(app: App, channelId: string) {
-    try {
-        await app.client.chat.postMessage({
-            token: config.slack.botToken,
-            channel: channelId,
-            text: 'Good morning everyone! What are your top priorities for today?',
-        });
-        console.log('Morning greeting sent successfully.');
-    } catch (error) {
-        console.error('Failed to send morning greeting:', error);
-    }
-}
 
 // Initialize the receiver
 const receiver = new SocketModeReceiver({
@@ -75,28 +61,6 @@ app.command('/ping', async ({command, ack, respond}) => {
         await respond({
             text: `Pong! 🏓 (from <@${command.user_id}>)`,
         });
-    }
-});
-
-// Test command for morning greeting
-app.command('/test-morning-greeting', async ({command, ack, respond}) => {
-    console.log('Received test morning greeting command:', command);
-    await ack();
-
-    try {
-        await sendMorningGreeting(app, config.slack.morningGreetingChannelId);
-        if (respond) {
-            await respond({
-                text: '✅ Morning greeting test completed! Check the #stocks channel.',
-            });
-        }
-    } catch (error) {
-        console.error('Error in test morning greeting:', error);
-        if (respond) {
-            await respond({
-                text: `❌ Error testing morning greeting: ${(error as Error).message}`,
-            });
-        }
     }
 });
 
