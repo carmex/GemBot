@@ -27,9 +27,9 @@ pids
 *.pid
 *.seed
 *.pid.lock
-dnd-context-*.json
+rpg-context-*.json
 disabled-threads.json
-dnd-enabled-channels.json
+rpg-enabled-channels.json
 enabled-channels.json
 usage.json
 

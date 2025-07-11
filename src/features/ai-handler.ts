@@ -7,7 +7,8 @@ import path from 'path';
 import fetch from 'node-fetch';
 import {registerWatchlistCommands} from '../commands/watchlist';
 import {registerFinancialCommands} from '../commands/financial';
-import {extract} from '@extractus/article-extractor';
+import {Readability} from '@mozilla/readability';
+import {JSDOM} from 'jsdom';
 import {ChartJSNodeCanvas} from 'chartjs-node-canvas';
 import {ChartConfiguration} from 'chart.js';
 import {
@@ -32,12 +33,14 @@ export class AIHandler {
     private auth: GoogleAuth;
     private disabledThreads: Set<string> = new Set();
     private enabledChannels: Set<string> = new Set();
-    private dndEnabledChannels: Set<string> = new Set();
+    private rpgEnabledChannels: Map<string, string> = new Map();
     private geminiSystemPrompt: string;
-    private dndSystemPrompt: string;
+    private rpgGmSystemPrompt: string;
+    private rpgPlayerSystemPrompt: string;
     private disabledThreadsFilePath: string;
     private enabledChannelsFilePath: string;
-    private dndEnabledChannelsFilePath: string;
+    private rpgEnabledChannelsFilePath: string;
+    private lastWarningTimestamp: Map<string, number> = new Map();
 
     constructor(app: App) {
         this.app = app;
@@ -49,7 +52,7 @@ export class AIHandler {
 
         this.disabledThreadsFilePath = path.join(__dirname, '../../disabled-threads.json');
         this.enabledChannelsFilePath = path.join(__dirname, '../../enabled-channels.json');
-        this.dndEnabledChannelsFilePath = path.join(__dirname, '../../dnd-enabled-channels.json');
+        this.rpgEnabledChannelsFilePath = path.join(__dirname, '../../rpg-enabled-channels.json');
 
         const promptFilePath = path.join(__dirname, '../prompts/gemini-system-prompt.txt');
         try {
@@ -59,18 +62,26 @@ export class AIHandler {
             this.geminiSystemPrompt = 'You are a helpful assistant.';
         }
 
-        const dndPromptFilePath = path.join(__dirname, '../prompts/gemini-dnd-system-prompt.txt');
+        const rpgGmPromptFilePath = path.join(__dirname, '../prompts/gemini-rpg-gm-system-prompt.txt');
         try {
-            this.dndSystemPrompt = fs.readFileSync(dndPromptFilePath, 'utf-8');
+            this.rpgGmSystemPrompt = fs.readFileSync(rpgGmPromptFilePath, 'utf-8');
         } catch (e) {
-            console.error('Error reading DND system prompt file:', e);
-            this.dndSystemPrompt = '';
+            console.error('Error reading RPG GM system prompt file:', e);
+            this.rpgGmSystemPrompt = '';
+        }
+
+        const rpgPlayerPromptFilePath = path.join(__dirname, '../prompts/gemini-rpg-player-system-prompt.txt');
+        try {
+            this.rpgPlayerSystemPrompt = fs.readFileSync(rpgPlayerPromptFilePath, 'utf-8');
+        } catch (e) {
+            console.error('Error reading RPG Player system prompt file:', e);
+            this.rpgPlayerSystemPrompt = '';
         }
 
         this.initializeListeners();
         this.loadEnabledChannels();
         this.loadDisabledThreads();
-        this.loadDndEnabledChannels();
+        this.loadRpgEnabledChannels();
         initUsageDb();
     }
 
@@ -137,49 +148,20 @@ export class AIHandler {
             }
         });
 
-        this.app.message(/^!gem (.+)/i, async ({message, context, client, say}) => {
-            if (!('user' in message) || !message.user) {
-                return;
-            }
-            const question = context.matches[1].trim();
-            if ('thread_ts' in message && message.thread_ts && context.botUserId) {
-                try {
-                    const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
-                    const userPrompt = this.buildUserPrompt({channel: message.channel, user: message.user, text: question});
-                    const response = await this.processAIQuestion(userPrompt, history, message.channel);
-                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                        const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
-                        await say({text: responseText, thread_ts: message.thread_ts});
-                    }
-                    return;
-                } catch (error) {
-                    console.error('Gemini API error in-thread (!gem):', error);
-                    await say({text: `Sorry <@${message.user}>, I couldn't process your request.`, thread_ts: message.ts});
-                }
-                return;
-            }
-            try {
-                const userPrompt = this.buildUserPrompt({channel: message.channel, user: message.user, text: question});
-                const response = await this.processAIQuestion(userPrompt, [], message.channel);
-                if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                    const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
-                    await say({
-                        text: `:robot_face: <@${message.user}> asked: "${question}"\n\n${responseText}`,
-                        thread_ts: message.ts,
-                    });
-                }
-                return;
-            } catch (error) {
-                console.error('Gemini API error (!gem message):', error);
-                await say({text: `Sorry <@${message.user}>, I couldn't process your request.`, thread_ts: message.ts});
-            }
-        });
-
         this.app.event('app_mention', async ({event, context, client, say}) => {
-            if (event.thread_ts && context.botUserId && event.user) {
+            if (!config.gemini.apiKey) {
+                await say({text: 'This feature is not configured. A Gemini API key is required.'});
+                return;
+            }
+            const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
+            if (!context.botUserId || !event.user) {
+                return;
+            }
+
+            // Mentioned in a thread
+            if (event.thread_ts) {
                 try {
                     const history = await this.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
-                    const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
                     const userPrompt = this.buildUserPrompt({channel: event.channel, user: event.user, text: prompt});
                     const response = await this.processAIQuestion(userPrompt, history, event.channel);
                     if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
@@ -187,12 +169,67 @@ export class AIHandler {
                         await say({text: responseText, thread_ts: event.thread_ts});
                     }
                 } catch (error) {
-                    console.error("Error in mention handler:", error);
+                    console.error("Error in mention handler (thread):", error);
+                    await say({text: `Sorry <@${event.user}>, I encountered an error.`, thread_ts: event.thread_ts});
+                }
+                return;
+            }
+
+            // Mentioned in a channel (not a thread)
+            const rpgMode = this.rpgEnabledChannels.get(event.channel);
+            if (rpgMode === 'player') {
+                try {
+                    const history = await this.buildHistorySinceLastBotMessage(event.channel, client, context.botUserId);
+                    const userPrompt = this.buildUserPrompt({channel: event.channel, user: event.user, text: prompt});
+                    const response = await this.processAIQuestion(userPrompt, history, event.channel);
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
+                        await say({text: responseText});
+                    }
+                } catch (error) {
+                    console.error("Error in RPG player mode mention handler:", error);
+                    await say({text: `Sorry <@${event.user}>, I couldn't process your request in player mode.`});
+                }
+            } else {
+                // Standard mention to start a new thread
+                try {
+                    const userPrompt = this.buildUserPrompt({channel: event.channel, user: event.user, text: prompt});
+                    const response = await this.processAIQuestion(userPrompt, [], event.channel);
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
+                        await say({
+                            text: `:robot_face: <@${event.user}> asked: "${prompt}"\n\n${responseText}`,
+                            thread_ts: event.ts,
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error in mention handler (channel):', error);
+                    await say({text: `Sorry <@${event.user}>, I couldn't process your request.`, thread_ts: event.ts});
                 }
             }
         });
 
         this.app.message(/^[^!].*/, async ({message, context, say, client}) => {
+            if ('text' in message && message.text && !config.gemini.apiKey) {
+                // Heuristically check if this is a message that would have triggered the AI.
+                // This is imperfect but prevents spamming "not configured" messages in busy channels.
+                const shouldHaveTriggered =
+                    ('thread_ts' in message && message.thread_ts && message.text.length > 5) ||
+                    this.enabledChannels.has(message.channel) ||
+                    this.rpgEnabledChannels.has(message.channel);
+
+                if (shouldHaveTriggered) {
+                    // Check if the bot has already warned in the last 5 minutes in this channel to avoid spam
+                    const now = new Date().getTime();
+                    const lastWarning = this.lastWarningTimestamp.get(message.channel);
+                    if (!lastWarning || now - lastWarning > 5 * 60 * 1000) {
+                        await say({text: 'The AI features are not configured. A Gemini API key is required.'});
+                        this.lastWarningTimestamp.set(message.channel, now);
+                    }
+                }
+                return;
+            }
+
             if (!('user' in message) || !message.user || (message.subtype && message.subtype !== 'bot_message')) {
                 return;
             }
@@ -204,7 +241,7 @@ export class AIHandler {
                 'bot_id' in message &&
                 message.bot_id === context.botId &&
                 rollMatch &&
-                this.dndEnabledChannels.has(message.channel)
+                this.rpgEnabledChannels.has(message.channel)
             ) {
                 const originalUserId = rollMatch[1];
                 if (!context.botUserId) {
@@ -212,17 +249,23 @@ export class AIHandler {
                     return;
                 }
                 try {
-                    const dndContext = this.loadDndContext(message.channel);
+                    const rpgContext = this.loadRpgContext(message.channel);
                     const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                    const dndPrompt = `DND MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(dndContext, null, 2)}\n\n`;
-                    const userPrompt = `${dndPrompt}channel_id: ${message.channel} | user_id: ${originalUserId} | message: ${message.text}`;
+                    const rpgMode = this.rpgEnabledChannels.get(message.channel);
+                    let rpgPrompt = '';
+                    if (rpgMode === 'gm') {
+                        rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(rpgContext, null, 2)}\n\n`;
+                    } else if (rpgMode === 'player') {
+                        rpgPrompt = `RPG PLAYER MODE (channel_id: ${message.channel}):\nYour character sheet: ${JSON.stringify(rpgContext, null, 2)}\n\n`;
+                    }
+                    const userPrompt = `${rpgPrompt}channel_id: ${message.channel} | user_id: ${originalUserId} | message: ${message.text}`;
                     const response = await this.processAIQuestion(userPrompt, history, message.channel);
                     if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                         const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
                         await say({text: responseText});
                     }
                 } catch (error) {
-                    console.error("Error in DND roll-follow-up handler:", error);
+                    console.error("Error in RPG roll-follow-up handler:", error);
                 }
                 return;
             }
@@ -243,7 +286,9 @@ export class AIHandler {
                 try {
                     const history = await this.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
                     const hasBotMessages = history.some(content => content.role === 'model');
-                    if (hasBotMessages) {
+                    const isRpgChannel = this.rpgEnabledChannels.has(message.channel);
+
+                    if (hasBotMessages || isRpgChannel) {
                         const userPrompt = this.buildUserPrompt({channel: message.channel, user: message.user, text: message.text});
                         const response = await this.processAIQuestion(userPrompt, history, message.channel);
                         if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
@@ -270,19 +315,22 @@ export class AIHandler {
                 }
                 return;
             }
-            if (this.dndEnabledChannels.has(message.channel)) {
-                try {
-                    const dndContext = this.loadDndContext(message.channel);
-                    const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                    const dndPrompt = `DND MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(dndContext, null, 2)}\n\n`;
-                    const userPrompt = `${dndPrompt}${this.buildUserPrompt({channel: message.channel, user: message.user, text: message.text})}`;
-                    const response = await this.processAIQuestion(userPrompt, history, message.channel);
-                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                        const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
-                        await say({text: responseText});
+            if (this.rpgEnabledChannels.has(message.channel)) {
+                const rpgMode = this.rpgEnabledChannels.get(message.channel);
+                if (rpgMode === 'gm') {
+                    try {
+                        const rpgContext = this.loadRpgContext(message.channel);
+                        const history = await this.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
+                        const rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(rpgContext, null, 2)}\n\n`;
+                        const userPrompt = `${rpgPrompt}${this.buildUserPrompt({channel: message.channel, user: message.user, text: message.text})}`;
+                        const response = await this.processAIQuestion(userPrompt, history, message.channel);
+                        if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                            const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
+                            await say({text: responseText});
+                        }
+                    } catch (error) {
+                        console.error("Error in RPG handler:", error);
                     }
-                } catch (error) {
-                    console.error("Error in DND handler:", error);
                 }
             }
         });
@@ -295,7 +343,11 @@ export class AIHandler {
                 const date = context.matches?.[1];
                 const usage = await getUserUsage(message.user, date);
                 if (usage) {
-                    const cost = (((usage.totalPromptTokens / 1000000) * 1.25) + ((usage.totalResponseTokens / 1000000) * 10)).toFixed(2);
+                    const cost = (
+                        ((usage.totalPromptTokens / 1000000) * 1.25) +
+                        ((usage.totalResponseTokens / 1000000) * 10) +
+                        (usage.imageInvocations * 0.04)
+                    ).toFixed(2);
                     const responseText =
                         `*Usage Stats for <@${message.user}> (${usage.date})*
 ` +
@@ -336,7 +388,11 @@ export class AIHandler {
                 let summary = `*All Usage Stats for <@${message.user}>:*
 `;
                 for (const usage of allUsage.sort((a, b) => a.date.localeCompare(b.date))) {
-                    const cost = (((usage.totalPromptTokens / 1000000) * 1.25) + ((usage.totalResponseTokens / 1000000) * 10)).toFixed(2);
+                    const cost = (
+                        ((usage.totalPromptTokens / 1000000) * 1.25) +
+                        ((usage.totalResponseTokens / 1000000) * 10) +
+                        (usage.imageInvocations * 0.04)
+                    ).toFixed(2);
                     summary += `• *${usage.date}*: LLM: ${usage.llmInvocations}, Image: ${usage.imageInvocations}, Tokens: ${usage.totalTokens}, Prompt: ${usage.totalPromptTokens}, Response: ${usage.totalResponseTokens}, $${cost}\n`;
                     totalLLM += usage.llmInvocations;
                     totalImage += usage.imageInvocations;
@@ -344,7 +400,11 @@ export class AIHandler {
                     totalResponse += usage.totalResponseTokens;
                     totalTokens += usage.totalTokens;
                 }
-                const totalCost = (((totalPrompt / 1000000) * 1.25) + ((totalResponse / 1000000) * 10)).toFixed(2);
+                const totalCost = (
+                    ((totalPrompt / 1000000) * 1.25) +
+                    ((totalResponse / 1000000) * 10) +
+                    (totalImage * 0.04)
+                ).toFixed(2);
                 summary += `\n*Total*: LLM: ${totalLLM}, Image: ${totalImage}, Tokens: ${totalTokens}, Prompt: ${totalPrompt}, Response: ${totalResponse}, $${totalCost}`;
                 await say(summary);
             } catch (error) {
@@ -353,12 +413,108 @@ export class AIHandler {
             }
         });
 
+        this.app.message(/^!usage total$/, async ({message, context, say}) => {
+            if (!('user' in message) || !message.user) {
+                return;
+            }
+            try {
+                const allUsage = await getAllUserUsage(message.user);
+                if (!allUsage.length) {
+                    await say("I don't have any usage data for you yet. Try interacting with the bot first!");
+                    return;
+                }
+                let totalLLM = 0, totalImage = 0, totalPrompt = 0, totalResponse = 0, totalTokens = 0;
+                for (const usage of allUsage) {
+                    totalLLM += usage.llmInvocations;
+                    totalImage += usage.imageInvocations;
+                    totalPrompt += usage.totalPromptTokens;
+                    totalResponse += usage.totalResponseTokens;
+                    totalTokens += usage.totalTokens;
+                }
+                const totalCost = (
+                    ((totalPrompt / 1000000) * 1.25) +
+                    ((totalResponse / 1000000) * 10) +
+                    (totalImage * 0.04)
+                ).toFixed(2);
+                const summary =
+                    `*Total Usage for <@${message.user}>:*
+` +
+                    `*- LLM Invocations:* ${totalLLM}
+` +
+                    `*- Image Invocations:* ${totalImage}
+` +
+                    `*- Total Tokens Used:* ${totalTokens}
+` +
+                    `*- Prompt Tokens:* ${totalPrompt}
+` +
+                    `*- Response Tokens:* ${totalResponse}
+` +
+                    `*- Estimated Cost:* $${totalCost}`;
+                await say(summary);
+            } catch (error) {
+                console.error('Error in !usage total handler:', error);
+                await say('Sorry, there was an error fetching your usage data.');
+            }
+        });
+
+        this.app.message(/^!usage\s+<@([A-Z0-9]+)>(?:\s+(\d{4}-\d{2}-\d{2}))?$/, async ({message, context, say}) => {
+            if (!('user' in message) || !message.user) {
+                return;
+            }
+            try {
+                const targetUserId = context.matches?.[1];
+                const date = context.matches?.[2];
+                if (!targetUserId) {
+                    await say('Could not parse the user mention.');
+                    return;
+                }
+                const usage = await getUserUsage(targetUserId, date);
+                if (usage) {
+                    const cost = (
+                        ((usage.totalPromptTokens / 1000000) * 1.25) +
+                        ((usage.totalResponseTokens / 1000000) * 10) +
+                        (usage.imageInvocations * 0.04)
+                    ).toFixed(2);
+                    const responseText =
+                        `*Usage Stats for <@${targetUserId}> (${usage.date})*
+` +
+                        `*- LLM Invocations:* ${usage.llmInvocations}
+` +
+                        `*- Image Invocations:* ${usage.imageInvocations}
+` +
+                        `*- Total Tokens Used:* ${usage.totalTokens}
+` +
+                        `*- Prompt Tokens:* ${usage.totalPromptTokens}
+` +
+                        `*- Response Tokens:* ${usage.totalResponseTokens}
+` +
+                        `*- Estimated Cost:* $${cost}
+` +
+                        `_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_`;
+                    await say(responseText);
+                } else {
+                    await say(`I don't have any usage data for <@${targetUserId}> for ${date || 'today'}.`);
+                }
+            } catch (error) {
+                console.error('Error in !usage @username handler:', error);
+                await say('Sorry, there was an error fetching the usage data.');
+            }
+        });
+
         this.app.message(/^!image\s+(.+)/, async ({message, context, say, client}) => {
             if (!('user' in message) || !message.user || message.subtype) {
                 return;
             }
+
+            if (!config.vertex.projectId || !config.gemini.apiKey) {
+                await say({
+                    text: 'The image generation feature is not configured. A Google Cloud Project ID and Gemini API key are required.',
+                    thread_ts: message.thread_ts,
+                });
+                return;
+            }
+
             console.log(`[Command] !image command received from ${message.user}: ${context.matches[1]}`);
-            trackImageInvocation(message.user);
             const prompt = context.matches[1];
             try {
                 const workingMessage = await say({
@@ -380,6 +536,7 @@ export class AIHandler {
                         filename: 'image.png',
                         thread_ts: message.thread_ts,
                     });
+                    trackImageInvocation(message.user);
                 } else if (result.filteredReason) {
                     await say({
                         text: `Sorry, I can't generate that image. It was blocked for the following reason: *${result.filteredReason}*`,
@@ -495,9 +652,7 @@ export class AIHandler {
                 return;
             }
             this.enabledChannels.add(message.channel);
-            this.dndEnabledChannels.delete(message.channel);
             this.saveEnabledChannels();
-            this.saveDndEnabledChannels();
             await say({text: '🤖 Gembot will now respond to all messages in this channel. Use `!gembot channel off` to disable.'});
         });
 
@@ -507,27 +662,128 @@ export class AIHandler {
             }
             this.enabledChannels.delete(message.channel);
             this.saveEnabledChannels();
-            await say({text: '🤐 Gembot will no longer respond to all messages in this channel.'});
+            await say({text: '🤖 Gembot will no longer respond to all messages in this channel.'});
         });
 
-        this.app.message(/^!gembot dnd on$/i, async ({message, say}) => {
+        this.app.message(/^!gembot rpg (gm|player)$/i, async ({message, context, say}) => {
             if (!('user' in message) || !message.user) {
                 return;
             }
-            this.dndEnabledChannels.add(message.channel);
-            this.enabledChannels.delete(message.channel);
-            this.saveDndEnabledChannels();
-            this.saveEnabledChannels();
-            await say({text: '⚔️ DND Mode Enabled! The bot will now act as the Dungeon Master for this channel. All game state will be saved.'});
+            const mode = context.matches[1];
+            this.rpgEnabledChannels.set(message.channel, mode);
+            this.saveRpgEnabledChannels();
+            await say({text: `🧙 RPG mode is now **${mode.toUpperCase()}** in this channel.`});
         });
 
-        this.app.message(/^!gembot dnd off$/i, async ({message, say}) => {
+        this.app.message(/^!gembot rpg off$/i, async ({message, say}) => {
             if (!('user' in message) || !message.user) {
                 return;
             }
-            this.dndEnabledChannels.delete(message.channel);
-            this.saveDndEnabledChannels();
-            await say({text: '✅ DND Mode Disabled. The bot will no longer act as the Dungeon Master.'});
+            this.rpgEnabledChannels.delete(message.channel);
+            this.saveRpgEnabledChannels();
+            await say({text: '👍 RPG mode has been turned **OFF** in this channel.'});
+        });
+
+        this.app.message(/^!gembot rpg status$/i, async ({message, say}) => {
+            if (!('user' in message) || !message.user) {
+                return;
+            }
+            const mode = this.rpgEnabledChannels.get(message.channel);
+            if (mode) {
+                await say({text: `RPG mode is currently **${mode.toUpperCase()}** in this channel.`});
+            } else {
+                await say({text: 'RPG mode is currently **OFF** in this channel.'});
+            }
+        });
+
+        this.app.message(/^!gembot rpg$/i, async ({message, say}) => {
+            if (!('user' in message) || !message.user) {
+                return;
+            }
+            await say({
+                text: 'Usage: `!gembot rpg <command>`\nAvailable commands: `gm`, `player`, `off`, `status`',
+            });
+        });
+
+        this.app.message(/^!gembot help$/i, async ({message, say}) => {
+            const helpText = `
+*Available Commands*
+
+*AI & Fun*
+• \`@<BotName> <prompt>\`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
+• \`!image <prompt>\`: Generates an image based on your text prompt using Imagen 4.
+• \`!gembot on\`: Enable Gembot in the current thread.
+• \`!gembot off\`: Disable Gembot in the current thread.
+
+*RPG Mode*
+• \`!gembot rpg <gm|player|off|status>\`: Manage RPG mode for this channel.
+  • \`gm\`: The bot acts as the Game Master, responding to every message.
+  • \`player\`: The bot acts as a player, only responding when @-mentioned.
+  • \`off\`: Disables RPG mode in the channel.
+  • \`status\`: Checks the current RPG mode status for the channel.
+• \`!roll <dice>\`: Rolls dice using standard dice notation (e.g., \`1d20\`, \`2d6+3\`).
+
+*Stocks & Crypto*
+• \`!q <TICKER...>\`: Get a real-time stock quote.
+• \`!cq <TICKER...>\`: Get a real-time crypto quote (e.g., \`!cq BTC ETH\`).
+• \`!chart <TICKER> [range]\`: Generates a stock chart. Ranges: \`1m\`, \`3m\`, \`6m\`, \`1y\`, \`5y\`.
+• \`!stats <TICKER...>\`: Get key statistics for a stock (Market Cap, 52-week high/low).
+• \`!earnings <TICKER>\`: Get upcoming earnings dates.
+• \`!stocknews\`: Fetches the latest general stock market news.
+• \`!cryptonews\`: Fetches the latest cryptocurrency news.
+
+*Watchlist*
+• \`!watchlist\`: View your current stock watchlist with P/L.
+• \`!watch <TICKER> [date] [price] [shares]\`: Add a stock to your watchlist.
+• \`!unwatch <TICKER>\`: Remove a stock from your watchlist.
+
+*Usage Tracking*
+The bot tracks usage of the LLM and image generation features. You can check your usage with the following commands. The costs shown are estimates only and should not be used for billing purposes.
+• \`!usage\`: Show your usage statistics for today.
+• \`!usage YYYY-MM-DD\`: Show your usage statistics for a specific date.
+• \`!usage all\`: Show a detailed, day-by-day breakdown of your entire usage history.
+• \`!usage total\`: Show a lifetime summary of your usage statistics.
+• \`!usage @user\`: Show another user's usage statistics for today.
+• \`!usage @user YYYY-MM-DD\`: Show another user's usage statistics for a specific date.
+`;
+            await say({text: helpText, thread_ts: message.ts});
+        });
+
+        const gembotUsage =
+            'Usage: `!gembot <command>`\n' +
+            'Available commands:\n' +
+            '• `on`: Enable Gembot in the current thread.\n' +
+            '• `off`: Disable Gembot in the current thread.\n' +
+            '• `channel on`: Enable Gembot for all messages in this channel.\n' +
+            '• `channel off`: Disable Gembot for all messages in this channel.\n' +
+            '• `rpg <gm|player|off|status>`: Manage RPG mode for this channel.\n' +
+            '• `help`: Show the help message with all commands.';
+
+        this.app.message(/^!gembot$/i, async ({say}) => {
+            await say(gembotUsage);
+        });
+
+        this.app.message(/^!gembot (.+)/i, async ({context, say}) => {
+            const subcommand = context.matches[1].trim();
+
+            const knownPatterns = [
+                /^on$/i,
+                /^off$/i,
+                /^channel on$/i,
+                /^channel off$/i,
+                /^rpg (gm|player)$/i,
+                /^rpg off$/i,
+                /^rpg status$/i,
+                /^rpg$/i,
+                /^help$/i,
+            ];
+
+            if (knownPatterns.some(pattern => pattern.test(subcommand))) {
+                return; // It's a known command handled elsewhere, so we do nothing.
+            }
+
+            console.log(`Unknown gembot command: ${context.matches[1]}`);
+            await say(gembotUsage);
         });
     }
 
@@ -540,8 +796,16 @@ export class AIHandler {
         while (retries > 0) {
             try {
                 let systemPrompt = this.geminiSystemPrompt;
-                if (this.dndEnabledChannels.has(channelId)) {
-                    systemPrompt += `\n\n${this.dndSystemPrompt}`;
+                const rpgMode = this.rpgEnabledChannels.get(channelId);
+
+                if (rpgMode === 'gm') {
+                    const rpgContext = this.loadRpgContext(channelId);
+                    const rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${channelId}):\n${JSON.stringify(rpgContext, null, 2)}\n\n`;
+                    systemPrompt = `${this.rpgGmSystemPrompt}\n\n${rpgPrompt}`;
+                } else if (rpgMode === 'player') {
+                    const rpgContext = this.loadRpgContext(channelId);
+                    const rpgPrompt = `RPG PLAYER MODE (channel_id: ${channelId}):\nYour character sheet: ${JSON.stringify(rpgContext, null, 2)}\n\n`;
+                    systemPrompt = `${this.rpgPlayerSystemPrompt}\n\n${rpgPrompt}`;
                 }
 
                 const model = this.gemini.getGenerativeModel({
@@ -732,44 +996,50 @@ export class AIHandler {
                 }
             } else if (name === 'fetch_url_content') {
                 const url = (args as any).url as string;
-                const charLimit = ((args as any).char_limit as number) || 8000;
                 try {
                     const response = await fetch(url);
                     if (!response.ok) {
-                        throw new Error(`Request failed with status ${response.status}`);
+                        const errorMsg = `Request failed with status ${response.status}`;
+                        console.error(`[Tool] Error fetching URL ${url}: ${errorMsg}`);
+                        return {tool_name: name, result: {error: errorMsg}};
                     }
                     const contentType = response.headers.get('content-type') || '';
                     let content = '';
                     if (contentType.includes('text/html')) {
                         const html = await response.text();
-                        const article = await extract(html);
-                        if (!article || !article.content) {
-                            throw new Error('Could not extract article content from HTML.');
+                        const doc = new JSDOM(html, {url});
+                        const reader = new Readability(doc.window.document);
+                        const article = reader.parse();
+                        if (!article || !article.textContent) {
+                            const errorMsg = 'Could not extract article content from HTML.';
+                            console.error(`[Tool] ${errorMsg} from ${url}`);
+                            return {tool_name: name, result: {error: errorMsg}};
                         }
-                        content = article.content;
+                        content = article.textContent;
                     } else if (contentType.includes('text/plain')) {
                         content = await response.text();
                     } else {
-                        throw new Error(`Unsupported content type: ${contentType}`);
+                        const errorMsg = `Unsupported content type: ${contentType}`;
+                        console.error(`[Tool] ${errorMsg} from ${url}`);
+                        return {tool_name: name, result: {error: errorMsg}};
                     }
-                    const snippet = content.substring(0, charLimit);
-                    const result = {tool_name: name, result: {content: snippet}};
+                    const result = {tool_name: name, result: {content}};
                     return result;
                 } catch (e) {
                     console.error(`[Tool] Error fetching content from ${url}:`, e);
                     return {tool_name: name, result: {error: (e as Error).message}};
                 }
-            } else if (name === 'update_dnd_context') {
+            } else if (name === 'update_rpg_context') {
                 const {channel_id, context} = args as any;
                 if (!channel_id || !context) {
                     return {tool_name: name, result: {error: 'Missing channel_id or context'}};
                 }
                 try {
-                    const filePath = path.join(__dirname, `../../dnd-context-${channel_id}.json`);
+                    const filePath = path.join(__dirname, `../../rpg-context-${channel_id}.json`);
                     fs.writeFileSync(filePath, JSON.stringify(context, null, 2), 'utf-8');
                     return {tool_name: name, result: {success: true}};
                 } catch (error) {
-                    console.error('Error saving DND context:', error);
+                    console.error('Error saving RPG context:', error);
                     return {tool_name: name, result: {error: (error as Error).message}};
                 }
             }
@@ -874,7 +1144,7 @@ export class AIHandler {
         const token = await this.auth.getAccessToken();
         const projectId = config.vertex.projectId;
         const location = config.vertex.location;
-        const modelId = 'imagegeneration@006';
+        const modelId = 'imagen-4.0-generate-preview-06-06';//imagegeneration@006';
         const apiEndpoint = `${location}-aiplatform.googleapis.com`;
         const url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predict`;
         const requestBody = {
@@ -973,6 +1243,55 @@ export class AIHandler {
         return history;
     }
 
+    private async buildHistorySinceLastBotMessage(channel: string, client: WebClient, botUserId: string): Promise<Content[]> {
+        const history: Content[] = [];
+        const relevantMessages: any[] = [];
+        let hasMore = true;
+        let cursor: string | undefined = undefined;
+
+        try {
+            while (hasMore) {
+                const result = await client.conversations.history({
+                    channel,
+                    limit: 200, // A reasonable page size.
+                    cursor: cursor,
+                });
+
+                if (!result.messages || result.messages.length === 0) {
+                    break;
+                }
+
+                const botMessageIndex = result.messages.findIndex(reply => reply.user === botUserId || reply.bot_id);
+
+                if (botMessageIndex !== -1) {
+                    // Bot message found on this page.
+                    // Add messages before it and we're done.
+                    relevantMessages.push(...result.messages.slice(0, botMessageIndex));
+                    hasMore = false; // Stop paginating
+                } else {
+                    // No bot message on this page, add all messages and continue.
+                    relevantMessages.push(...result.messages);
+                }
+
+                if (hasMore && result.has_more) {
+                    cursor = result.response_metadata?.next_cursor;
+                } else {
+                    hasMore = false;
+                }
+            }
+
+            // The messages are newest to oldest, we need to reverse them to process chronologically
+            for (const reply of relevantMessages.reverse()) {
+                if (reply.user) {
+                    history.push({role: 'user', parts: [{text: this.buildUserPrompt({channel, user: reply.user, text: reply.text})}]});
+                }
+            }
+        } catch (error) {
+            console.error("Error building history since last bot message:", error);
+        }
+        return history;
+    }
+
     private loadDisabledThreads(): void {
         try {
             if (fs.existsSync(this.disabledThreadsFilePath)) {
@@ -1015,35 +1334,35 @@ export class AIHandler {
         }
     }
 
-    private loadDndEnabledChannels(): void {
+    private loadRpgEnabledChannels(): void {
         try {
-            if (fs.existsSync(this.dndEnabledChannelsFilePath)) {
-                const data = fs.readFileSync(this.dndEnabledChannelsFilePath, 'utf-8');
-                const channelsArray = JSON.parse(data) as string[];
-                this.dndEnabledChannels = new Set(channelsArray);
+            if (fs.existsSync(this.rpgEnabledChannelsFilePath)) {
+                const data = fs.readFileSync(this.rpgEnabledChannelsFilePath, 'utf-8');
+                const channels: [string, string][] = JSON.parse(data);
+                this.rpgEnabledChannels = new Map(channels);
             }
         } catch (error) {
-            console.error('Error loading DND-enabled channels file:', error);
+            console.error('Error loading RPG-enabled channels file:', error);
         }
     }
 
-    private saveDndEnabledChannels(): void {
+    private saveRpgEnabledChannels(): void {
         try {
-            const channelsArray = Array.from(this.dndEnabledChannels);
-            fs.writeFileSync(this.dndEnabledChannelsFilePath, JSON.stringify(channelsArray, null, 2), 'utf-8');
+            const data = JSON.stringify(Array.from(this.rpgEnabledChannels.entries()), null, 2);
+            fs.writeFileSync(this.rpgEnabledChannelsFilePath, data, 'utf-8');
         } catch (error) {
-            console.error('Error saving DND-enabled channels file:', error);
+            console.error('Error saving RPG-enabled channels file:', error);
         }
     }
 
-    private loadDndContext(channelId: string): any {
-        const filePath = path.join(__dirname, `../../dnd-context-${channelId}.json`);
+    private loadRpgContext(channelId: string): any {
+        const filePath = path.join(__dirname, `../../rpg-context-${channelId}.json`);
         if (fs.existsSync(filePath)) {
             try {
                 const data = fs.readFileSync(filePath, 'utf-8');
                 return JSON.parse(data);
             } catch (error) {
-                console.error(`[DND] Error loading or parsing DND context for channel ${channelId}:`, error);
+                console.error(`[RPG] Error loading or parsing RPG context for channel ${channelId}:`, error);
                 return {};
             }
         }

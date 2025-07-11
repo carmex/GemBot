@@ -1,5 +1,5 @@
 import {App, SocketModeReceiver} from '@slack/bolt';
-import {config, validateConfig} from './config';
+import {config} from './config';
 import {AIHandler} from './features/ai-handler';
 import * as cron from 'node-cron';
 import {fetchStockNews} from './features/finnhub-api';
@@ -10,63 +10,18 @@ process.on('uncaughtException', (error) => {
     process.exit(1);
 });
 
-// Function to post morning greeting with stock news
-async function postMorningGreeting(app: App) {
-    console.log('[MorningGreeting] postMorningGreeting called at:', new Date().toString());
+// Function to send the morning greeting
+async function sendMorningGreeting(app: App, channelId: string) {
     try {
-        const channelId = config.slack.morningGreetingChannelId;
-
-        // Post the greeting message
-        const greetingResult = await app.client.chat.postMessage({
-            channel: channelId,
-            text: 'Good morning #stonks! Here is the latest news 📰',
-        });
-
-        if (!greetingResult.ok || !greetingResult.ts) {
-            console.error('Failed to post greeting message');
-            return;
-        }
-
-        // Fetch stock news
-        const articles = await fetchStockNews();
-
-        if (!articles || articles.length === 0) {
-            // Post a message in thread if no news found
-            await app.client.chat.postMessage({
-                channel: channelId,
-                thread_ts: greetingResult.ts,
-                text: 'No recent stock market news available at the moment.',
-            });
-            return;
-        }
-
-        // Format the top 5 articles
-        const formattedArticles = articles
-            .slice(0, 5)
-            .map(
-                (article) => `• *${article.headline}* - _${article.source}_\n   <${article.url}|Read More>`
-            )
-            .join('\n\n');
-
-        // Post the news in a thread
         await app.client.chat.postMessage({
+            token: config.slack.botToken,
             channel: channelId,
-            thread_ts: greetingResult.ts,
-            text: `Here are the latest headlines:\n\n${formattedArticles}`,
+            text: 'Good morning everyone! What are your top priorities for today?',
         });
-
-        console.log('✅ Morning greeting with stock news posted successfully');
+        console.log('Morning greeting sent successfully.');
     } catch (error) {
-        console.error('❌ Error posting morning greeting:', error);
+        console.error('Failed to send morning greeting:', error);
     }
-}
-
-// Validate configuration before starting
-try {
-    validateConfig();
-} catch (error) {
-    console.error('Configuration error:', (error as Error).message);
-    process.exit(1);
 }
 
 // Initialize the receiver
@@ -101,7 +56,7 @@ receiver.client.on('disconnected', (error?: Error) => {
     if (error) {
         console.error('[Socket Mode] Disconnected with error:', error);
     } else {
-        console.log('[Socket Mode] Disconnected normally.');
+        console.log('[Socket Mode] Disconnected from Slack.');
     }
 });
 
@@ -109,13 +64,8 @@ receiver.client.on('error', (error: Error) => {
     console.error('[Socket Mode] An error occurred:', error);
 });
 
-// Initialize AI handler
-try {
-    new AIHandler(app);
-} catch (error) {
-    console.error('Failed to initialize AIHandler:', error);
-    process.exit(1);
-}
+// Instantiate the AI Handler
+new AIHandler(app);
 
 // Example slash command
 app.command('/ping', async ({command, ack, respond}) => {
@@ -134,7 +84,7 @@ app.command('/test-morning-greeting', async ({command, ack, respond}) => {
     await ack();
 
     try {
-        await postMorningGreeting(app);
+        await sendMorningGreeting(app, config.slack.morningGreetingChannelId);
         if (respond) {
             await respond({
                 text: '✅ Morning greeting test completed! Check the #stocks channel.',
@@ -167,22 +117,16 @@ app.event('*', async ({event}) => {
         console.log(`⚡️ Bolt app is running in Socket Mode!`);
         console.log(`Environment: ${config.environment}`);
         console.log('Bot is ready to receive events!');
-        console.log('Current server time:', new Date().toString());
 
-        // Schedule morning greeting at 9:30am Eastern Time (UTC-5)
-        // Cron format: minute hour day month day-of-week
-        // 30 9 * * * = 9:30 AM Eastern (America/New_York)
-        cron.schedule(config.morningGreetingSchedule, () => {
-            console.log(`[MorningGreeting] Cron job fired at: ${new Date().toString()} for schedule: ${config.morningGreetingSchedule}`);
-            postMorningGreeting(app);
-        }, {
-            timezone: 'America/New_York'
-        });
-
-        console.log(`📅 Morning greeting scheduled with pattern: "${config.morningGreetingSchedule}" in America/New_York timezone`);
-
+        // Schedule the morning greeting if the channel ID is set
+        if (config.slack.morningGreetingChannelId) {
+            console.log(`Scheduling morning greeting for channel ${config.slack.morningGreetingChannelId} with schedule "${config.morningGreetingSchedule}"`);
+            cron.schedule(config.morningGreetingSchedule, () => sendMorningGreeting(app, config.slack.morningGreetingChannelId), {
+                timezone: 'America/New_York',
+            });
+        }
     } catch (error) {
-        console.error('Failed to start app:', error);
+        console.error('Failed to start the app:', error);
         process.exit(1);
     }
-})(); 
+})();

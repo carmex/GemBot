@@ -4,7 +4,7 @@ GemBot is a powerful, AI-driven Slack bot built with TypeScript and the Slack Bo
 
 ## Core Features
 
--   **🤖 Conversational AI**: Mention the bot or use `!gem` in a thread to have a natural conversation. The bot maintains context within a thread.
+-   **🤖 Conversational AI**: Mention the bot in a channel to start a new conversation, or mention it in a thread to have it join with context.
 -   **🎨 Image Generation**: Create stunning images directly in Slack with `!image` powered by Google's Imagen 4 model.
 -   **📈 Comprehensive Market Data**: Get real-time stock/crypto quotes, charts, news, and fundamental data from Finnhub and Alpha Vantage.
 -   **Watchlist Management**: Track your stock portfolio with a personal watchlist.
@@ -94,9 +94,18 @@ The bot will connect to Slack and be ready for commands.
 
 ### AI & Fun
 
--   `!gem <prompt>`: Starts a new threaded conversation with the Gemini AI.
--   `@<BotName> <prompt>`: Mention the bot in an existing thread to have it join the conversation with context.
+-   `@<BotName> <prompt>`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
 -   `!image <prompt>`: Generates an image based on your text prompt using Imagen 4.
+-   `!gembot on`: Enable Gembot in the current thread.
+-   `!gembot off`: Disable Gembot in the current thread.
+
+### RPG Mode
+- `!gembot rpg <gm|player|off|status>`: Manage RPG mode for this channel.
+  - `gm`: The bot acts as the Game Master, responding to every message.
+  - `player`: The bot acts as a player, only responding when @-mentioned.
+  - `off`: Disables RPG mode in the channel.
+  - `status`: Checks the current RPG mode status for the channel.
+- `!roll <dice>`: Rolls dice using standard dice notation (e.g., `1d20`, `2d6+3`).
 
 ### Stocks & Crypto
 
@@ -113,6 +122,86 @@ The bot will connect to Slack and be ready for commands.
 -   `!watchlist`: View your current stock watchlist with P/L.
 -   `!watch <TICKER> [date] [price] [shares]`: Add a stock to your watchlist.
 -   `!unwatch <TICKER>`: Remove a stock from your watchlist.
+
+### Usage Tracking
+The bot tracks usage of the LLM and image generation features. You can check your usage with the following commands. The costs shown are estimates only and should not be used for billing purposes.
+
+- `!usage`: Show your usage statistics for today.
+- `!usage YYYY-MM-DD`: Show your usage statistics for a specific date.
+- `!usage all`: Show a detailed, day-by-day breakdown of your entire usage history.
+- `!usage total`: Show a lifetime summary of your usage statistics.
+- `!usage @user`: Show another user's usage statistics for today.
+- `!usage @user YYYY-MM-DD`: Show another user's usage statistics for a specific date.
+
+## Deployment
+
+### Basic Method
+After building the project (`npm run build`), you can run the bot directly with Node.js:
+```bash
+npm run start
+```
+This is suitable for development and basic use, but the bot will stop if you close your terminal or if it encounters a crash.
+
+### Production (Recommended)
+For production, it is recommended to use [PM2](https://pm2.keymetrics.io/), a process manager for Node.js applications. This will ensure the bot automatically restarts if it crashes and handles logging.
+
+#### Installation
+
+First, install PM2 globally:
+```bash
+npm install pm2 -g
+```
+
+### Running the Bot
+
+The project includes an `ecosystem.config.js` file to simplify running the application with PM2.
+
+1.  **Build the TypeScript code:**
+    ```bash
+    npm run build
+    ```
+    This will compile the TypeScript source files from `src/` into JavaScript files in the `dist/` directory.
+
+2.  **Start the bot with PM2:**
+    ```bash
+    pm2 start ecosystem.config.js
+    ```
+    PM2 will now run the bot in the background according to the settings in the configuration file.
+
+### Managing the Bot
+
+Here are some common PM2 commands to manage your bot:
+
+-   **List running processes:**
+    ```bash
+    pm2 list
+    ```
+
+-   **Monitor logs in real-time:**
+    ```bash
+    pm2 logs slack-ai-bot
+    ```
+
+-   **View detailed information:**
+    ```bash
+    pm2 monit
+    ```
+
+-   **Stop the bot:**
+    ```bash
+    pm2 stop slack-ai-bot
+    ```
+
+-   **Restart the bot:**
+    ```bash
+    pm2 restart slack-ai-bot
+    ```
+
+-   **Delete the process from PM2's list:**
+    ```bash
+    pm2 delete slack-ai-bot
+    ```
+
 
 ## Contributing
 

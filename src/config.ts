@@ -53,40 +53,12 @@ export const config: Config = {
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
 };
 
-// Validate required environment variables
-export function validateConfig(): void {
-    const requiredVars = [
-        'SLACK_BOT_TOKEN',
-        'SLACK_SIGNING_SECRET',
-        'SLACK_APP_TOKEN',
-        'GEMINI_API_KEY',
-        'GCLOUD_PROJECT',
-        'GCLOUD_LOCATION',
-        'GOOGLE_APPLICATION_CREDENTIALS',
-        'SLACK_MORNING_GREETING_CHANNEL_ID',
-        'MORNING_GREETING_SCHEDULE',
-        'CHANNEL_HISTORY_LIMIT',
-    ];
-
-    const missing = requiredVars.filter(varName => !process.env[varName]);
-
-    if (missing.length > 0) {
-        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
-    }
-}
-
 function checkConfig(config: Config): void {
-    if (!config.slack.appToken || !config.slack.botToken) {
-        throw new Error('Missing required Slack bot token or app token in config.');
+    if (!config.slack.botToken) {
+        throw new Error('Missing required environment variable: SLACK_BOT_TOKEN');
     }
-    if (!config.gemini.apiKey) {
-        throw new Error('Missing required Gemini API key in config.');
-    }
-    if (!config.vertex.projectId) {
-        throw new Error('Missing required Vertex AI Project ID in config.');
-    }
-    if (!config.alphaVantageApiKey) {
-        console.warn('ALPHA_VANTAGE_API_KEY is not set. The !q and !chart commands will not work.');
+    if (!config.slack.appToken) {
+        throw new Error('Missing required environment variable: SLACK_APP_TOKEN');
     }
 }
 
