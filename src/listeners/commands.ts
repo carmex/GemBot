@@ -102,22 +102,15 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                     ((usage.totalResponseTokens / 1000000) * 10) +
                     (usage.imageInvocations * 0.04)
                 ).toFixed(2);
-                const responseText =
-                    `*Usage Stats for <@${message.user}> (${usage.date})*
-` +
-                    `*- LLM Invocations:* ${usage.llmInvocations}
-` +
-                    `*- Image Invocations:* ${usage.imageInvocations}
-` +
-                    `*- Total Tokens Used:* ${usage.totalTokens}
-` +
-                    `*- Prompt Tokens:* ${usage.totalPromptTokens}
-` +
-                    `*- Response Tokens:* ${usage.totalResponseTokens}
-` +
-                    `*- Estimated Cost:* $${cost}
-` +
-                    `_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_`;
+                const responseText = `*Usage Stats for <@${message.user}> (${usage.date})*
+- LLM Invocations: ${usage.llmInvocations}
+- Image Invocations: ${usage.imageInvocations}
+- Total Tokens Used: ${usage.totalTokens}
+- Prompt Tokens: ${usage.totalPromptTokens}
+- Response Tokens: ${usage.totalResponseTokens}
+- Estimated Cost: $${cost}
+_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_
+_Costs are estimates only and should not be used for billing purposes._`;
                 await say(responseText);
             } else {
                 await say(`I don't have any usage data for you for ${date || 'today'}. Try interacting with the bot first!`);
@@ -160,6 +153,7 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                 (totalImage * 0.04)
             ).toFixed(2);
             summary += `\n*Total*: LLM: ${totalLLM}, Image: ${totalImage}, Tokens: ${totalTokens}, Prompt: ${totalPrompt}, Response: ${totalResponse}, $${totalCost}`;
+            summary += `\n\n_Costs are estimates only and should not be used for billing purposes._`;
             await say(summary);
         } catch (error) {
             console.error('Error in !usage all handler:', error);
@@ -190,20 +184,14 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                 ((totalResponse / 1000000) * 10) +
                 (totalImage * 0.04)
             ).toFixed(2);
-            const summary =
-                `*Total Usage for <@${message.user}>:*
-` +
-                `*- LLM Invocations:* ${totalLLM}
-` +
-                `*- Image Invocations:* ${totalImage}
-` +
-                `*- Total Tokens Used:* ${totalTokens}
-` +
-                `*- Prompt Tokens:* ${totalPrompt}
-` +
-                `*- Response Tokens:* ${totalResponse}
-` +
-                `*- Estimated Cost:* $${totalCost}`;
+            const summary = `*Total Usage for <@${message.user}>:*
+- LLM Invocations: ${totalLLM}
+- Image Invocations: ${totalImage}
+- Total Tokens Used: ${totalTokens}
+- Prompt Tokens: ${totalPrompt}
+- Response Tokens: ${totalResponse}
+- Estimated Cost: $${totalCost}
+_Costs are estimates only and should not be used for billing purposes._`;
             await say(summary);
         } catch (error) {
             console.error('Error in !usage total handler:', error);
@@ -229,22 +217,15 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                     ((usage.totalResponseTokens / 1000000) * 10) +
                     (usage.imageInvocations * 0.04)
                 ).toFixed(2);
-                const responseText =
-                    `*Usage Stats for <@${targetUserId}> (${usage.date})*
-` +
-                    `*- LLM Invocations:* ${usage.llmInvocations}
-` +
-                    `*- Image Invocations:* ${usage.imageInvocations}
-` +
-                    `*- Total Tokens Used:* ${usage.totalTokens}
-` +
-                    `*- Prompt Tokens:* ${usage.totalPromptTokens}
-` +
-                    `*- Response Tokens:* ${usage.totalResponseTokens}
-` +
-                    `*- Estimated Cost:* $${cost}
-` +
-                    `_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_`;
+                const responseText = `*Usage Stats for <@${targetUserId}> (${usage.date})*
+- LLM Invocations: ${usage.llmInvocations}
+- Image Invocations: ${usage.imageInvocations}
+- Total Tokens Used: ${usage.totalTokens}
+- Prompt Tokens: ${usage.totalPromptTokens}
+- Response Tokens: ${usage.totalResponseTokens}
+- Estimated Cost: $${cost}
+_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_
+_Costs are estimates only and should not be used for billing purposes._`;
                 await say(responseText);
             } else {
                 await say(`I don't have any usage data for <@${targetUserId}> for ${date || 'today'}.`);
