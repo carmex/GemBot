@@ -169,7 +169,7 @@ export class AIHandler {
                     const functionCalls = result.response.functionCalls();
 
                     if (functionCalls && functionCalls.length > 0) {
-                        const toolResponses = await Promise.all(functionCalls.map(toolCall => this.handleToolCall(toolCall)));
+                        const toolResponses = await Promise.all(functionCalls.map(toolCall => this.handleToolCall(toolCall, channelId)));
                         contents.push({role: 'model', parts: [{functionCall: functionCalls[0]}]});
                         contents.push({
                             role: 'function',
@@ -233,7 +233,7 @@ export class AIHandler {
                         }
 
                         if (userFacingText) {
-                            this.executeTool(parsedToolCall.tool_name, parsedToolCall.parameters).catch(err => {
+                            this.executeTool(parsedToolCall.tool_name, parsedToolCall.parameters, channelId).catch(err => {
                                 console.error(`[Tool] Background execution of ${parsedToolCall.tool_name} failed:`, err);
                             });
 
@@ -244,7 +244,7 @@ export class AIHandler {
                             };
                         }
 
-                        const toolResult = await this.executeTool(parsedToolCall.tool_name, parsedToolCall.parameters);
+                        const toolResult = await this.executeTool(parsedToolCall.tool_name, parsedToolCall.parameters, channelId);
 
                         const toolResultContent = {
                             role: 'function',
@@ -294,12 +294,12 @@ export class AIHandler {
         return {text: "I'm sorry, I encountered a persistent error while generating a response. Please try again later.", confidence: 0};
     }
 
-    private async handleToolCall(toolCall: FunctionCall): Promise<{tool_name: string; result: any}> {
+    private async handleToolCall(toolCall: FunctionCall, channelId: string): Promise<{tool_name: string; result: any}> {
         const {name, args} = toolCall;
-        return this.executeTool(name, args);
+        return this.executeTool(name, args, channelId);
     }
 
-    private async executeTool(name: string, args: any): Promise<{tool_name: string; result: any}> {
+    private async executeTool(name: string, args: any, channelId: string): Promise<{tool_name: string; result: any}> {
         try {
             if (name === 'slack_user_profile') {
                 const userId = (args as any).user_id as string;
@@ -355,17 +355,21 @@ export class AIHandler {
                     return {tool_name: name, result: {error: (e as Error).message}};
                 }
             } else if (name === 'update_rpg_context') {
-                const {channel_id, context} = args as any;
-                if (!channel_id || !context) {
-                    return {tool_name: name, result: {error: 'Missing channel_id or context'}};
-                }
-                try {
-                    const filePath = path.join(__dirname, `../../rpg-context-${channel_id}.json`);
-                    fs.writeFileSync(filePath, JSON.stringify(context, null, 2), 'utf-8');
-                    return {tool_name: name, result: {success: true}};
-                } catch (error) {
-                    console.error('Error saving RPG context:', error);
-                    return {tool_name: name, result: {error: (error as Error).message}};
+                const {context} = args as any;
+                if (context) {
+                    try {
+                        const filePath = path.join(__dirname, `../../rpg-context-${channelId}.json`);
+                        fs.writeFileSync(filePath, JSON.stringify(context, null, 2), 'utf-8');
+                        console.log(`[RPG] Context saved for channel ${channelId}.`);
+                        return {tool_name: name, result: {success: true}};
+                    } catch (error) {
+                        console.error('Error saving RPG context:', error);
+                        return {tool_name: name, result: {error: (error as Error).message}};
+                    }
+                } else {
+                    // This case should ideally not be hit if the model follows instructions
+                    console.error(`[RPG] Attempted to save context for channel ${channelId} but context was missing.`);
+                    return {tool_name: name, result: {success: false, error: 'Context was missing from the arguments.'}};
                 }
             }
             return {tool_name: 'unknown_tool', result: {error: 'Tool not found'}};
