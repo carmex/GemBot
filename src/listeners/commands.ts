@@ -457,6 +457,96 @@ _Costs are estimates only and should not be used for billing purposes._`;
         }
     });
 
+    app.message(/^!rpgstats/i, async ({message, say}) => {
+        if (!('user' in message) || !message.user || !message.text) {
+            return;
+        }
+
+        const argument = message.text.replace(/^!rpgstats/i, '').trim();
+        const requestedPlayerName = argument ? argument : undefined;
+
+        if (requestedPlayerName && requestedPlayerName.toLowerCase() === 'help') {
+            const helpText = '*`!rpgstats` Usage Guide*\n\n' +
+                'Displays the character sheet for a player in the current RPG.\n\n' +
+                '*Commands:*\n' +
+                '- `!rpgstats`: Shows your own character sheet.\n' +
+                '- `!rpgstats [character_name]`: Shows the character sheet for a specific player by their in-game name (e.g., `!rpgstats Aragorn`).';
+            await say({text: helpText, thread_ts: message.ts});
+            return;
+        }
+
+        const channelId = message.channel;
+
+        if (!aiHandler.rpgEnabledChannels.has(channelId)) {
+            await say({
+                text: 'RPG mode is not active in this channel. Use `!gembot rpg gm` or `!gembot rpg player` to start.',
+                thread_ts: message.ts
+            });
+            return;
+        }
+
+        const rpgContext = aiHandler.loadRpgContext(channelId);
+        if (!rpgContext || !rpgContext.characters || rpgContext.characters.length === 0) {
+            await say({text: 'I couldn\'t find any character data for this RPG.', thread_ts: message.ts});
+            return;
+        }
+
+        let character;
+
+        if (requestedPlayerName) {
+            const lowerCaseName = requestedPlayerName.toLowerCase();
+            character = rpgContext.characters.find((c: any) => c.name.trim().toLowerCase() === lowerCaseName);
+        } else {
+            const userId = message.user;
+            character = rpgContext.characters.find((c: any) => c.slack_user_id === userId);
+        }
+
+        if (character) {
+            const formatStats = (stats: any) => {
+                if (!stats) return '  • N/A';
+                return Object.entries(stats).map(([key, value]) => `  • ${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`).join('\n');
+            };
+
+            const formatInventory = (inventory: any) => {
+                if (!inventory || inventory.length === 0) return '  • Empty';
+                return inventory.map((item: string) => `  • ${item}`).join('\n');
+            }
+
+            const formatEquipment = (equip: any) => {
+                if (!equip) return '  • N/A';
+                return `  • Armor: ${equip.armor || 'None'}\n  • Weapon: ${equip.weapon || 'None'}`;
+            }
+
+            const characterSheet = `*Character Sheet: ${character.name}* (<@${character.slack_user_id}>)
+*Race:* ${character.race || 'Unknown'} | *Class:* ${character.class || 'Unknown'}
+*HP:* ${character.hp?.current ?? 'N/A'} / ${character.hp?.max ?? 'N/A'}
+
+*Biography:*
+> ${character.biography || 'No biography set.'}
+
+*Appearance:*
+> ${character.appearance || 'No appearance set.'}
+
+*Stats:*
+${formatStats(character.stats)}
+
+*Armor & Weapons:*
+${formatEquipment(character.armor_and_weapons)}
+
+*Inventory:*
+${formatInventory(character.inventory)}
+    `.trim();
+
+            await say({text: characterSheet, thread_ts: message.ts});
+        } else {
+            if (requestedPlayerName) {
+                await say({text: `I couldn't find a character named "${requestedPlayerName}" in this game.`, thread_ts: message.ts});
+            } else {
+                await say({text: 'I couldn\'t find a character sheet for you in this game.', thread_ts: message.ts});
+            }
+        }
+    });
+
     app.message(/^!gembot rpg$/i, async ({message, say}) => {
         if (!('user' in message) || !message.user) {
             return;

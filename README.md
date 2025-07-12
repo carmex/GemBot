@@ -38,6 +38,9 @@ This autonomous context management creates a seamless and dynamic RPG experience
 2.  Tell the bot what type of game you would like to play. Add as much detail as you like, or leave it up to the bot to craft a world for you. Add any special rules you would like it to follow and it will all be tracked automatically in the context file.
 3.  Start playing! The bot will guide the story. Use the `!roll` command for dice rolls (e.g., `!roll 1d20+4`).
 
+-   **View Character Stats**:
+    -   `!rpgstats [character_name]` - Displays the character sheet for a given player. If no name is provided, it shows the sheet for the user calling the command.
+
 ## Financial Features
 
 GemBot provides a suite of tools to keep you connected to the financial markets without leaving Slack. These features require API keys from [Finnhub](https://finnhub.io/) and/or [Alpha Vantage](https://www.alphavantage.co/support/#api-key).
