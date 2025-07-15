@@ -44,6 +44,7 @@ export interface Config {
     };
     alphaVantageApiKey: string;
     finnhubApiKey: string;
+    serpapiApiKey: string;
 }
 
 export const config: Config = {
@@ -69,6 +70,7 @@ export const config: Config = {
     },
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
+    serpapiApiKey: process.env.SERPAPI_API_KEY || '',
 };
 
 function checkConfig(config: Config): void {

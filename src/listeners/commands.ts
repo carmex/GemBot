@@ -30,6 +30,38 @@ import {formatQuote, getColoredTileEmoji} from "../features/utils";
 import {sendMorningGreeting} from '../features/utils';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
+    app.message(/^!fetch_url\s+(.+)/i, async ({message, context, say}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+
+        let url = context.matches[1].trim();
+
+        // Handle Slack's auto-linking format <URL|display_text>
+        const linkMatch = url.match(/^<([^>|]+)/);
+        if (linkMatch && linkMatch[1]) {
+            url = linkMatch[1];
+        }
+
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            await say({text: 'Please provide a valid URL starting with `http://` or `https://`.'});
+            return;
+        }
+
+        try {
+            await say({text: `Fetching content from \`${url}\`... The result will be logged to the console.`});
+            const toolResult = await aiHandler.executeTool('fetch_url_content', {url}, message.channel);
+            console.log('--- !fetch_url TOOL RESULT ---');
+            console.log(JSON.stringify(toolResult, null, 2));
+            console.log('------------------------------');
+
+            await say({text: `✅ Content from \`${url}\` fetched successfully and logged to the console.`});
+        } catch (error) {
+            console.error(`Error in !fetch_url handler for ${url}:`, error);
+            await say({text: `Sorry, I couldn't fetch the URL. Error: ${(error as Error).message}`});
+        }
+    });
+
     app.message(/^!roll (.+)/i, async ({message, context, client}) => {
         if (!('user' in message) || !message.user) {
             return;
@@ -40,10 +72,46 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
             const roll = new Roll();
             const result = roll.roll(diceString);
             const rollResultText = `User <@${message.user}> rolled *${diceString}* and got: *${result.result}*  _(${result.rolled.join(', ')})_`;
-            await client.chat.postMessage({
+
+            const postResult = await client.chat.postMessage({
                 channel: message.channel,
                 text: rollResultText,
             });
+
+            const rpgMode = aiHandler.rpgEnabledChannels.get(message.channel);
+            if (rpgMode === 'gm' && postResult.ts && context.botUserId) {
+                try {
+                    const history = await aiHandler.buildHistoryFromChannel(
+                        message.channel,
+                        postResult.ts,
+                        client,
+                        context.botUserId
+                    );
+                    const rpgContext = aiHandler.loadRpgContext(message.channel);
+                    const rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(
+                        rpgContext,
+                        null,
+                        2
+                    )}\n\n`;
+
+                    const userPrompt = `${rpgPrompt}${aiHandler.buildUserPrompt({
+                        channel: message.channel,
+                        user: message.user,
+                        text: rollResultText,
+                    })}`;
+
+                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
+
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        const responseText = response.totalTokens
+                            ? `(${response.totalTokens} tokens) ${response.text}`
+                            : response.text;
+                        await client.chat.postMessage({channel: message.channel, text: responseText});
+                    }
+                } catch (error) {
+                    console.error('Error in RPG roll-follow-up handler:', error);
+                }
+            }
         } catch (error) {
             await client.chat.postMessage({
                 channel: message.channel,
@@ -102,14 +170,13 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                     ((usage.totalResponseTokens / 1000000) * 10) +
                     (usage.imageInvocations * 0.04)
                 ).toFixed(2);
-                const responseText = `*Usage Stats for <@${message.user}> (${usage.date})*
+                const responseText = `*Usage Stats for <@${message.user}> (${new Date(usage.lastUpdated).toLocaleString()})*
 - LLM Invocations: ${usage.llmInvocations}
 - Image Invocations: ${usage.imageInvocations}
 - Total Tokens Used: ${usage.totalTokens}
 - Prompt Tokens: ${usage.totalPromptTokens}
 - Response Tokens: ${usage.totalResponseTokens}
 - Estimated Cost: $${cost}
-_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_
 _Costs are estimates only and should not be used for billing purposes._`;
                 await say(responseText);
             } else {
@@ -217,14 +284,13 @@ _Costs are estimates only and should not be used for billing purposes._`;
                     ((usage.totalResponseTokens / 1000000) * 10) +
                     (usage.imageInvocations * 0.04)
                 ).toFixed(2);
-                const responseText = `*Usage Stats for <@${targetUserId}> (${usage.date})*
+                const responseText = `*Usage Stats for <@${targetUserId}> (${new Date(usage.lastUpdated).toLocaleString()})*
 - LLM Invocations: ${usage.llmInvocations}
 - Image Invocations: ${usage.imageInvocations}
 - Total Tokens Used: ${usage.totalTokens}
 - Prompt Tokens: ${usage.totalPromptTokens}
 - Response Tokens: ${usage.totalResponseTokens}
 - Estimated Cost: $${cost}
-_Last activity: ${new Date(usage.lastUpdated).toLocaleString()}_
 _Costs are estimates only and should not be used for billing purposes._`;
                 await say(responseText);
             } else {

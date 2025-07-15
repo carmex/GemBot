@@ -82,133 +82,139 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
         }
     });
 
-    app.message(/^[^!].*/, async ({message, context, say, client}) => {
-        if ('text' in message && message.text && !config.gemini.apiKey) {
-            // Heuristically check if this is a message that would have triggered the AI.
-            // This is imperfect but prevents spamming "not configured" messages in busy channels.
-            const shouldHaveTriggered =
-                ('thread_ts' in message && message.thread_ts && message.text.length > 5) ||
-                aiHandler.enabledChannels.has(message.channel) ||
-                aiHandler.rpgEnabledChannels.has(message.channel);
-
-            if (shouldHaveTriggered) {
-                // Check if the bot has already warned in the last 5 minutes in this channel to avoid spam
-                const now = new Date().getTime();
-                const lastWarning = aiHandler.lastWarningTimestamp.get(message.channel);
-                if (!lastWarning || now - lastWarning > 5 * 60 * 1000) {
-                    await say({text: 'The AI features are not configured. A Gemini API key is required.'});
-                    aiHandler.lastWarningTimestamp.set(message.channel, now);
-                }
+    app.message(
+        async ({message, next}) => {
+            // This middleware ensures we only process regular messages from users that are not commands.
+            if (message.subtype === undefined && 'text' in message && message.text && !message.text.startsWith('!')) {
+                await next();
             }
-            return;
-        }
-
-        if (!('user' in message) || !message.user || (message.subtype && message.subtype !== 'bot_message')) {
-            return;
-        }
-        const rollRegex = /User <@(.+?)> rolled .* and got: .*/;
-        const rollMatch = 'text' in message && message.text?.match(rollRegex);
-        if (
-            context.botId &&
-            message.subtype === 'bot_message' &&
-            'bot_id' in message &&
-            message.bot_id === context.botId &&
-            rollMatch &&
-            aiHandler.rpgEnabledChannels.has(message.channel)
-        ) {
-            const originalUserId = rollMatch[1];
-            if (!context.botUserId) {
-                console.error("Could not determine bot user ID for history building.");
+        },
+        async ({message, context, say, client}) => {
+            // Although the middleware should guarantee 'text' exists, the linter doesn't know that.
+            if (!('text' in message) || !message.text) {
                 return;
             }
-            try {
-                const rpgContext = aiHandler.loadRpgContext(message.channel);
-                const history = await aiHandler.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                const rpgMode = aiHandler.rpgEnabledChannels.get(message.channel);
-                let rpgPrompt = '';
-                if (rpgMode === 'gm') {
-                    rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(rpgContext, null, 2)}\n\n`;
-                } else if (rpgMode === 'player') {
-                    rpgPrompt = `RPG PLAYER MODE (channel_id: ${message.channel}):\nYour character sheet: ${JSON.stringify(rpgContext, null, 2)}\n\n`;
-                }
-                const userPrompt = `${rpgPrompt}channel_id: ${message.channel} | user_id: ${originalUserId} | message: ${message.text}`;
-                const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
-                if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                    const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
-                    await say({text: responseText});
-                }
-            } catch (error) {
-                console.error("Error in RPG roll-follow-up handler:", error);
-            }
-            return;
-        }
-        if (!('user' in message) || !message.user || !context.botUserId) {
-            return;
-        }
 
-        // Check if the message is a direct mention and ignore it, as it's handled by the app_mention event listener
-        if (message.text && message.text.includes(`<@${context.botUserId}>`)) {
-            return;
-        }
+            if (!config.gemini.apiKey) {
+                const shouldHaveTriggered =
+                    ('thread_ts' in message && message.thread_ts && message.text.length > 5) ||
+                    aiHandler.enabledChannels.has(message.channel) ||
+                    aiHandler.rpgEnabledChannels.has(message.channel);
 
-        if ('thread_ts' in message && message.thread_ts) {
-            const threadKey = `${message.channel}-${message.thread_ts}`;
-            if (aiHandler.disabledThreads.has(threadKey)) {
-                return;
-            }
-            try {
-                const history = await aiHandler.buildHistoryFromThread(message.channel, message.thread_ts, message.ts, client, context.botUserId);
-                const hasBotMessages = history.some(content => content.role === 'model');
-                const isRpgChannel = aiHandler.rpgEnabledChannels.has(message.channel);
-
-                if (hasBotMessages || isRpgChannel) {
-                    const userPrompt = aiHandler.buildUserPrompt({channel: message.channel, user: message.user, text: message.text});
-                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
-                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                        const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
-                        await say({text: responseText, thread_ts: message.thread_ts});
+                if (shouldHaveTriggered) {
+                    const now = new Date().getTime();
+                    const lastWarning = aiHandler.lastWarningTimestamp.get(message.channel);
+                    if (!lastWarning || now - lastWarning > 5 * 60 * 1000) {
+                        await say({text: 'The AI features are not configured. A Gemini API key is required.'});
+                        aiHandler.lastWarningTimestamp.set(message.channel, now);
                     }
                 }
-            } catch (error) {
-                console.error("Error in thread follow-up handler:", error);
+                return;
             }
-            return;
-        }
-        if (aiHandler.enabledChannels.has(message.channel)) {
-            try {
-                const history = await aiHandler.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                const userPrompt = aiHandler.buildUserPrompt({channel: message.channel, user: message.user, text: message.text});
-                const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
-                if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                    const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
-                    await say({text: responseText});
+
+            if (!('user' in message) || !message.user || !context.botUserId) {
+                return;
+            }
+
+            if (message.text.includes(`<@${context.botUserId}>`)) {
+                return;
+            }
+
+            const isRpgChannel = aiHandler.rpgEnabledChannels.has(message.channel);
+            const rpgMode = isRpgChannel ? aiHandler.rpgEnabledChannels.get(message.channel) : null;
+
+            if ('thread_ts' in message && message.thread_ts) {
+                const threadKey = `${message.channel}-${message.thread_ts}`;
+                if (aiHandler.disabledThreads.has(threadKey) || rpgMode === 'gm') {
+                    return;
                 }
-            } catch (error) {
-                console.error('Error in enabled channel handler:', error);
-            }
-            return;
-        }
-        if (aiHandler.rpgEnabledChannels.has(message.channel)) {
-            const rpgMode = aiHandler.rpgEnabledChannels.get(message.channel);
-            if (rpgMode === 'gm') {
+
                 try {
-                    const rpgContext = aiHandler.loadRpgContext(message.channel);
-                    const history = await aiHandler.buildHistoryFromChannel(message.channel, message.ts, client, context.botUserId);
-                    const rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(rpgContext, null, 2)}\n\n`;
-                    const userPrompt = `${rpgPrompt}${aiHandler.buildUserPrompt({
+                    const history = await aiHandler.buildHistoryFromThread(
+                        message.channel,
+                        message.thread_ts,
+                        message.ts,
+                        client,
+                        context.botUserId
+                    );
+                    const hasBotMessages = history.some(content => content.role === 'model');
+
+                    if (hasBotMessages) {
+                        const userPrompt = aiHandler.buildUserPrompt({
+                            channel: message.channel,
+                            user: message.user,
+                            text: message.text,
+                        });
+                        const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
+                        if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                            const responseText = response.totalTokens
+                                ? `(${response.totalTokens} tokens) ${response.text}`
+                                : response.text;
+                            await say({text: responseText, thread_ts: message.thread_ts});
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error in thread follow-up handler:', error);
+                }
+                return;
+            }
+
+            if (aiHandler.enabledChannels.has(message.channel)) {
+                try {
+                    const history = await aiHandler.buildHistoryFromChannel(
+                        message.channel,
+                        message.ts,
+                        client,
+                        context.botUserId
+                    );
+                    const userPrompt = aiHandler.buildUserPrompt({
                         channel: message.channel,
                         user: message.user,
-                        text: message.text
-                    })}`;
+                        text: message.text,
+                    });
                     const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
                     if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                        const responseText = response.totalTokens ? `(${response.totalTokens} tokens) ${response.text}` : response.text;
+                        const responseText = response.totalTokens
+                            ? `(${response.totalTokens} tokens) ${response.text}`
+                            : response.text;
                         await say({text: responseText});
                     }
                 } catch (error) {
-                    console.error("Error in RPG handler:", error);
+                    console.error('Error in enabled channel handler:', error);
+                }
+                return;
+            }
+
+            if (rpgMode === 'gm') {
+                try {
+                    const rpgContext = aiHandler.loadRpgContext(message.channel);
+                    const history = await aiHandler.buildHistoryFromChannel(
+                        message.channel,
+                        message.ts,
+                        client,
+                        context.botUserId
+                    );
+                    const rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${message.channel}):\n${JSON.stringify(
+                        rpgContext,
+                        null,
+                        2
+                    )}\n\n`;
+                    const userPrompt = `${rpgPrompt}${aiHandler.buildUserPrompt({
+                        channel: message.channel,
+                        user: message.user,
+                        text: message.text,
+                    })}`;
+                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
+                    if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
+                        const responseText = response.totalTokens
+                            ? `(${response.totalTokens} tokens) ${response.text}`
+                            : response.text;
+                        await say({text: responseText});
+                    }
+                } catch (error) {
+                    console.error('Error in RPG GM handler:', error);
                 }
             }
         }
-    });
+    );
 }

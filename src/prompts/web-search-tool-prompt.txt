@@ -1,0 +1,5 @@
+1.  **Tool: `web_search`**
+    *   **Description:** Use this tool to perform a Google search to find up-to-date information or to answer questions about topics you don't know about. It returns a list of search results with titles, snippets, and links.
+    *   **Workflow:** For complex questions, you should first use `web_search`. Then, review the `Source` links in the results. If a source looks promising, use the `fetch_url_content` tool with that link to get more detailed information. After gathering information, formulate your answer and **always cite your sources** by including the links you used.
+    *   **Parameters:**
+        *   `query` (string, required): The search query. 

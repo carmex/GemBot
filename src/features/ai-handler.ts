@@ -27,6 +27,7 @@ import {registerWatchlistCommands} from '../commands/watchlist';
 import {registerFinancialCommands} from '../commands/financial';
 import {Readability} from '@mozilla/readability';
 import {JSDOM} from 'jsdom';
+import {getJson as getSerpJson} from 'serpapi';
 import {ChartJSNodeCanvas} from 'chartjs-node-canvas';
 import {ChartConfiguration} from 'chart.js';
 import {
@@ -98,6 +99,16 @@ export class AIHandler {
             this.rpgPlayerSystemPrompt = '';
         }
 
+        // Conditionally add the web_search tool to the prompt if the API key is set
+        if (config.serpapiApiKey) {
+            try {
+                const webSearchToolPrompt = fs.readFileSync(path.join(__dirname, '../prompts/web-search-tool-prompt.txt'), 'utf-8');
+                this.geminiSystemPrompt += `\n\n${webSearchToolPrompt}`;
+            } catch (e) {
+                console.error('Error reading or processing web search tool prompt file:', e);
+            }
+        }
+
         this.initializeListeners();
         this.loadEnabledChannels();
         this.loadDisabledThreads();
@@ -125,12 +136,12 @@ export class AIHandler {
 
                 if (rpgMode === 'gm') {
                     const rpgContext = this.loadRpgContext(channelId);
-                    const rpgPrompt = `RPG GM MODE CONTEXT (channel_id: ${channelId}):\n${JSON.stringify(rpgContext, null, 2)}\n\n`;
-                    systemPrompt = `${this.rpgGmSystemPrompt}\n\n${rpgPrompt}`;
+                    const rpgPrompt = `\n\n**RPG GM Mode Instructions**\n\nYour instructions for this interaction are to act as the Game Master. Please use the following context:\n${JSON.stringify(rpgContext, null, 2)}`;
+                    systemPrompt = `${this.rpgGmSystemPrompt}\n\n${systemPrompt}\n\n${rpgPrompt}`;
                 } else if (rpgMode === 'player') {
                     const rpgContext = this.loadRpgContext(channelId);
-                    const rpgPrompt = `RPG PLAYER MODE (channel_id: ${channelId}):\nYour character sheet: ${JSON.stringify(rpgContext, null, 2)}\n\n`;
-                    systemPrompt = `${this.rpgPlayerSystemPrompt}\n\n${rpgPrompt}`;
+                    const rpgPrompt = `\n\n**RPG Player Mode Instructions**\n\nYour instructions for this interaction are to act as the Player Character. Please use the following character sheet:\n${JSON.stringify(rpgContext, null, 2)}`;
+                    systemPrompt = `${this.rpgPlayerSystemPrompt}\n\n${systemPrompt}\n\n${rpgPrompt}`;
                 }
 
                 const model = this.gemini.getGenerativeModel({
@@ -148,16 +159,6 @@ export class AIHandler {
                 const result = await model.generateContent({contents});
 
                 try {
-                    const userIdMatch = question.match(/user_id:\s*(\S+)/);
-                    if (userIdMatch && userIdMatch[1] && result.response.usageMetadata) {
-                        const userId = userIdMatch[1];
-                        trackLlmInteraction(userId, result.response.usageMetadata);
-                    }
-                } catch (e) {
-                    console.error('[Usage] Failed to track LLM interaction:', e);
-                }
-
-                try {
                     if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
                         return {
                             text: "I'm sorry, I was unable to generate a response. This may be due to the safety settings.",
@@ -166,11 +167,53 @@ export class AIHandler {
                     }
 
                     const responseText = result.response.text();
-                    const functionCalls = result.response.functionCalls();
+                    const officialFunctionCalls = result.response.functionCalls() ?? [];
+                    const allToolCalls: FunctionCall[] = [...officialFunctionCalls];
+                    const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/g;
 
-                    if (functionCalls && functionCalls.length > 0) {
-                        const toolResponses = await Promise.all(functionCalls.map(toolCall => this.handleToolCall(toolCall, channelId)));
-                        contents.push({role: 'model', parts: [{functionCall: functionCalls[0]}]});
+                    let match;
+                    while ((match = toolCodeRegex.exec(responseText)) !== null) {
+                        const toolCodeContent = match[1].trim();
+                        try {
+                            const cleanedContent = toolCodeContent.replace(/^```json\n/, '').replace(/\n```$/, '');
+                            const parsedToolCall = JSON.parse(cleanedContent);
+
+                            // Handle the format specified in the system prompt: {tool_name: "...", parameters: {...}}
+                            if (parsedToolCall.tool_name && parsedToolCall.parameters !== undefined) {
+                                allToolCalls.push({name: parsedToolCall.tool_name, args: parsedToolCall.parameters});
+                            }
+                            // Handle the native format from the model: {name: "...", args: {...}}
+                            else if (parsedToolCall.name && parsedToolCall.args !== undefined) {
+                                allToolCalls.push({name: parsedToolCall.name, args: parsedToolCall.args});
+                            } else {
+                                console.warn('[Tool] Parsed tool_code block is missing expected fields ("name"/"args" or "tool_name"/"parameters"):', cleanedContent);
+                            }
+                        } catch (error) {
+                            console.error('[Tool] Invalid JSON in tool_code block:', error);
+                            console.error('[Tool] Malformed tool_code content:', toolCodeContent);
+                        }
+                    }
+
+                    if (allToolCalls.length > 0) {
+                        const imageGenCall = allToolCalls.find(call => call.name === 'generate_image');
+                        if (imageGenCall) {
+                            await this.handleToolCall(imageGenCall, channelId);
+                            return {
+                                text: '<DO_NOT_RESPOND>',
+                                confidence: 1.0,
+                                totalTokens: result.response.usageMetadata?.totalTokenCount,
+                            };
+                        }
+
+                        const toolResponses = await Promise.all(
+                            allToolCalls.map(toolCall => this.handleToolCall(toolCall, channelId))
+                        );
+
+                        contents.push({
+                            role: 'model',
+                            parts: allToolCalls.map(fc => ({functionCall: fc})),
+                        });
+
                         contents.push({
                             role: 'function',
                             parts: toolResponses.map((toolResponse: {tool_name: string; result: any}) => ({
@@ -180,96 +223,24 @@ export class AIHandler {
                                 },
                             })),
                         });
+
                         const secondResult = await model.generateContent({contents});
                         const finalResponse = secondResult.response.text();
+                        const totalTokens =
+                            (result.response.usageMetadata?.totalTokenCount ?? 0) +
+                            (secondResult.response.usageMetadata?.totalTokenCount ?? 0);
 
-                        // Strip any existing token count from the final response to prevent double-counting
-                        const cleanFinalResponse = finalResponse.replace(/^\(\d+ tokens\)\s*/, '');
-
-                        const totalTokens = (result.response.usageMetadata?.totalTokenCount ?? 0) + (secondResult.response.usageMetadata?.totalTokenCount ?? 0);
                         return {
-                            text: cleanFinalResponse,
+                            text: finalResponse,
                             confidence: 0.9,
                             totalTokens,
                         };
                     }
 
-                    // Post-process: strip code block wrappers (triple backticks and language tags) from LLM output before parsing for <tool_code> or <tool_result> blocks
-                    let processedResponseText = responseText.replace(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/m, '$1').trim();
-
-                    const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/;
-                    const userFacingText = processedResponseText.replace(toolCodeRegex, '').trim();
-                    const toolCodeMatch = processedResponseText.match(toolCodeRegex);
-
-                    if (toolCodeMatch && toolCodeMatch[1]) {
-                        let parsedToolCall;
-                        try {
-                            parsedToolCall = JSON.parse(toolCodeMatch[1].trim());
-                        } catch (error) {
-                            console.error('[Tool] Invalid JSON in tool code block:', error);
-                            console.error('[Tool] Malformed tool code content:', toolCodeMatch[1].trim());
-
-                            // Instead of returning an error, gracefully fall back to just the user-facing text
-                            if (userFacingText) {
-                                return {
-                                    text: userFacingText,
-                                    confidence: 0.9,
-                                    totalTokens: result.response.usageMetadata?.totalTokenCount,
-                                };
-                            }
-
-                            // If there's no user-facing text, return the full response with tool code stripped
-                            const fallbackText = responseText.replace(toolCodeRegex, '').trim();
-                            if (fallbackText) {
-                                return {
-                                    text: fallbackText,
-                                    confidence: 0.9,
-                                    totalTokens: result.response.usageMetadata?.totalTokenCount,
-                                };
-                            }
-
-                            // Only show error if there's absolutely no usable content
-                            return {text: 'I apologize, I encountered a technical issue with my response format.', confidence: 0};
-                        }
-
-                        if (userFacingText) {
-                            this.executeTool(parsedToolCall.tool_name, parsedToolCall.parameters, channelId).catch(err => {
-                                console.error(`[Tool] Background execution of ${parsedToolCall.tool_name} failed:`, err);
-                            });
-
-                            return {
-                                text: userFacingText,
-                                confidence: 0.9,
-                                totalTokens: result.response.usageMetadata?.totalTokenCount,
-                            };
-                        }
-
-                        const toolResult = await this.executeTool(parsedToolCall.tool_name, parsedToolCall.parameters, channelId);
-
-                        const toolResultContent = {
-                            role: 'function',
-                            parts: [{functionResponse: {name: toolResult.tool_name, response: toolResult.result}}]
-                        };
-
-                        contents.push({role: 'model', parts: [{text: responseText}]});
-                        contents.push(toolResultContent);
-
-                        const secondResult = await model.generateContent({contents});
-                        const finalResponse = secondResult.response.text();
-
-                        // Strip any existing token count from the final response to prevent double-counting
-                        const cleanFinalResponse = finalResponse.replace(/^\(\d+ tokens\)\s*/, '');
-
-                        const totalTokens = (result.response.usageMetadata?.totalTokenCount ?? 0) + (secondResult.response.usageMetadata?.totalTokenCount ?? 0);
-                        return {
-                            text: cleanFinalResponse,
-                            confidence: 0.9,
-                            totalTokens,
-                        };
-                    }
-
+                    // If we're here, there were no tool calls, just return the text, stripping any failed tool blocks.
+                    const cleanResponseText = responseText.replace(toolCodeRegex, '').trim();
                     return {
-                        text: responseText,
+                        text: cleanResponseText,
                         confidence: 0.9,
                         totalTokens: result.response.usageMetadata?.totalTokenCount,
                     };
@@ -277,7 +248,7 @@ export class AIHandler {
                     console.error('FATAL: An error occurred in processAIQuestion right after receiving LLM response.', error);
                     return {
                         text: "I'm sorry, an unexpected error occurred while processing the AI response.",
-                        confidence: 0
+                        confidence: 0,
                     };
                 }
             } catch (error) {
@@ -299,7 +270,7 @@ export class AIHandler {
         return this.executeTool(name, args, channelId);
     }
 
-    private async executeTool(name: string, args: any, channelId: string): Promise<{tool_name: string; result: any}> {
+    public async executeTool(name: string, args: any, channelId: string): Promise<{tool_name: string; result: any}> {
         try {
             if (name === 'slack_user_profile') {
                 const userId = (args as any).user_id as string;
@@ -319,10 +290,51 @@ export class AIHandler {
                 } else {
                     return {tool_name: name, result: {error: result.error}};
                 }
+            } else if (name === 'web_search') {
+                if (!config.serpapiApiKey) {
+                    const errorMsg = 'The web_search tool is not available because the SERPAPI_API_KEY is not configured.';
+                    console.error(`[Tool] ${errorMsg}`);
+                    return {tool_name: name, result: {error: errorMsg}};
+                }
+                const query = (args as any).query as string;
+                if (!query) {
+                    return {tool_name: name, result: {error: 'Query was missing from the arguments.'}};
+                }
+                try {
+                    console.log(`[Tool] Performing web search for: "${query}"`);
+                    const serpResponse = await getSerpJson({
+                        engine: 'google',
+                        q: query,
+                        api_key: config.serpapiApiKey,
+                    });
+
+                    let summarizedContent = '';
+                    if (serpResponse.answer_box) {
+                        summarizedContent += `Answer Box: ${serpResponse.answer_box.title}\n${serpResponse.answer_box.snippet}\n\n`;
+                    }
+                    if (serpResponse.organic_results && serpResponse.organic_results.length > 0) {
+                        summarizedContent += 'Search Results:\n';
+                        serpResponse.organic_results.slice(0, 5).forEach((result: any, index: number) => {
+                            summarizedContent += `[${index + 1}] ${result.title}\nSnippet: ${result.snippet}\nSource: ${result.link}\n\n`;
+                        });
+                    }
+
+                    if (!summarizedContent) {
+                        return {tool_name: name, result: {content: 'No search results found.'}};
+                    }
+                    return {tool_name: name, result: {content: summarizedContent}};
+                } catch (e) {
+                    console.error(`[Tool] Error performing web search for "${query}":`, e);
+                    return {tool_name: name, result: {error: (e as Error).message}};
+                }
             } else if (name === 'fetch_url_content') {
                 const url = (args as any).url as string;
                 try {
-                    const response = await fetch(url);
+                    const response = await fetch(url, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        },
+                    });
                     if (!response.ok) {
                         const errorMsg = `Request failed with status ${response.status}`;
                         console.error(`[Tool] Error fetching URL ${url}: ${errorMsg}`);
@@ -335,12 +347,18 @@ export class AIHandler {
                         const doc = new JSDOM(html, {url});
                         const reader = new Readability(doc.window.document);
                         const article = reader.parse();
-                        if (!article || !article.textContent) {
-                            const errorMsg = 'Could not extract article content from HTML.';
-                            console.error(`[Tool] ${errorMsg} from ${url}`);
-                            return {tool_name: name, result: {error: errorMsg}};
+
+                        if (article && article.textContent) {
+                            content = article.textContent;
+                        } else {
+                            console.warn(`[Tool] Readability failed for ${url}. Falling back to body text content.`);
+                            content = doc.window.document.body.textContent ?? '';
+                            if (!content) {
+                                const errorMsg = 'Could not extract any text content from the HTML body.';
+                                console.error(`[Tool] ${errorMsg} from ${url}`);
+                                return {tool_name: name, result: {error: errorMsg}};
+                            }
                         }
-                        content = article.textContent;
                     } else if (contentType.includes('text/plain')) {
                         content = await response.text();
                     } else {
@@ -370,6 +388,24 @@ export class AIHandler {
                     // This case should ideally not be hit if the model follows instructions
                     console.error(`[RPG] Attempted to save context for channel ${channelId} but context was missing.`);
                     return {tool_name: name, result: {success: false, error: 'Context was missing from the arguments.'}};
+                }
+            } else if (name === 'generate_image') {
+                const {prompt} = args;
+                if (prompt) {
+                    console.log(`[DEBUG] LLM-initiated image generation with prompt: "${prompt}"`);
+                    try {
+                        // This is a special case. We don't return the image data to the LLM.
+                        // Instead, we immediately upload it and return a success message.
+                        this.generateAndUploadImage(prompt, channelId).catch(error => {
+                            console.error(`[Tool] Image generation/upload failed in background:`, error);
+                        });
+                        return {tool_name: name, result: {success: true, message: 'The image is being generated and will be posted shortly.'}};
+                    } catch (error) {
+                        console.error(`[Tool] Error generating image for prompt "${prompt}":`, error);
+                        return {tool_name: name, result: {success: false, error: (error as Error).message}};
+                    }
+                } else {
+                    return {tool_name: name, result: {error: 'Prompt was missing from the arguments.'}};
                 }
             }
             return {tool_name: 'unknown_tool', result: {error: 'Tool not found'}};
@@ -511,6 +547,35 @@ export class AIHandler {
             return {imageBase64: data.predictions[0].bytesBase64Encoded};
         }
         throw new Error('Invalid response structure from Imagen API.');
+    }
+
+    public async generateAndUploadImage(prompt: string, channelId: string) {
+        if (!this.app) {
+            console.error('[Tool] Slack app instance is not available for image upload.');
+            return;
+        }
+
+        const imageData = await this.generateImage(prompt);
+
+        if (imageData.imageBase64) {
+            await this.app.client.files.uploadV2({
+                channel_id: channelId,
+                initial_comment: `Here is the image I generated for you, based on the prompt: "_${prompt}_"`,
+                file: Buffer.from(imageData.imageBase64, 'base64'),
+                filename: 'gembot-generated-image.png',
+            });
+            await trackImageInvocation('llm-generated');
+        } else if (imageData.filteredReason) {
+            await this.app.client.chat.postMessage({
+                channel: channelId,
+                text: `I tried to generate an image, but my safety filters were triggered. The reason was: *${imageData.filteredReason}*`,
+            });
+        } else {
+            await this.app.client.chat.postMessage({
+                channel: channelId,
+                text: 'I tried to generate an image, but an unknown error occurred.',
+            });
+        }
     }
 
     public async buildHistoryFromThread(channel: string, thread_ts: string | undefined, trigger_ts: string, client: WebClient, botUserId: string): Promise<Content[]> {
