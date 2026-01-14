@@ -9,8 +9,8 @@ echo "🚀 [Deploy] Starting deployment process..."
 
 # 0. Pre-flight checks
 echo "🔍 [Deploy] Checking environment..."
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ [Error] docker-compose could not be found. Is it installed?"
+if ! command -v docker compose &> /dev/null; then
+    echo "❌ [Error] docker compose could not be found. Is it installed?"
     exit 1
 fi
 
