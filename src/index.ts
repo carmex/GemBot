@@ -135,6 +135,25 @@ process.on('unhandledRejection', (reason) => {
 // Instantiate the AI Handler
 const aiHandler = new AIHandler(app);
 
+// Graceful shutdown
+const shutdown = async () => {
+    console.log('Shutting down...');
+    try {
+        await aiHandler.mcpClientManager.shutdown();
+    } catch (err) {
+        console.error('Error shutting down MCP clients:', err);
+    }
+    try {
+        await app.stop();
+    } catch (err) {
+        console.error('Error stopping Slack app:', err);
+    }
+    process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
 // Example slash command
 app.command('/ping', async ({ command, ack, respond }) => {
     await ack();

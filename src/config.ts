@@ -74,6 +74,13 @@ export interface Config {
     serpapiApiKey: string; // for backwards compat
     apiPort: number;
     apiKey: string;
+    mcp: {
+        servers: Record<string, {
+            command: string;
+            args: string[];
+            env?: Record<string, string>;
+        }>;
+    };
 }
 
 export const config: Config = {
@@ -121,6 +128,9 @@ export const config: Config = {
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
     serpapiApiKey: process.env.SERPAPI_API_KEY || '',
+    mcp: {
+        servers: process.env.MCP_SERVERS_JSON ? JSON.parse(process.env.MCP_SERVERS_JSON) : {},
+    },
     summarization: {
         triggerPercent: parseInt(process.env.SUMMARY_TRIGGER_PERCENT || '85', 10),
         targetPercent: parseInt(process.env.SUMMARY_TARGET_PERCENT || '50', 10),
