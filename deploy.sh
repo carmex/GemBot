@@ -9,8 +9,16 @@ echo "🚀 [Deploy] Starting deployment process..."
 
 # 0. Pre-flight checks
 echo "🔍 [Deploy] Checking environment..."
-if ! command -v docker compose &> /dev/null; then
-    echo "❌ [Error] docker compose could not be found. Is it installed?"
+# Determine which docker compose command to use
+COMPOSE_CMD=""
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+    echo "✅ [Deploy] Using 'docker compose' (V2)"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+    echo "✅ [Deploy] Using 'docker-compose' (V1)"
+else
+    echo "❌ [Error] Neither 'docker compose' nor 'docker-compose' found. Please install Docker Compose."
     exit 1
 fi
 
@@ -40,9 +48,10 @@ if [ ! -f ".env" ]; then
 fi
 
 # 2. Build and start the containers
+# 2. Build and start the containers
 echo "📦 [Deploy] Building and revisiting containers..."
 # --remove-orphans cleans up containers for services not defined in the Compose file
-docker compose up -d --build --remove-orphans
+$COMPOSE_CMD up -d --build --remove-orphans
 
 # 2. Cleanup old images
 echo "🧹 [Deploy] Cleaning up unused data..."
@@ -50,4 +59,4 @@ docker system prune -f
 
 # 3. Status check
 echo "✅ [Deploy] Deployment successful! Service is up."
-docker compose ps
+$COMPOSE_CMD ps
