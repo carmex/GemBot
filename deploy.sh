@@ -27,10 +27,6 @@ if ! docker info > /dev/null 2>&1; then
     exit 1
 fi
 
-
-    exit 1
-fi
-
 # 1. Setup Environment
 echo "⚙️ [Deploy] Setting up environment..."
 if [ -f "$HOME/slack-bot.env" ]; then
@@ -47,7 +43,6 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
-# 2. Build and start the containers
 # 2. Build and start the containers
 echo "📦 [Deploy] Building and revisiting containers..."
 # --remove-orphans cleans up containers for services not defined in the Compose file
