@@ -11,3 +11,7 @@ services:
       - ./logs:/app/logs
       # Optional: Mount Google Cloud credentials if used
       - ./gcloud-credentials.json:/app/gcloud-credentials.json:ro
+      # Mount repositories for feature requests
+      - /home/carmex/slackRepos:/app/mnt/repos
+      # Mount Gemini config for persistence
+      - ./gemini-config:/root/.gemini
