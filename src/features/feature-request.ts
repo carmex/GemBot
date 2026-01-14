@@ -26,6 +26,7 @@ export class FeatureRequestHandler {
     // Hardcoded repo mapping as requested
     private repoMap: Record<string, string> = {
         'gisbot': '/home/carmex/slackRepos/gisbot',
+        'gembot': '/home/carmex/slackRepos/GemBot',
     };
 
     // Tracks active sessions by thread ID
