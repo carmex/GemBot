@@ -22,6 +22,10 @@ build/
 logs/
 *.log
 
+# Certs
+certs/
+*.pem
+
 # Runtime data
 pids
 *.pid

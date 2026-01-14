@@ -21,6 +21,10 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
+console.log('DEBUG: process.env.AI_PROVIDER =', process.env.AI_PROVIDER);
+console.log('DEBUG: process.env.GEMINI_API_KEY =', process.env.GEMINI_API_KEY ? 'SET' : 'NOT SET');
+console.log('DEBUG: process.env.GEMINI_API_KEY length =', process.env.GEMINI_API_KEY?.length);
+
 export interface Config {
     slack: {
         botToken: string;
@@ -34,17 +38,42 @@ export interface Config {
     environment: string;
     morningGreetingSchedule: string;
     channelHistoryLimit: number;
+    ai: {
+        provider: 'gemini' | 'openai';
+    };
     gemini: {
         apiKey: string;
         model: string;
+    };
+    openai: {
+        baseUrl: string;
+        apiKey?: string;
+        model: string;
+        maxContextSize: number;
+    };
+    summarization: {
+        triggerPercent: number;
+        targetPercent: number;
+        maxRecentMessages: number;
     };
     vertex: {
         projectId: string;
         location: string;
     };
+    search: {
+        provider: 'serpapi' | 'google';
+        googleApiKey?: string;
+        googleCxId?: string;
+        serpapiApiKey?: string;
+    };
+    wikipedia: {
+        userAgent: string;
+    };
     alphaVantageApiKey: string;
     finnhubApiKey: string;
-    serpapiApiKey: string;
+    serpapiApiKey: string; // for backwards compat
+    apiPort: number;
+    apiKey: string;
 }
 
 export const config: Config = {
@@ -60,17 +89,43 @@ export const config: Config = {
     environment: process.env.NODE_ENV || 'development',
     morningGreetingSchedule: process.env.MORNING_GREETING_SCHEDULE || '30 9 * * *',
     channelHistoryLimit: parseInt(process.env.CHANNEL_HISTORY_LIMIT || '20', 10),
+    ai: {
+        provider: (process.env.AI_PROVIDER as 'gemini' | 'openai') ||
+            ((process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 0) ? 'gemini' : 'openai'),
+    },
     gemini: {
         apiKey: process.env.GEMINI_API_KEY || '',
-        model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+        model: process.env.GEMINI_MODEL || 'gemini-2.5-pro',
+    },
+    openai: {
+        baseUrl: process.env.OPENAI_BASE_URL || '',
+        apiKey: process.env.OPENAI_API_KEY,
+        model: process.env.OPENAI_MODEL || 'google/gemma-3-12b',
+        maxContextSize: parseInt(process.env.OPENAI_MAX_CONTEXT_SIZE || '4096', 10),
     },
     vertex: {
-        projectId: process.env.VERTEX_PROJECT_ID || '',
-        location: process.env.VERTEX_LOCATION || '',
+        projectId: process.env.VERTEX_PROJECT_ID || process.env.GCLOUD_PROJECT || '',
+        location: process.env.VERTEX_LOCATION || process.env.GCLOUD_LOCATION || 'us-central1',
     },
+    search: {
+        provider: (process.env.SEARCH_PROVIDER as 'serpapi' | 'google') || 'serpapi',
+        googleApiKey: process.env.GOOGLE_API_KEY,
+        googleCxId: process.env.GOOGLE_CX_ID,
+        serpapiApiKey: process.env.SERPAPI_API_KEY,
+    },
+    wikipedia: {
+        userAgent: 'GemBot/1.0 (https://github.com/carmex/GemBot; carmex@gmail.com)',
+    },
+    apiPort: process.env.API_PORT ? parseInt(process.env.API_PORT, 10) : 3000,
+    apiKey: process.env.API_KEY || '',
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
     serpapiApiKey: process.env.SERPAPI_API_KEY || '',
+    summarization: {
+        triggerPercent: parseInt(process.env.SUMMARY_TRIGGER_PERCENT || '85', 10),
+        targetPercent: parseInt(process.env.SUMMARY_TARGET_PERCENT || '50', 10),
+        maxRecentMessages: parseInt(process.env.MAX_RECENT_MESSAGES || '15', 10),
+    },
 };
 
 function checkConfig(config: Config): void {

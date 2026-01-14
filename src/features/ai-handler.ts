@@ -16,20 +16,19 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import {App, SlackEvent, SayFn} from '@slack/bolt';
-import {WebClient} from '@slack/web-api';
-import {GoogleGenerativeAI, Content, HarmCategory, HarmBlockThreshold, FunctionCall} from '@google/generative-ai';
-import {GoogleAuth} from 'google-auth-library';
+import { App, SayFn } from '@slack/bolt';
+import { WebClient } from '@slack/web-api';
+import { GoogleAuth } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
-import {registerWatchlistCommands} from '../commands/watchlist';
-import {registerFinancialCommands} from '../commands/financial';
-import {Readability} from '@mozilla/readability';
-import {JSDOM} from 'jsdom';
-import {getJson as getSerpJson} from 'serpapi';
-import {ChartJSNodeCanvas} from 'chartjs-node-canvas';
-import {ChartConfiguration} from 'chart.js';
+import { ImageGenerator } from './image-generator';
+import { Summarizer } from './summarizer';
+import { registerWatchlistCommands } from '../commands/watchlist';
+import { registerFinancialCommands } from '../commands/financial';
+import { Readability } from '@mozilla/readability';
+import { JSDOM } from 'jsdom';
+import { getJson as getSerpJson } from 'serpapi';
 import {
     initUsageDb,
     trackImageInvocation,
@@ -37,10 +36,15 @@ import {
     getUserUsage,
     getAllUserUsage,
 } from './usage-db';
-import {config} from '../config';
-import {fetchCryptoNews, fetchEarningsCalendar, fetchStockNews} from './finnhub-api';
-import {registerEventListeners} from "../listeners/events";
-import {registerCommandListeners} from "../listeners/commands";
+import { initializeThreadDatabase } from './thread-db';
+import { config } from '../config';
+import { createProvider } from './llm/provider-factory';
+import { HistoryBuilder } from './history-builder';
+import { executeTool } from './tool-executor';
+import { Content, Part } from '@google/generative-ai';
+import { LLMMessage, LLMTool, LLMToolCall } from './llm/providers/types';
+import { registerEventListeners } from '../listeners/events';
+import { registerCommandListeners } from '../listeners/commands';
 
 export interface AIResponse {
     text: string;
@@ -50,7 +54,6 @@ export interface AIResponse {
 
 export class AIHandler {
     public app: App;
-    public gemini: GoogleGenerativeAI;
     public auth: GoogleAuth;
     public disabledThreads: Set<string> = new Set();
     public enabledChannels: Set<string> = new Set();
@@ -58,15 +61,20 @@ export class AIHandler {
     public geminiSystemPrompt: string;
     public rpgGmSystemPrompt: string;
     public rpgPlayerSystemPrompt: string;
+    public summarizationSystemPrompt: string;
     public disabledThreadsFilePath: string;
     public enabledChannelsFilePath: string;
     public rpgEnabledChannelsFilePath: string;
     public lastWarningTimestamp: Map<string, number> = new Map();
+    private provider = createProvider();
+    private threadSummariesFilePath: string;
+    private summarizer?: Summarizer;
+    private imageGenerator?: ImageGenerator;
+
+    public historyBuilder?: HistoryBuilder;
 
     constructor(app: App) {
         this.app = app;
-        this.gemini = new GoogleGenerativeAI(config.gemini.apiKey);
-
         this.auth = new GoogleAuth({
             scopes: 'https://www.googleapis.com/auth/cloud-platform',
         });
@@ -74,6 +82,7 @@ export class AIHandler {
         this.disabledThreadsFilePath = path.join(__dirname, '../../disabled-threads.json');
         this.enabledChannelsFilePath = path.join(__dirname, '../../enabled-channels.json');
         this.rpgEnabledChannelsFilePath = path.join(__dirname, '../../rpg-enabled-channels.json');
+        this.threadSummariesFilePath = path.join(__dirname, '../../thread-summaries.json');
 
         const promptFilePath = path.join(__dirname, '../prompts/gemini-system-prompt.txt');
         try {
@@ -99,21 +108,46 @@ export class AIHandler {
             this.rpgPlayerSystemPrompt = '';
         }
 
-        // Conditionally add the web_search tool to the prompt if the API key is set
-        if (config.serpapiApiKey) {
-            try {
-                const webSearchToolPrompt = fs.readFileSync(path.join(__dirname, '../prompts/web-search-tool-prompt.txt'), 'utf-8');
-                this.geminiSystemPrompt += `\n\n${webSearchToolPrompt}`;
-            } catch (e) {
-                console.error('Error reading or processing web search tool prompt file:', e);
-            }
+        const summarizationPromptFilePath = path.join(__dirname, '../prompts/summarization-system-prompt.txt');
+        try {
+            this.summarizationSystemPrompt = fs.readFileSync(summarizationPromptFilePath, 'utf-8');
+        } catch (e) {
+            console.error('Error reading summarization system prompt file:', e);
+            this.summarizationSystemPrompt = 'Please provide a concise summary of the following conversation.';
         }
+
+        this.summarizer = new Summarizer(this.provider, config, this.threadSummariesFilePath, this.summarizationSystemPrompt);
 
         this.initializeListeners();
         this.loadEnabledChannels();
         this.loadDisabledThreads();
         this.loadRpgEnabledChannels();
         initUsageDb();
+        initializeThreadDatabase();
+
+        this.imageGenerator = new ImageGenerator(this.app, this.auth);
+
+        this.historyBuilder = new HistoryBuilder(this.app, this.imageGenerator, this.summarizer, config);
+    }
+
+    public async generateImage(prompt: string): Promise<{ imageBase64?: string; filteredReason?: string }> {
+        return this.imageGenerator!.generateImage(prompt);
+    }
+
+    public async processImage(fileUrl: string, mimeType: string): Promise<Part> {
+        return this.imageGenerator!.processImagePublic(fileUrl, mimeType);
+    }
+
+    public loadThreadSummary(threadId: string): any {
+        return this.summarizer!.loadThreadSummary(threadId);
+    }
+
+    public saveThreadSummary(threadId: string, summary: string, metadata: any = {}): void {
+        this.summarizer!.saveThreadSummary(threadId, summary, metadata);
+    }
+
+    public async summarizeConversation(messages: Content[], threadId: string): Promise<string> {
+        return this.summarizer!.summarizeConversation(messages, threadId);
     }
 
     private initializeListeners(): void {
@@ -123,16 +157,43 @@ export class AIHandler {
         registerCommandListeners(this.app, this);
     }
 
-    public buildUserPrompt(promptData: {channel: string, user: string, text?: string}): string {
-        return `channel_id: ${promptData.channel} | user_id: ${promptData.user} | message: ${promptData.text ?? ''}`;
+
+    // Helper to strip scaffolding and meta-instructions from any text before sending to provider or Slack
+    private sanitizeNarrative(text: string): string {
+        if (!text) return '';
+        let out = text;
+        // Remove our internal history scaffolding if present
+        out = out.replace(/^(?:channel_id:\s*\S+\s*|\s*user_id:\s*\S+\s*|\s*message:\s*)/im, '');
+        // Remove tool tags and fenced json blocks or inline tool json blobs
+        out = out
+            .replace(/\s*\[(?:END_)?TOOL_(?:REQUEST|RESULT)\]\s*/gi, '')
+            .replace(/```json\s*[\s\S]*?```/gi, '')
+            .replace(/{[^\{\}]*"name"\s*:\s*"[^"]*"\s*,[^\{\}]*"arguments"\s*:\s*{[\s\S]*?}}/g, '');
+        // Remove obvious leaked meta-instructions
+        out = out.replace(/^\s*You are now in RPG mode.*$/gim, '');
+        out = out.replace(/^\s*Act as Game Master.*$/gim, '');
+        out = out.replace(/^\s*I will act as the Game Master.*$/gim, '');
+        out = out.replace(/^\s*Here's an overview of how to interact with me:.*$/gim, '');
+        // Trim extra newlines
+        out = out.replace(/\n{3,}/g, '\n\n');
+        return out.trim();
     }
 
-    public async processAIQuestion(question: string, history: Content[], channelId: string): Promise<AIResponse> {
+    public async processAIQuestion(question: string | Part[], history: Content[], channelId: string, threadTs?: string): Promise<AIResponse> {
+
         let retries = 3;
         while (retries > 0) {
             try {
                 let systemPrompt = this.geminiSystemPrompt;
                 const rpgMode = this.rpgEnabledChannels.get(channelId);
+
+                // Include thread summary in system prompt if available
+                if (threadTs) {
+                    const threadSummary = this.summarizer!.loadThreadSummary(threadTs);
+                    if (threadSummary) {
+                        systemPrompt = `${systemPrompt}\n\n**Previous Conversation Summary:**\n${threadSummary.summary}`;
+                    }
+                }
 
                 if (rpgMode === 'gm') {
                     const rpgContext = this.loadRpgContext(channelId);
@@ -144,117 +205,347 @@ export class AIHandler {
                     systemPrompt = `${this.rpgPlayerSystemPrompt}\n\n${systemPrompt}\n\n${rpgPrompt}`;
                 }
 
-                const model = this.gemini.getGenerativeModel({
-                    model: config.gemini.model,
-                    systemInstruction: systemPrompt,
-                    safetySettings: [
-                        {category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE},
-                        {category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE},
-                        {category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE},
-                        {category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE},
-                    ],
+                // Define tools (provider-agnostic)
+                const tools: LLMTool[] = [];
+
+                const slackTool: LLMTool = {
+                    name: "slack_user_profile",
+                    description: "Fetches a user's profile information from Slack, such as their name, email, and title.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            user_id: {
+                                type: "string",
+                                description: "The Slack user ID (e.g., U12345) of the user to look up.",
+                            },
+                        },
+                        required: ["user_id"],
+                    },
+                };
+
+                const webTool: LLMTool = {
+                    name: "fetch_url_content",
+                    description: "Fetches the textual content from a given URL. Useful for reading the content of a search result link.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            url: {
+                                type: "string",
+                                description: "The full URL (including http/https) of the page to fetch.",
+                            },
+                        },
+                        required: ["url"],
+                    },
+                };
+
+                const imageTool: LLMTool = {
+                    name: "generate_image",
+                    description: "Call this tool to generate an image from a text prompt.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            prompt: {
+                                type: "string",
+                                description: "A detailed, descriptive English prompt for the image generation model. Be specific about the subject, style, colors, and composition.",
+                            },
+                        },
+                        required: ["prompt"],
+                    },
+                };
+
+                const searchTool: LLMTool = {
+                    name: "web_search",
+                    description: "Use this tool to perform a Google search to find up-to-date information or to answer questions about topics you don't know about. It returns a list of search results with titles, snippets, and links. Workflow: For complex questions, first use web_search. Then review the results and optionally call fetch_url_content for promising sources. Always cite sources.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: {
+                                type: "string",
+                                description: "The search query",
+                            },
+                        },
+                        required: ["query"],
+                    },
+                };
+
+                const updateRpgContextTool: LLMTool = {
+                    name: "update_rpg_context",
+                    description: "Updates the JSON context for the RPG channel. Use whenever game state changes.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            context: {
+                                type: "object",
+                                properties: {},
+                            },
+                        },
+                        required: ["context"],
+                    },
+                };
+
+                tools.push(slackTool, webTool, imageTool);
+                const searchProvider = config.search.provider;
+                if ((searchProvider === 'serpapi' && config.search.serpapiApiKey) || (searchProvider === 'google' && config.search.googleApiKey && config.search.googleCxId)) {
+                    tools.push(searchTool);
+                }
+                if (rpgMode === 'gm') {
+                    tools.push(updateRpgContextTool);
+                }
+
+                // Convert Slack history to provider-agnostic history (text-only fallback)
+                const genericHistory: LLMMessage[] = (history || []).map((h: any) => {
+                    const raw = (h.parts?.[0]?.text) || '';
+                    if (h.role === 'user') {
+                        // Strictly strip scaffolding; keep only human message
+                        const cleaned = raw.replace(/^channel_id:\s*\S+\s*\|\s*user_id:\s*\S+\s*\|\s*message:\s*/, '').trim();
+                        return { role: 'user', content: cleaned };
+                    } else {
+                        const dateTimeString = new Date().toLocaleString('en-US', {
+                            timeZone: 'America/New_York',
+                            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+                            hour: 'numeric', minute: 'numeric', second: 'numeric', timeZoneName: 'short'
+                        });
+                        // Add strong guardrails to prevent ignoring RPG context and to avoid inventing unrelated campaigns
+                        const systemGuard = `
+You must follow the provided RPG context strictly. Do NOT introduce unrelated campaigns, quests, or settings.
+If the user asks for a summary or current state, base it ONLY on the saved RPG context and the recent conversation, not on invented scenarios.
+`;
+                        // For assistant messages, we might want to keep them as is or format them
+                        return { role: 'assistant', content: raw };
+                    }
                 });
 
-                const contents: Content[] = [...history, {role: 'user', parts: [{text: question}]}];
-                const result = await model.generateContent({contents});
+                // Prepare history for provider
+                const historyForProvider = history;
+                const finalPrompt = systemPrompt;
 
+                let currentResponse: any;
+                let finalNarrative = '';
+                let iteration = 0;
+                const maxIterations = 10;
+                let totalTokens = 0;
+
+                // Initial call
                 try {
-                    if (!result.response || !result.response.candidates || result.response.candidates.length === 0) {
-                        return {
-                            text: "I'm sorry, I was unable to generate a response. This may be due to the safety settings.",
-                            confidence: 0,
-                        };
+                    if (historyForProvider === history) {
+                        const imageCount = history.reduce((acc, h) => acc + (h.parts?.filter(p => p.inlineData)?.length || 0), 0);
+                        console.log(`[Debug - LLM - Send] Content[] history has ${imageCount} image parts total`);
+                        history.forEach((h, idx) => {
+                            const imgCount = h.parts?.filter(p => p.inlineData)?.length || 0;
+                            if (imgCount > 0) {
+                                console.log(`[Debug - LLM - Send] History entry ${idx} (${h.role}): ${imgCount} image(s), text: ${!!h.parts?.some(p => p.text)} `);
+                            }
+                        });
                     }
+                    currentResponse = await this.provider.chat(question, {
+                        systemPrompt: finalPrompt,
+                        tools,
+                        history: historyForProvider,
+                    });
+                    totalTokens += currentResponse.usage?.totalTokens || 0;
+                } catch (err) {
+                    throw err;
+                }
 
-                    const responseText = result.response.text();
-                    const officialFunctionCalls = result.response.functionCalls() ?? [];
-                    const allToolCalls: FunctionCall[] = [...officialFunctionCalls];
-                    const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/g;
+                // Detailed logging of provider result toolCalls
+                const toolCallsLen = currentResponse?.toolCalls ? currentResponse.toolCalls.length : 0;
+                if ((!currentResponse.toolCalls || currentResponse.toolCalls.length === 0) && (currentResponse.text && (currentResponse.text as string).length > 0)) {
+                    const preview = (currentResponse.text as string).slice(0, 600);
+                }
 
-                    let match;
-                    while ((match = toolCodeRegex.exec(responseText)) !== null) {
-                        const toolCodeContent = match[1].trim();
+                // Recursive tool handling loop
+                while (currentResponse.toolCalls && currentResponse.toolCalls.length > 0 && iteration < maxIterations) {
+                    iteration++;
+
+                    const toolCallsLen = currentResponse?.toolCalls ? currentResponse.toolCalls.length : 0;
+                    console.log(`[Debug] Iteration ${iteration}: toolCalls = ${toolCallsLen} `);
+
+                    const toolCalls = currentResponse.toolCalls;
+
+                    // Execute calls sequentially
+                    const toolResponses: Part[] = [];
+                    for (const tc of toolCalls) {
                         try {
-                            const cleanedContent = toolCodeContent.replace(/^```json\n/, '').replace(/\n```$/, '');
-                            const parsedToolCall = JSON.parse(cleanedContent);
-
-                            // Handle the format specified in the system prompt: {tool_name: "...", parameters: {...}}
-                            if (parsedToolCall.tool_name && parsedToolCall.parameters !== undefined) {
-                                allToolCalls.push({name: parsedToolCall.tool_name, args: parsedToolCall.parameters});
+                            const resp = await this.executeTool(tc.name, tc.arguments, channelId, threadTs);
+                            if (tc.id && resp.functionResponse) {
+                                (resp.functionResponse as any).id = tc.id;
                             }
-                            // Handle the native format from the model: {name: "...", args: {...}}
-                            else if (parsedToolCall.name && parsedToolCall.args !== undefined) {
-                                allToolCalls.push({name: parsedToolCall.name, args: parsedToolCall.args});
-                            } else {
-                                console.warn('[Tool] Parsed tool_code block is missing expected fields ("name"/"args" or "tool_name"/"parameters"):', cleanedContent);
+                            toolResponses.push(resp);
+                        } catch (e) {
+                            console.error(`[Tool] Error executing ${tc.name}: `, e);
+                            const errResp: any = { functionResponse: { name: tc.name, response: { error: (e as Error).message } } };
+                            if (tc.id) {
+                                errResp.functionResponse.id = tc.id;
                             }
-                        } catch (error) {
-                            console.error('[Tool] Invalid JSON in tool_code block:', error);
-                            console.error('[Tool] Malformed tool_code content:', toolCodeContent);
+                            toolResponses.push(errResp);
                         }
                     }
 
-                    if (allToolCalls.length > 0) {
-                        const imageGenCall = allToolCalls.find(call => call.name === 'generate_image');
-                        if (imageGenCall) {
-                            await this.handleToolCall(imageGenCall, channelId);
-                            return {
-                                text: '<DO_NOT_RESPOND>',
-                                confidence: 1.0,
-                                totalTokens: result.response.usageMetadata?.totalTokenCount,
-                            };
+                    // Log web_search results sent to the model
+                    for (const tr of toolResponses) {
+                        if (tr.functionResponse?.name === 'web_search') {
+                            console.log(`[WebSearch Results to Model] ${JSON.stringify(tr.functionResponse.response, null, 2)} `);
+                        }
+                    }
+
+                    // Detect special cases
+                    const calledNames = (toolCalls as Array<{ name: string; arguments: any }>).map((c) => c.name);
+                    const calledGenerateImage = calledNames.includes('generate_image');
+                    const calledUpdateRpg = calledNames.includes('update_rpg_context');
+                    const hasFetchUrl = calledNames.includes('fetch_url_content');
+                    const hasSearch = calledNames.includes('web_search');
+                    const hasSlackProfile = calledNames.includes('slack_user_profile');
+
+                    if (!hasFetchUrl && !hasSearch && !hasSlackProfile && (calledGenerateImage || calledUpdateRpg)) {
+                        let msg: string[] = [];
+                        if (calledUpdateRpg) msg.push('game state updated');
+                        if (calledGenerateImage) msg.push('image request submitted');
+                        const narrative = (currentResponse.text || '').trim();
+                        const confirmation = narrative
+                            ? `Acknowledged: ${msg.join(' and ')}.\n\n${narrative} `
+                            : `Acknowledged: ${msg.join(' and ')}.`;
+                        return { text: confirmation, confidence: 1.0, totalTokens: totalTokens };
+                    }
+
+                    // Handle fetch_url_content summarization
+                    const fetchUrlResponse = toolResponses.find(r => (r as any).functionResponse?.name === 'fetch_url_content');
+                    if (fetchUrlResponse && !(fetchUrlResponse as any).functionResponse.response.error) {
+                        console.log(`[Debug] fetch_url_content detected in iteration ${iteration}; entering summarization pipeline`);
+                        const responseBody = (fetchUrlResponse as any).functionResponse.response;
+
+                        const fetchedContent = responseBody.content;
+                        if (!fetchedContent) {
+                            console.warn(`[Debug] fetch_url_content returned no content and no error.`);
+                            finalNarrative += `\n\n[System: Failed to fetch URL content. No content returned.]\n\n`;
+                            break;
                         }
 
-                        const toolResponses = await Promise.all(
-                            allToolCalls.map(toolCall => this.handleToolCall(toolCall, channelId))
+                        const summary = await this.summarizer!.summarizeText(fetchedContent, typeof question === 'string' ? question : 'Image analysis request');
+                        finalNarrative += (summary || '').trim() + '\n\n';
+
+                        // Break out of the loop after handling fetch_url_content to prevent infinite loops
+                        console.log(`[Debug] fetch_url_content summarization completed, breaking out of tool loop`);
+                        break;
+                    } else {
+                        // Add narrative and tool results to history
+                        const narrativePrefix = (currentResponse.text || '').trim();
+                        // Need to reconstruct the turn history:
+                        // 1. The user's question (only if it's the first iteration and not already in history)
+                        if (iteration === 1) {
+                            if (typeof question === 'string') {
+                                (historyForProvider as Content[]).push({ role: 'user', parts: [{ text: question }] });
+                            } else {
+                                (historyForProvider as Content[]).push({ role: 'user', parts: question });
+                            }
+                        }
+
+                        // 2. The model's response (which triggered the tools)
+                        const modelParts: Part[] = [];
+                        if (narrativePrefix) {
+                            modelParts.push({ text: narrativePrefix });
+                        }
+                        if (toolCalls && toolCalls.length > 0) {
+                            toolCalls.forEach((tc: LLMToolCall) => {
+                                modelParts.push({ functionCall: { name: tc.name, args: tc.arguments } });
+                            });
+                        }
+                        (historyForProvider as Content[]).push({ role: 'model', parts: modelParts });
+
+                        // 3. The tool responses (function role)
+                        (historyForProvider as Content[]).push(
+                            ...toolResponses.map((tr: any) => ({
+                                role: 'function',
+                                parts: [tr] // tr is { functionResponse: ... }
+                            } as unknown as Content))
                         );
 
-                        contents.push({
-                            role: 'model',
-                            parts: allToolCalls.map(fc => ({functionCall: fc})),
-                        });
+                        // Follow-up call
+                        try {
+                            currentResponse = await this.provider.chat('', {
+                                systemPrompt: finalPrompt,
+                                tools,
+                                history: historyForProvider,
+                            });
+                            totalTokens += currentResponse.usage?.totalTokens || 0;
+                        } catch (e) {
+                            console.error(`[Debug] provider.chat iteration ${iteration} threw: `, e);
+                            throw e;
+                        }
+                    }
+                }
 
-                        contents.push({
-                            role: 'function',
-                            parts: toolResponses.map((toolResponse: {tool_name: string; result: any}) => ({
-                                functionResponse: {
-                                    name: toolResponse.tool_name,
-                                    response: toolResponse.result,
-                                },
-                            })),
-                        });
+                if (iteration >= maxIterations) {
+                    console.warn(`[ToolLoop] Max iterations(${maxIterations}) reached; forcing final response`);
+                }
 
-                        const secondResult = await model.generateContent({contents});
-                        const finalResponse = secondResult.response.text();
-                        const totalTokens =
-                            (result.response.usageMetadata?.totalTokenCount ?? 0) +
-                            (secondResult.response.usageMetadata?.totalTokenCount ?? 0);
+                // Final response
+                let out = currentResponse?.text || finalNarrative || '';
 
-                        return {
-                            text: finalResponse,
-                            confidence: 0.9,
-                            totalTokens,
-                        };
+                if (currentResponse?.usage) {
+                    //trackLlmInteraction(userId, currentResponse.usage);
+                }
+
+                // Inline tool fallback on final out
+                let cleanFinal = out;
+                const inlineToolRegex = /{[^{}]*"name"\s*:\s*"([^"]+)"\s*,[^{}]*"arguments"\s*:\s*({[\s\S]*?})\s*}/g;
+                const detectedCalls: Array<{ name: string; args: any; span: [number, number] }> = [];
+                let m: RegExpExecArray | null;
+                while ((m = inlineToolRegex.exec(cleanFinal as string)) !== null) {
+                    const name = m[1];
+                    let args: any = {};
+                    try { args = JSON.parse(m[2]); } catch { args = {}; }
+                    detectedCalls.push({ name, args, span: [m.index, m.index + m[0].length] });
+                }
+
+                if (detectedCalls.length > 0) {
+                    const toolResponses: Part[] = [];
+                    for (const call of detectedCalls) {
+                        try {
+                            const resp = await this.executeTool(call.name, call.args, channelId, threadTs);
+                            toolResponses.push(resp);
+                        } catch (e) {
+                            console.error(`[Tool - Fallback] Tool execution failed: `, e);
+                            toolResponses.push({ functionResponse: { name: call.name, response: { error: (e as Error).message } } });
+                        }
                     }
 
-                    // If we're here, there were no tool calls, just return the text, stripping any failed tool blocks.
-                    const cleanResponseText = responseText.replace(toolCodeRegex, '').trim();
-                    return {
-                        text: cleanResponseText,
-                        confidence: 0.9,
-                        totalTokens: result.response.usageMetadata?.totalTokenCount,
-                    };
-                } catch (error) {
-                    console.error('FATAL: An error occurred in processAIQuestion right after receiving LLM response.', error);
-                    return {
-                        text: "I'm sorry, an unexpected error occurred while processing the AI response.",
-                        confidence: 0,
-                    };
+                    // Strip inline JSON
+                    if (detectedCalls.length > 0) {
+                        let rebuilt = '';
+                        let last = 0;
+                        for (const { span: [start, end] } of detectedCalls) {
+                            rebuilt += (cleanFinal as string).slice(last, start);
+                            last = end;
+                        }
+                        rebuilt += (cleanFinal as string).slice(last);
+                        cleanFinal = rebuilt;
+                    }
                 }
+
+                // Final cleanup
+                cleanFinal = cleanFinal
+                    .replace(/\[(?:END_)?TOOL_(?:REQUEST|RESULT)\]/gi, '')
+                    .replace(/```json\s * [\s\S] *? ```/gi, '')
+                    .replace(/{[^{}]*"name"\s*:\s*"[^"]+"\s*,[^{}]*"arguments"\s*:\s*{[\s\S]*?}}/g, '')
+                    .replace(/^(?:channel_id:\s*\S+\s*\|\s*user_id:\s*\S+\s*\|\s*message:\s*)/i, '')
+                    .replace(/^\s*You are now in RPG mode.*$/gim, '')
+                    .replace(/^\s*Act as Game Master.*$/gim, '')
+                    .replace(/^\s*Here's an overview of how to interact with me:.*$/gim, '')
+                    .trim();
+
+                const confidence = iteration > 0 ? 0.9 : 0.8;
+
+                return {
+                    text: cleanFinal,
+                    confidence,
+                    totalTokens,
+                };
+
             } catch (error) {
-                console.error(`Retry ${3 - retries} failed:`, error);
+                console.error(`Retry ${3 - retries} failed: `, error);
                 retries--;
                 if (retries === 0) {
+
                     return {
                         text: "I'm sorry, I encountered a persistent error while generating a response. Please try again later.",
                         confidence: 0
@@ -262,426 +553,12 @@ export class AIHandler {
                 }
             }
         }
-        return {text: "I'm sorry, I encountered a persistent error while generating a response. Please try again later.", confidence: 0};
+
+        return { text: "I'm sorry, I encountered a persistent error while generating a response. Please try again later.", confidence: 0 };
     }
 
-    private async handleToolCall(toolCall: FunctionCall, channelId: string): Promise<{tool_name: string; result: any}> {
-        const {name, args} = toolCall;
-        return this.executeTool(name, args, channelId);
-    }
-
-    public async executeTool(name: string, args: any, channelId: string): Promise<{tool_name: string; result: any}> {
-        try {
-            if (name === 'slack_user_profile') {
-                const userId = (args as any).user_id as string;
-                const result = await this.app.client.users.info({user: userId});
-                if (result.ok) {
-                    return {
-                        tool_name: name,
-                        result: {
-                            id: (result.user as any)?.id,
-                            name: (result.user as any)?.name,
-                            real_name: (result.user as any)?.real_name,
-                            email: (result.user as any)?.profile?.email,
-                            tz: (result.user as any)?.tz,
-                            title: (result.user as any)?.profile?.title,
-                        }
-                    };
-                } else {
-                    return {tool_name: name, result: {error: result.error}};
-                }
-            } else if (name === 'web_search') {
-                if (!config.serpapiApiKey) {
-                    const errorMsg = 'The web_search tool is not available because the SERPAPI_API_KEY is not configured.';
-                    console.error(`[Tool] ${errorMsg}`);
-                    return {tool_name: name, result: {error: errorMsg}};
-                }
-                const query = (args as any).query as string;
-                if (!query) {
-                    return {tool_name: name, result: {error: 'Query was missing from the arguments.'}};
-                }
-                try {
-                    console.log(`[Tool] Performing web search for: "${query}"`);
-                    const serpResponse = await getSerpJson({
-                        engine: 'google',
-                        q: query,
-                        api_key: config.serpapiApiKey,
-                    });
-
-                    let summarizedContent = '';
-                    if (serpResponse.answer_box) {
-                        summarizedContent += `Answer Box: ${serpResponse.answer_box.title}\n${serpResponse.answer_box.snippet}\n\n`;
-                    }
-                    if (serpResponse.organic_results && serpResponse.organic_results.length > 0) {
-                        summarizedContent += 'Search Results:\n';
-                        serpResponse.organic_results.slice(0, 5).forEach((result: any, index: number) => {
-                            summarizedContent += `[${index + 1}] ${result.title}\nSnippet: ${result.snippet}\nSource: ${result.link}\n\n`;
-                        });
-                    }
-
-                    if (!summarizedContent) {
-                        return {tool_name: name, result: {content: 'No search results found.'}};
-                    }
-                    return {tool_name: name, result: {content: summarizedContent}};
-                } catch (e) {
-                    console.error(`[Tool] Error performing web search for "${query}":`, e);
-                    return {tool_name: name, result: {error: (e as Error).message}};
-                }
-            } else if (name === 'fetch_url_content') {
-                const url = (args as any).url as string;
-                try {
-                    const response = await fetch(url, {
-                        headers: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        },
-                    });
-                    if (!response.ok) {
-                        const errorMsg = `Request failed with status ${response.status}`;
-                        console.error(`[Tool] Error fetching URL ${url}: ${errorMsg}`);
-                        return {tool_name: name, result: {error: errorMsg}};
-                    }
-                    const contentType = response.headers.get('content-type') || '';
-                    let content = '';
-                    if (contentType.includes('text/html')) {
-                        const html = await response.text();
-                        const doc = new JSDOM(html, {url});
-                        const reader = new Readability(doc.window.document);
-                        const article = reader.parse();
-
-                        if (article && article.textContent) {
-                            content = article.textContent;
-                        } else {
-                            console.warn(`[Tool] Readability failed for ${url}. Falling back to body text content.`);
-                            content = doc.window.document.body.textContent ?? '';
-                            if (!content) {
-                                const errorMsg = 'Could not extract any text content from the HTML body.';
-                                console.error(`[Tool] ${errorMsg} from ${url}`);
-                                return {tool_name: name, result: {error: errorMsg}};
-                            }
-                        }
-                    } else if (contentType.includes('text/plain')) {
-                        content = await response.text();
-                    } else {
-                        const errorMsg = `Unsupported content type: ${contentType}`;
-                        console.error(`[Tool] ${errorMsg} from ${url}`);
-                        return {tool_name: name, result: {error: errorMsg}};
-                    }
-                    const result = {tool_name: name, result: {content}};
-                    return result;
-                } catch (e) {
-                    console.error(`[Tool] Error fetching content from ${url}:`, e);
-                    return {tool_name: name, result: {error: (e as Error).message}};
-                }
-            } else if (name === 'update_rpg_context') {
-                const {context} = args as any;
-                if (context) {
-                    try {
-                        const filePath = path.join(__dirname, `../../rpg-context-${channelId}.json`);
-                        fs.writeFileSync(filePath, JSON.stringify(context, null, 2), 'utf-8');
-                        console.log(`[RPG] Context saved for channel ${channelId}.`);
-                        return {tool_name: name, result: {success: true}};
-                    } catch (error) {
-                        console.error('Error saving RPG context:', error);
-                        return {tool_name: name, result: {error: (error as Error).message}};
-                    }
-                } else {
-                    // This case should ideally not be hit if the model follows instructions
-                    console.error(`[RPG] Attempted to save context for channel ${channelId} but context was missing.`);
-                    return {tool_name: name, result: {success: false, error: 'Context was missing from the arguments.'}};
-                }
-            } else if (name === 'generate_image') {
-                const {prompt} = args;
-                if (prompt) {
-                    console.log(`[DEBUG] LLM-initiated image generation with prompt: "${prompt}"`);
-                    try {
-                        // This is a special case. We don't return the image data to the LLM.
-                        // Instead, we immediately upload it and return a success message.
-                        this.generateAndUploadImage(prompt, channelId).catch(error => {
-                            console.error(`[Tool] Image generation/upload failed in background:`, error);
-                        });
-                        return {tool_name: name, result: {success: true, message: 'The image is being generated and will be posted shortly.'}};
-                    } catch (error) {
-                        console.error(`[Tool] Error generating image for prompt "${prompt}":`, error);
-                        return {tool_name: name, result: {success: false, error: (error as Error).message}};
-                    }
-                } else {
-                    return {tool_name: name, result: {error: 'Prompt was missing from the arguments.'}};
-                }
-            }
-            return {tool_name: 'unknown_tool', result: {error: 'Tool not found'}};
-        } catch (error) {
-            console.error('Error executing tool:', error);
-            return {tool_name: name, result: {error: (error as Error).message}};
-        }
-    }
-
-    public async getStockCandles(ticker: string, range: string = '1y'): Promise<{t: number; c: number}[]> {
-        const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${config.alphaVantageApiKey}&outputsize=full`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
-        }
-        const data = (await response.json()) as {"Time Series (Daily)"?: {[key: string]: {"4. close": string}}};
-        const timeSeries = data["Time Series (Daily)"];
-        if (!timeSeries) {
-            return [];
-        }
-        let candles = Object.entries(timeSeries)
-            .map(([date, values]) => ({
-                t: new Date(date).getTime(),
-                c: parseFloat(values["4. close"]),
-            }))
-            .sort((a, b) => a.t - b.t); // oldest to newest
-
-        // Filter by range
-        const now = Date.now();
-        let msBack = 0;
-        switch (range) {
-            case '1m': msBack = 31 * 24 * 60 * 60 * 1000; break;
-            case '3m': msBack = 93 * 24 * 60 * 60 * 1000; break;
-            case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
-            case '1y': msBack = 365 * 24 * 60 * 60 * 1000; break;
-            case '5y': msBack = 5 * 365 * 24 * 60 * 60 * 1000; break;
-            default: msBack = 365 * 24 * 60 * 60 * 1000; break;
-        }
-        const minTime = now - msBack;
-        candles = candles.filter(c => c.t >= minTime);
-        if (candles.length > 0) {
-            const first = new Date(candles[0].t).toISOString().slice(0, 10);
-            const last = new Date(candles[candles.length - 1].t).toISOString().slice(0, 10);
-        } else {
-        }
-        return candles;
-    }
-
-    public async generateChart(ticker: string, data: {t: number; c: number}[]): Promise<Buffer> {
-        const width = 800;
-        const height = 400;
-        const chartJSNodeCanvas = new ChartJSNodeCanvas({width, height, backgroundColour: '#ffffff'});
-        const lastPrice = data[data.length - 1].c;
-        const firstPrice = data[0].c;
-        const isUp = lastPrice >= firstPrice;
-        const color = isUp ? 'rgb(75, 192, 192)' : 'rgb(255, 99, 132)';
-        const configuration: ChartConfiguration = {
-            type: 'line',
-            data: {
-                labels: data.map(d => new Date(d.t).toLocaleDateString()),
-                datasets: [
-                    {
-                        label: `${ticker} Closing Price`,
-                        data: data.map(d => d.c),
-                        borderColor: color,
-                        backgroundColor: color + '33',
-                        fill: true,
-                        pointRadius: 0,
-                        tension: 0.4,
-                    },
-                ],
-            },
-            options: {
-                scales: {
-                    x: {
-                        ticks: {
-                            maxRotation: 0,
-                            autoSkip: true,
-                            maxTicksLimit: 10,
-                        },
-                    },
-                    y: {
-                        ticks: {
-                            callback: value => '$' + value,
-                        },
-                    },
-                },
-                plugins: {
-                    legend: {
-                        display: false,
-                    },
-                },
-            },
-        };
-        return await chartJSNodeCanvas.renderToBuffer(configuration);
-    }
-
-    public async generateImage(prompt: string): Promise<{imageBase64?: string; filteredReason?: string}> {
-        const token = await this.auth.getAccessToken();
-        const projectId = config.vertex.projectId;
-        const location = config.vertex.location;
-        const modelId = 'imagen-4.0-generate-preview-06-06';//imagegeneration@006';
-        const apiEndpoint = `${location}-aiplatform.googleapis.com`;
-        const url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predict`;
-        const requestBody = {
-            instances: [{prompt}],
-            parameters: {
-                sampleCount: 1,
-                includeRaiReason: true,
-            },
-        };
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestBody),
-        });
-        if (!response.ok) {
-            const errorBody = (await response.json()) as {error: {message: string}};
-            console.error('Imagen API response error:', response.status, JSON.stringify(errorBody, null, 2));
-            const apiError = new Error(`Imagen API request failed with status ${response.status}`);
-            (apiError as any).apiError = errorBody.error;
-            throw apiError;
-        }
-        const data = (await response.json()) as {
-            predictions: [
-                {
-                    bytesBase64Encoded?: string;
-                    raiFilteredReason?: string;
-                },
-            ];
-        };
-        if (data.predictions?.[0]?.raiFilteredReason) {
-            return {filteredReason: data.predictions[0].raiFilteredReason};
-        }
-        if (data.predictions?.[0]?.bytesBase64Encoded) {
-            return {imageBase64: data.predictions[0].bytesBase64Encoded};
-        }
-        throw new Error('Invalid response structure from Imagen API.');
-    }
-
-    public async generateAndUploadImage(prompt: string, channelId: string) {
-        if (!this.app) {
-            console.error('[Tool] Slack app instance is not available for image upload.');
-            return;
-        }
-
-        const imageData = await this.generateImage(prompt);
-
-        if (imageData.imageBase64) {
-            await this.app.client.files.uploadV2({
-                channel_id: channelId,
-                initial_comment: `Here is the image I generated for you, based on the prompt: "_${prompt}_"`,
-                file: Buffer.from(imageData.imageBase64, 'base64'),
-                filename: 'gembot-generated-image.png',
-            });
-            await trackImageInvocation('llm-generated');
-        } else if (imageData.filteredReason) {
-            await this.app.client.chat.postMessage({
-                channel: channelId,
-                text: `I tried to generate an image, but my safety filters were triggered. The reason was: *${imageData.filteredReason}*`,
-            });
-        } else {
-            await this.app.client.chat.postMessage({
-                channel: channelId,
-                text: 'I tried to generate an image, but an unknown error occurred.',
-            });
-        }
-    }
-
-    public async buildHistoryFromThread(channel: string, thread_ts: string | undefined, trigger_ts: string, client: WebClient, botUserId: string): Promise<Content[]> {
-        const history: Content[] = [];
-        if (!thread_ts) {
-            return history;
-        }
-        try {
-            const replies = await client.conversations.replies({
-                channel,
-                ts: thread_ts,
-                inclusive: true,
-            });
-            if (!replies.messages) {
-                return history;
-            }
-            for (const reply of replies.messages) {
-                if (reply.ts === trigger_ts) {
-                    continue;
-                }
-                if (reply.user === botUserId || reply.bot_id) {
-                    history.push({role: 'model', parts: [{text: reply.text || ''}]});
-                } else if (reply.user) {
-                    history.push({role: 'user', parts: [{text: this.buildUserPrompt({channel, user: reply.user, text: reply.text})}]});
-                }
-            }
-        } catch (error) {
-            console.error("Error building history from thread:", error);
-        }
-        return history;
-    }
-
-    public async buildHistoryFromChannel(channel: string, trigger_ts: string, client: WebClient, botUserId: string): Promise<Content[]> {
-        const history: Content[] = [];
-        try {
-            const result = await client.conversations.history({
-                channel,
-                limit: config.channelHistoryLimit,
-            });
-            if (!result.messages) {
-                return history;
-            }
-            const messages = result.messages.reverse();
-            for (const reply of messages) {
-                if (reply.ts === trigger_ts) {
-                    continue;
-                }
-                if (reply.user === botUserId || reply.bot_id) {
-                    history.push({role: 'model', parts: [{text: reply.text || ''}]});
-                } else if (reply.user) {
-                    history.push({role: 'user', parts: [{text: this.buildUserPrompt({channel, user: reply.user, text: reply.text})}]});
-                }
-            }
-        } catch (error) {
-            console.error("Error building history from channel:", error);
-        }
-        return history;
-    }
-
-    public async buildHistorySinceLastBotMessage(channel: string, client: WebClient, botUserId: string): Promise<Content[]> {
-        const history: Content[] = [];
-        const relevantMessages: any[] = [];
-        let hasMore = true;
-        let cursor: string | undefined = undefined;
-
-        try {
-            while (hasMore) {
-                const result = await client.conversations.history({
-                    channel,
-                    limit: 200, // A reasonable page size.
-                    cursor: cursor,
-                });
-
-                if (!result.messages || result.messages.length === 0) {
-                    break;
-                }
-
-                const botMessageIndex = result.messages.findIndex(reply => reply.user === botUserId || reply.bot_id);
-
-                if (botMessageIndex !== -1) {
-                    // Bot message found on this page.
-                    // Add messages before it and we're done.
-                    relevantMessages.push(...result.messages.slice(0, botMessageIndex));
-                    hasMore = false; // Stop paginating
-                } else {
-                    // No bot message on this page, add all messages and continue.
-                    relevantMessages.push(...result.messages);
-                }
-
-                if (hasMore && result.has_more) {
-                    cursor = result.response_metadata?.next_cursor;
-                } else {
-                    hasMore = false;
-                }
-            }
-
-            // The messages are newest to oldest, we need to reverse them to process chronologically
-            for (const reply of relevantMessages.reverse()) {
-                if (reply.user) {
-                    history.push({role: 'user', parts: [{text: this.buildUserPrompt({channel, user: reply.user, text: reply.text})}]});
-                }
-            }
-        } catch (error) {
-            console.error("Error building history since last bot message:", error);
-        }
-        return history;
+    public async executeTool(name: string, args: any, channelId: string, threadTs?: string): Promise<Part> {
+        return executeTool(this.app, this.imageGenerator, name, args, channelId, threadTs);
     }
 
     public loadDisabledThreads(): void {
@@ -754,10 +631,11 @@ export class AIHandler {
                 const data = fs.readFileSync(filePath, 'utf-8');
                 return JSON.parse(data);
             } catch (error) {
-                console.error(`[RPG] Error loading or parsing RPG context for channel ${channelId}:`, error);
+                console.error(`[RPG] Error loading or parsing RPG context for channel ${channelId}: `, error);
                 return {};
             }
         }
         return {};
     }
+
 }

@@ -108,15 +108,18 @@ export async function trackImageInvocation(userId: string) {
 }
 
 interface LlmUsage {
-    promptTokenCount: number;
-    candidatesTokenCount: number;
-    totalTokenCount: number;
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
 }
 
 /**
  * Tracks an interaction with the LLM API for a given user.
  * @param userId The Slack user ID.
- * @param usage The usage metadata from the Gemini API response.
+ * @param usage The usage metadata from the LLM provider.
  */
 export async function trackLlmInteraction(userId: string, usage: LlmUsage) {
     let user = await findUser(userId);
@@ -126,9 +129,9 @@ export async function trackLlmInteraction(userId: string, usage: LlmUsage) {
     const today = getToday();
     const day = getOrCreateDay(user, today);
     day.llmInvocations += 1;
-    day.totalPromptTokens += usage.promptTokenCount || 0;
-    day.totalResponseTokens += usage.candidatesTokenCount || 0;
-    day.totalTokens += usage.totalTokenCount || 0;
+    day.totalPromptTokens += usage.promptTokenCount ?? usage.prompt_tokens ?? 0;
+    day.totalResponseTokens += usage.candidatesTokenCount ?? usage.completion_tokens ?? 0;
+    day.totalTokens += usage.totalTokenCount ?? usage.total_tokens ?? 0;
     day.lastUpdated = new Date().toISOString();
     await db.write();
 }

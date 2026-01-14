@@ -1,0 +1,12 @@
+npm warn Unknown user config "always-auth" (//packages.infragistics.com/npm/js-licensed/:always-auth). This will stop working in the next major version of npm.
+src/features/ai-handler.ts(435,33): error TS1117: An object literal cannot have multiple properties with the same name.
+src/listeners/commands.ts(341,36): error TS2339: Property 'thread_ts' does not exist on type 'GenericMessageEvent | BotMessageEvent | ChannelArchiveMessageEvent | ChannelJoinMessageEvent | ... 9 more ... | ThreadBroadcastMessageEvent'.
+  Property 'thread_ts' does not exist on type 'ChannelArchiveMessageEvent'.
+src/listeners/commands.ts(350,36): error TS2339: Property 'thread_ts' does not exist on type 'GenericMessageEvent | BotMessageEvent | ChannelArchiveMessageEvent | ChannelJoinMessageEvent | ... 9 more ... | ThreadBroadcastMessageEvent'.
+  Property 'thread_ts' does not exist on type 'ChannelArchiveMessageEvent'.
+src/listeners/commands.ts(365,40): error TS2339: Property 'thread_ts' does not exist on type 'GenericMessageEvent | BotMessageEvent | ChannelArchiveMessageEvent | ChannelJoinMessageEvent | ... 9 more ... | ThreadBroadcastMessageEvent'.
+  Property 'thread_ts' does not exist on type 'ChannelArchiveMessageEvent'.
+src/listeners/commands.ts(371,40): error TS2339: Property 'thread_ts' does not exist on type 'GenericMessageEvent | BotMessageEvent | ChannelArchiveMessageEvent | ChannelJoinMessageEvent | ... 9 more ... | ThreadBroadcastMessageEvent'.
+  Property 'thread_ts' does not exist on type 'ChannelArchiveMessageEvent'.
+src/listeners/commands.ts(376,40): error TS2339: Property 'thread_ts' does not exist on type 'GenericMessageEvent | BotMessageEvent | ChannelArchiveMessageEvent | ChannelJoinMessageEvent | ... 9 more ... | ThreadBroadcastMessageEvent'.
+  Property 'thread_ts' does not exist on type 'ChannelArchiveMessageEvent'.

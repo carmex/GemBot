@@ -75,6 +75,7 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
     -   [Google Gemini](https://ai.google.dev/gemini-api/docs/api-key)
     -   [Finnhub](https://finnhub.io/) (optional, for financial data)
     -   [Alpha Vantage](https://www.alphavantage.co/support/#api-key) (optional, for financial charts)
+    -   [SerpApi](https://serpapi.com/) or [Google Custom Search](https://developers.google.com/custom-search/v1/overview) (optional, for web search)
 
 > **⚠️ Note on API Costs:** This bot uses paid Google Cloud services, including the Gemini and Vertex AI APIs. You are responsible for all costs associated with your API usage. Depending on the models you use and your level of interaction with the bot, these costs can be substantial. Please monitor your Google Cloud billing and set up budgets and alerts to avoid unexpected charges. It is strongly recommended *not* to deploy this bot in very large Slack workspaces or in environments where the users are not trusted. For Finnhub and Alpha Vantage, free API keys are probably sufficient, but high utilization may use up your free quota.
 
@@ -111,10 +112,17 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
 
 4.  **Set up Google Cloud & APIs**
     -   Go to the [Google Cloud Console](https://console.cloud.google.com/).
-    -   Enable the **Vertex AI API** for your project.
-    -   Create a **Service Account** with the `Vertex AI User` role.
-    -   Create a JSON key for this service account, download it, and save it in the root of the project directory.
-    -   Enable the **Gemini API**. You can get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+    -   Enable the **Vertex AI API** and **Gemini API** for your project.
+    -   Create a **Service Account** with the `Vertex AI User` role, download its JSON key, and save it in the project root.
+    -   If using Google for search, also enable the **Custom Search API**.
+    
+5.  **Create a Google Programmable Search Engine (for Google Search provider only)**
+    -   Go to the [Programmable Search Engine control panel](https://programmablesearchengine.google.com/controlpanel/all).
+    -   Click "Add" to create a new search engine.
+    -   Give it a name (e.g., "GemBotSearch").
+    -   In the "What to search?" section, select "Search the entire web".
+    -   Click "Create".
+    -   Once created, go to the "Basics" tab. Your **Search engine ID** is the `GOOGLE_CX_ID`.
 
 5.  **Configure Environment Variables**
     -   Copy the example environment file:
@@ -145,6 +153,43 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
     # Alpha Vantage API Key for !chart command (optional)
     ALPHA_VANTAGE_API_KEY=your-alpha-vantage-api-key
     ```
+
+The bot's personality and system instructions can be customized by editing `src/prompts/gemini-system-prompt.txt`.
+
+### External API
+
+The bot includes an optional, secure HTTPS API for sending messages to Slack channels or users programmatically.
+
+**Configuration**
+
+1.  Open the `.env` file (or create one from `env.example`).
+2.  Set `API_PORT` to your desired port (e.g., `3000`).
+3.  Set `API_KEY` to a strong, secret key. This key is required for all API requests.
+
+**Usage**
+
+The API server will start automatically with the bot if `API_KEY` is configured. On the first run, it will generate a self-signed SSL certificate and store it in a `certs/` directory.
+
+To send a message, make a `POST` request to the `/api/message` endpoint.
+
+**Example using `curl`:**
+
+Note: The `--insecure` flag is needed because the server uses a self-signed certificate.
+
+```bash
+curl --insecure -X POST https://localhost:3030/api/message \
+-H "Content-Type: application/json" \
+-H "X-API-Key: your-secret-api-key" \
+-d '{
+  "channel": "C123456789",
+  "text": "Hello from the API!"
+}'
+```
+
+**Parameters:**
+
+*   `channel` (string, required): The ID of the public channel, private channel, or user to send the message to.
+*   `text` (string, required): The content of the message to send.
 
 ## Development
 

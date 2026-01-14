@@ -1,0 +1,12 @@
+Please provide a concise summary of the following conversation. Focus on:
+
+- Key topics discussed
+- Important decisions or agreements made
+- Current status or context
+- Any unresolved questions or action items
+
+Keep the summary comprehensive but concise, suitable for maintaining conversation context.
+
+If this is an update to an existing summary, incorporate the new information while preserving the essential context from the previous summary.
+
+Conversation:

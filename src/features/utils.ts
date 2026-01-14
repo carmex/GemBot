@@ -89,7 +89,7 @@ export async function formatQuote(ticker: string, displayName?: string): Promise
 // Function to send the morning greeting
 export async function sendMorningGreeting(app: App, channelId: string) {
     try {
-        let text = 'Good morning everyone! What are your top priorities for today?';
+        let text = "Good morning @boltar. What's on your mind?";//'Good morning everyone! What are your top priorities for today?';
 
         if (config.finnhubApiKey) {
             const articles = await fetchStockNews();
@@ -113,3 +113,7 @@ export async function sendMorningGreeting(app: App, channelId: string) {
         console.error('Failed to send morning greeting:', error);
     }
 } 
+export function buildUserPrompt(promptData: {channel: string, user: string, text?: string}): string {
+    // Keep internal scaffolding for logging only; provider history will strip it later.
+    return `channel_id: ${promptData.channel} | user_id: ${promptData.user} | message: ${promptData.text || ''}`;
+}

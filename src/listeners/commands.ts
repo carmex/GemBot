@@ -17,6 +17,8 @@
  */
 
 import {App} from '@slack/bolt';
+import fetch from 'node-fetch';
+import {getThreadHistory} from '../features/thread-db';
 import {AIHandler} from '../features/ai-handler';
 import {config} from '../config';
 import {
@@ -26,8 +28,9 @@ import {
 } from "../features/usage-db";
 import {fetchCryptoNews, fetchEarningsCalendar, fetchStockNews} from "../features/finnhub-api";
 import Roll from 'roll';
-import {formatQuote, getColoredTileEmoji} from "../features/utils";
+import {formatQuote, getColoredTileEmoji, buildUserPrompt} from "../features/utils";
 import {sendMorningGreeting} from '../features/utils';
+import { getStockCandles, generateChart } from '../features/stock-charts';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     app.message(/^!fetch_url\s+(.+)/i, async ({message, context, say}) => {
@@ -81,7 +84,7 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
             const rpgMode = aiHandler.rpgEnabledChannels.get(message.channel);
             if (rpgMode === 'gm' && postResult.ts && context.botUserId) {
                 try {
-                    const history = await aiHandler.buildHistoryFromChannel(
+                    const history = await aiHandler.historyBuilder!.buildHistoryFromChannel(
                         message.channel,
                         postResult.ts,
                         client,
@@ -94,18 +97,16 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                         2
                     )}\n\n`;
 
-                    const userPrompt = `${rpgPrompt}${aiHandler.buildUserPrompt({
+                    const userPrompt = `${rpgPrompt}${buildUserPrompt({
                         channel: message.channel,
                         user: message.user,
                         text: rollResultText,
                     })}`;
 
-                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel);
+                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel, undefined);
 
                     if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
-                        const responseText = response.totalTokens
-                            ? `(${response.totalTokens} tokens) ${response.text}`
-                            : response.text;
+                        const responseText = response.text;
                         await client.chat.postMessage({channel: message.channel, text: responseText});
                     }
                 } catch (error) {
@@ -134,13 +135,13 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
         const range = context.matches[2] || '1y';
         try {
             const workingMessage = await say({text: `📈 Generating chart for *${ticker}* over the last *${range}*...`});
-            const candles = await aiHandler.getStockCandles(ticker, range);
+            const candles = await getStockCandles(ticker, range);
             if (candles.length === 0) {
                 await say({text: `No data found for *${ticker}* in the selected range.`});
                 if (workingMessage.ts) await client.chat.delete({channel: message.channel, ts: workingMessage.ts});
                 return;
             }
-            const chartImage = await aiHandler.generateChart(ticker, candles);
+            const chartImage = await generateChart(ticker, candles);
             await client.files.uploadV2({
                 channel_id: message.channel,
                 initial_comment: `Here's the chart for <@${message.user}> for *${ticker}* (${range}):`,
@@ -266,6 +267,33 @@ _Costs are estimates only and should not be used for billing purposes._`;
         }
     });
 
+    app.message(/^!w (.+)/i, async ({message, context, client}) => {
+        if (!('user' in message) || !message.user || !context.matches?.[1]) return;
+        const searchTerm = context.matches[1].trim();
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+        try {
+            const title = searchTerm.replace(/ /g, '_');
+            const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: `Wikipedia entry for "${searchTerm}": ${url}`,
+                thread_ts: threadTs,
+            });
+        } catch (error) {
+            console.error('Error in !w handler:', error);
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: `Sorry, I couldn't generate the Wikipedia link for "${searchTerm}".`,
+                thread_ts: threadTs,
+            });
+            if (threadTs) {
+                const threadKey = `${message.channel}-${threadTs}`;
+                aiHandler.disabledThreads.add(threadKey);
+                aiHandler.saveDisabledThreads();
+            }
+        }
+    });
+
     app.message(/^!usage\s+<@([A-Z0-9]+)>(?:\s+(\d{4}-\d{2}-\d{2}))?$/, async ({message, context, say}) => {
         if (!('user' in message) || !message.user) {
             return;
@@ -307,9 +335,9 @@ _Costs are estimates only and should not be used for billing purposes._`;
             return;
         }
 
-        if (!config.vertex.projectId || !config.gemini.apiKey) {
+        if (!config.vertex.projectId) {
             await say({
-                text: 'The image generation feature is not configured. A Google Cloud Project ID and Gemini API key are required.',
+                text: 'The image generation feature is not configured. A Google Cloud Project ID is required for Vertex AI.',
                 thread_ts: message.thread_ts,
             });
             return;
@@ -629,6 +657,7 @@ ${formatInventory(character.inventory)}
 *AI & Fun*
 • \`@<BotName> <prompt>\`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
 • \`!image <prompt>\`: Generates an image based on your text prompt using Imagen 4.
+• \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
 

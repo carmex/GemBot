@@ -1,0 +1,14 @@
+services:
+  slack-bot:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:${API_PORT:-3000}"
+    env_file:
+      - .env
+    volumes:
+      - ./threads.db:/app/threads.db
+      - ./certs:/app/certs
+      - ./logs:/app/logs
+      # Optional: Mount Google Cloud credentials if used
+      - ./gcloud-credentials.json:/app/gcloud-credentials.json:ro
