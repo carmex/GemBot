@@ -45,14 +45,18 @@ You need to install the GitHub Actions runner agent on your Linux server. This a
     - Check status: `sudo ./svc.sh status`
 
 4.  **Environment Variables**:
-    - Ensure your `.env` file is present in the **root of the repository directory where the runner checks out code**.
-    - *Note*: The runner will check out code into `_work/slack-ai-bot/slack-ai-bot`. You might need to place your `.env` file there manually once, or use GitHub Secrets to generate it during the build (advanced).
-    - **Easier method**: Manually place the `.env` file in the `actions-runner/_work/slack-ai-bot/slack-ai-bot` folder after the first run, OR update `docker-compose.yml` to point to a fixed absolute path for the `.env` file on your server.
+    - The runner cleans the workspace frequently, so **do not** leave your `.env` file in the `_work` folder.
+    - **Recommended**: Save your `.env` file in your user's home directory as `~/slack-bot.env`.
+      ```bash
+      # On your server
+      cp .env ~/slack-bot.env
+      ```
+    - The deployment script is configured to automatically look for `~/slack-bot.env` and copy it into place during deployment.
 
 ## Security - CRITICAL (Public Repos)
 
 If your repository is **Public**, you MUST configure the following setting to prevent malicious code from forks running on your server:
-
+cd 
 1.  Go to your GitHub Repository.
 2.  Click **Settings** > **Actions** > **General**.
 3.  Scroll to **Fork pull request workflows from outside collaborators**.
@@ -76,6 +80,20 @@ The runner on your server will:
 3.  Rebuild the Docker containers.
 4.  Restart the service.
 
-## monitoring
-
 You can view the deployment logs in the **Actions** tab on your GitHub repository.
+
+## Troubleshooting
+
+### Error: "Process completed with exit code 1"
+If the deployment fails immediately, it is likely a permission issue with Docker. The runner user needs to be in the `docker` group to run commands without `sudo`.
+
+**Fix:**
+Run this on your Linux server:
+```bash
+sudo usermod -aG docker $USER
+```
+Then, **restart the runner service** for the changes to take effect:
+```bash
+sudo ./svc.sh stop
+sudo ./svc.sh start
+```
