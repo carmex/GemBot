@@ -45,6 +45,7 @@ import { Content, Part } from '@google/generative-ai';
 import { LLMMessage, LLMTool, LLMToolCall } from './llm/providers/types';
 import { registerEventListeners } from '../listeners/events';
 import { registerCommandListeners } from '../listeners/commands';
+import { McpClientManager } from './mcp/client-manager';
 
 export interface AIResponse {
     text: string;
@@ -70,6 +71,7 @@ export class AIHandler {
     private threadSummariesFilePath: string;
     private summarizer?: Summarizer;
     private imageGenerator?: ImageGenerator;
+    public mcpClientManager: McpClientManager;
 
     public historyBuilder?: HistoryBuilder;
 
@@ -77,6 +79,11 @@ export class AIHandler {
         this.app = app;
         this.auth = new GoogleAuth({
             scopes: 'https://www.googleapis.com/auth/cloud-platform',
+        });
+
+        this.mcpClientManager = new McpClientManager();
+        this.mcpClientManager.initialize().catch(err => {
+            console.error('[MCP] Error initializing MCP Client Manager:', err);
         });
 
         this.disabledThreadsFilePath = path.join(__dirname, '../../disabled-threads.json');
@@ -290,6 +297,14 @@ export class AIHandler {
                 }
                 if (rpgMode === 'gm') {
                     tools.push(updateRpgContextTool);
+                }
+
+                // Add MCP tools
+                try {
+                    const mcpTools = await this.mcpClientManager.getTools();
+                    tools.push(...mcpTools);
+                } catch (err) {
+                    console.error('[MCP] Error fetching tools from MCP Client Manager:', err);
                 }
 
                 // Convert Slack history to provider-agnostic history (text-only fallback)
@@ -558,6 +573,9 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
     }
 
     public async executeTool(name: string, args: any, channelId: string, threadTs?: string): Promise<Part> {
+        if (name.includes('__')) {
+            return this.mcpClientManager.executeTool(name, args);
+        }
         return executeTool(this.app, this.imageGenerator, name, args, channelId, threadTs);
     }
 

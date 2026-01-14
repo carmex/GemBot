@@ -28,6 +28,7 @@
         "@extractus/article-extractor": "^8.0.19",
         "@google-cloud/vertexai": "^1.10.0",
         "@google/generative-ai": "^0.24.1",
+        "@modelcontextprotocol/sdk": "^1.25.2",
         "@mozilla/readability": "^0.6.0",
         "@slack/bolt": "^3.17.1",
         "@types/jsdom": "^21.1.7",
