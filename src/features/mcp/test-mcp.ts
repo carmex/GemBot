@@ -9,7 +9,7 @@ async function test() {
     (config as any).mcp = {
         servers: {
             mcpServers: {
-                "echo-server": {
+                "echo_server": {
                     command: "node",
                     args: ["-e", `
                         const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
