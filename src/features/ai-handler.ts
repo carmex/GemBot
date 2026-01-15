@@ -574,6 +574,25 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
 
     public async executeTool(name: string, args: any, channelId: string, threadTs?: string): Promise<Part> {
         if (name.includes('__')) {
+            // Check if it's the python interpreter
+            if (name.startsWith('python_interpreter')) {
+                const code = args.code || args.python_code || args.script;
+                if (code) {
+                    try {
+                        console.log(`[Python] Uploading code snippet to Slack channel ${channelId}...`);
+                        await this.app.client.files.upload({
+                            content: code,
+                            filename: 'generated_code.py',
+                            filetype: 'python',
+                            channels: channelId,
+                            thread_ts: threadTs,
+                            initial_comment: '_Executing generated Python code:_'
+                        });
+                    } catch (uploadError) {
+                        console.error('[Python] Failed to upload code snippet to Slack:', uploadError);
+                    }
+                }
+            }
             return this.mcpClientManager.executeTool(name, args);
         }
         return executeTool(this.app, this.imageGenerator, name, args, channelId, threadTs);
