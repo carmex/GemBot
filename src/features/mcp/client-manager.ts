@@ -14,7 +14,11 @@ export class McpClientManager {
             servers = (servers as any).mcpServers;
         }
 
-        for (const [name, serverConfig] of Object.entries(servers)) {
+        console.log(`[MCP] Initializing with ${Object.keys(servers).length} potential servers...`);
+
+        for (const [originalName, serverConfig] of Object.entries(servers)) {
+            // Normalize name: hyphens to underscores for LLM compatibility
+            const name = originalName.replace(/-/g, "_");
             try {
                 const transport = new StdioClientTransport({
                     command: serverConfig.command,
@@ -34,7 +38,7 @@ export class McpClientManager {
 
                 await client.connect(transport);
                 this.clients.set(name, client);
-                console.log(`[MCP] Connected to server: ${name}`);
+                console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
 
                 // Discovery logging
                 try {
@@ -44,7 +48,7 @@ export class McpClientManager {
                     console.error(`[MCP] Failed to list tools for ${name} during initialization:`, toolError);
                 }
             } catch (error) {
-                console.error(`[MCP] Failed to connect to server ${name}:`, error);
+                console.error(`[MCP] Failed to connect to server ${originalName}:`, error);
             }
         }
     }
@@ -68,12 +72,25 @@ export class McpClientManager {
     }
 
     async executeTool(fullName: string, args: any): Promise<Part> {
-        const [serverName, ...toolNameParts] = fullName.split("__");
+        const [requestedServerName, ...toolNameParts] = fullName.split("__");
         const toolName = toolNameParts.join("__");
-        const client = this.clients.get(serverName);
+        
+        // Try exact match, then normalized match
+        let client = this.clients.get(requestedServerName);
+        let serverName = requestedServerName;
 
         if (!client) {
-            throw new Error(`MCP server not found: ${serverName}`);
+            const normalizedName = requestedServerName.replace(/-/g, "_");
+            client = this.clients.get(normalizedName);
+            if (client) {
+                serverName = normalizedName;
+            }
+        }
+
+        if (!client) {
+            const availableServers = Array.from(this.clients.keys()).join(", ");
+            console.error(`[MCP] Server not found: ${requestedServerName}. Available: ${availableServers}`);
+            throw new Error(`MCP server not found: ${requestedServerName}`);
         }
 
         try {
@@ -88,7 +105,7 @@ export class McpClientManager {
                 }
             };
         } catch (error) {
-            console.error(`[MCP] Error executing tool ${fullName}:`, error);
+            console.error(`[MCP] Error executing tool ${fullName} on server ${serverName}:`, error);
             return {
                 functionResponse: {
                     name: fullName,
