@@ -107,7 +107,28 @@ export class McpClientManager {
                 }));
                 allTools.push(...mcpTools);
             } catch (error) {
-                console.error(`[MCP] Failed to list tools for server ${serverName}:`, error);
+                if (serverName === 'dice') {
+                    console.log(`[MCP] Manually registering tools for ${serverName} (auto-discovery failed)`);
+                    allTools.push({
+                        name: `${serverName}__search_jobs`,
+                        description: "Search for jobs on Dice.com. Requires 'keyword'. Optional filters for workplace_types (Remote, On-Site, Hybrid), employment_types (FULLTIME, CONTRACTS, PARTTIME, THIRD_PARTY), posted_date (ONE...THIRTY), etc.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                keyword: { type: "string", description: "Job title or keywords" },
+                                workplace_types: { type: "string", enum: ["Remote", "On-Site", "Hybrid"] },
+                                employment_types: { type: "string", enum: ["FULLTIME", "CONTRACTS", "PARTTIME", "THIRD_PARTY"] },
+                                posted_date: { type: "string", enum: ["ONE", "THREE", "SEVEN", "FOURTEEN", "THIRTY"] },
+                                radius_unit: { type: "string", enum: ["miles", "kilometers"], default: "miles" },
+                                jobs_per_page: { type: "integer", maximum: 100 },
+                                page_number: { type: "integer", minimum: 1 }
+                            },
+                            required: ["keyword"]
+                        }
+                    });
+                } else {
+                    console.error(`[MCP] Failed to list tools for server ${serverName}:`, error);
+                }
             }
         }
         return allTools;
