@@ -54,6 +54,14 @@ fi
 
 # 2. Build and start the containers
 echo "📦 [Deploy] Building and revisiting containers..."
+
+# FIX: Ensure gemini-config exists and is owned by the user (1001)
+# We use docker to chown because the runner might not have sudo, but has docker access.
+# We map the local folder to /tmp/config and chown it to 1001:1001.
+echo "🔧 [Deploy] Fixing permissions for gemini-config..."
+mkdir -p gemini-config
+docker run --rm -v "$(pwd)/gemini-config:/tmp/config" node:20-bookworm-slim chown -R 1001:1001 /tmp/config
+
 # --remove-orphans cleans up containers for services not defined in the Compose file
 $COMPOSE_CMD up -d --build --remove-orphans
 
