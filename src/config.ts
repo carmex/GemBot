@@ -76,8 +76,9 @@ export interface Config {
     apiKey: string;
     mcp: {
         servers: Record<string, {
-            command: string;
-            args: string[];
+            command?: string;
+            args?: string[];
+            url?: string;
             env?: Record<string, string>;
         }>;
     };
@@ -129,7 +130,11 @@ export const config: Config = {
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
     serpapiApiKey: process.env.SERPAPI_API_KEY || '',
     mcp: {
-        servers: process.env.MCP_SERVERS_JSON ? JSON.parse(process.env.MCP_SERVERS_JSON) : {},
+        servers: process.env.MCP_SERVERS_JSON ? JSON.parse(process.env.MCP_SERVERS_JSON) : {
+            dice: {
+                url: "https://mcp.dice.com/mcp"
+            }
+        },
     },
     summarization: {
         triggerPercent: parseInt(process.env.SUMMARY_TRIGGER_PERCENT || '85', 10),

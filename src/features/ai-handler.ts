@@ -592,6 +592,22 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     }
                 }
             }
+
+            // Dice feedback
+            if (name.startsWith('dice__')) {
+                const query = args.query || args.keywords || args.job_title || args.q || '';
+                const feedbackMsg = query ? `_searching Dice for "${query}" jobs..._` : `_searching Dice for tech jobs..._`;
+                try {
+                    await this.app.client.chat.postMessage({
+                        channel: channelId,
+                        thread_ts: threadTs,
+                        text: feedbackMsg
+                    });
+                } catch (err) {
+                    console.error('[Dice] Failed to post feedback message:', err);
+                }
+            }
+
             return this.mcpClientManager.executeTool(name, args);
         }
         return executeTool(this.app, this.imageGenerator, name, args, channelId, threadTs);

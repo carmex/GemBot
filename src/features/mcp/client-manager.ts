@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { config } from "../../config";
 import { LLMTool } from "../llm/providers/types";
 import { Part } from "@google/generative-ai";
@@ -20,11 +21,21 @@ export class McpClientManager {
             // Normalize name: hyphens to underscores for LLM compatibility
             const name = originalName.replace(/-/g, "_");
             try {
-                const transport = new StdioClientTransport({
-                    command: serverConfig.command,
-                    args: serverConfig.args,
-                    env: { ...process.env, ...(serverConfig.env || {}) } as any
-                });
+                let transport;
+                if (serverConfig.url) {
+                    console.log(`[MCP] Starting remote server "${name}" with URL: ${serverConfig.url}`);
+                    transport = new SSEClientTransport(new URL(serverConfig.url));
+                } else if (serverConfig.command) {
+                    console.log(`[MCP] Starting local server "${name}" with command: ${serverConfig.command} ${(serverConfig.args || []).join(" ")}`);
+                    transport = new StdioClientTransport({
+                        command: serverConfig.command,
+                        args: serverConfig.args || [],
+                        env: { ...process.env, ...(serverConfig.env || {}) } as any
+                    });
+                } else {
+                    console.error(`[MCP] Invalid configuration for server ${originalName}: missing 'url' or 'command'`);
+                    continue;
+                }
 
                 const client = new Client(
                     {
@@ -36,7 +47,6 @@ export class McpClientManager {
                     }
                 );
 
-                console.log(`[MCP] Starting server "${name}" with command: ${serverConfig.command} ${serverConfig.args.join(" ")}`);
                 await client.connect(transport);
                 this.clients.set(name, client);
                 console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
