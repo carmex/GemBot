@@ -10,6 +10,7 @@ export interface FeatureRequestData {
     formatted_timestamp?: string; // ISO string
     slack_msg_ts: string;
     username: string;
+    user_id?: string;
     repo_name: string;
     request_text: string;
     plan_thoughts?: string;
@@ -31,6 +32,7 @@ export function initFeatureRequestDb(): void {
         formatted_timestamp TEXT,
         slack_msg_ts TEXT UNIQUE,
         username TEXT,
+        user_id TEXT,
         repo_name TEXT,
         request_text TEXT,
         plan_thoughts TEXT,
@@ -40,6 +42,18 @@ export function initFeatureRequestDb(): void {
         last_updated DATETIME DEFAULT (datetime('now', 'localtime'))
       )
     `);
+
+        // Migration: Add user_id column if it doesn't exist
+        try {
+            db.exec("ALTER TABLE feature_requests ADD COLUMN user_id TEXT;");
+            console.log(`[FeatureRequestDB] Migration: Added user_id column to feature_requests table`);
+        } catch (error: any) {
+            // Ignore error if column already exists
+            if (!error.message.includes('duplicate column name')) {
+                console.warn(`[FeatureRequestDB] Migration warning: ${error.message}`);
+            }
+        }
+
         console.log(`[FeatureRequestDB] Database initialized successfully`);
     } catch (error) {
         console.error(`[FeatureRequestDB] Error initializing database:`, error);
@@ -53,13 +67,14 @@ export function createFeatureRequest(data: FeatureRequestData): void {
     try {
         const stmt = db.prepare(`
             INSERT INTO feature_requests (
-                formatted_timestamp, slack_msg_ts, username, repo_name, request_text, last_updated
-            ) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                formatted_timestamp, slack_msg_ts, username, user_id, repo_name, request_text, last_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         `);
         stmt.run(
             new Date().toISOString(),
             data.slack_msg_ts,
             data.username,
+            data.user_id || null,
             data.repo_name,
             data.request_text
         );
