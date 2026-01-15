@@ -80,6 +80,7 @@ export interface Config {
             args?: string[];
             url?: string;
             env?: Record<string, string>;
+            headers?: Record<string, string>;
         }>;
     };
 }

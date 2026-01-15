@@ -1,9 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { config } from "../../config";
 import { LLMTool } from "../llm/providers/types";
 import { Part } from "@google/generative-ai";
+import fetch from "node-fetch";
 
 export class McpClientManager {
     private clients: Map<string, Client> = new Map();
@@ -24,7 +25,37 @@ export class McpClientManager {
                 let transport;
                 if (serverConfig.url) {
                     console.log(`[MCP] Starting remote server "${name}" with URL: ${serverConfig.url}`);
-                    transport = new SSEClientTransport(new URL(serverConfig.url));
+
+                    // Merge configured headers
+                    const headers = { ...(serverConfig.headers || {}) };
+                    let sessionId: string | undefined;
+
+                    // Pre-flight check for auto-recovery of session ID (e.g. Dice MCP)
+                    // Some servers return 400 + session ID header on first connect.
+                    try {
+                        const preflightResp = await fetch(serverConfig.url, {
+                            headers: {
+                                "Accept": "text/event-stream",
+                                "Cache-Control": "no-cache",
+                                ...headers
+                            }
+                        });
+
+                        // Check specifically for the Dice behavior (400 + mcp-session-id)
+                        if (preflightResp.status === 400 && preflightResp.headers.get('mcp-session-id')) {
+                            const recoveredId = preflightResp.headers.get('mcp-session-id');
+                            console.log(`[MCP] Auto-recovered session ID for ${name}: ${recoveredId}`);
+                            sessionId = recoveredId!;
+                            headers['mcp-session-id'] = recoveredId!;
+                        }
+                    } catch (preflightErr) {
+                        console.warn(`[MCP] Pre-flight check failed for ${name}, proceeding with standard connection:`, preflightErr);
+                    }
+
+                    transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
+                        requestInit: { headers },
+                        sessionId
+                    });
                 } else if (serverConfig.command) {
                     console.log(`[MCP] Starting local server "${name}" with command: ${serverConfig.command} ${(serverConfig.args || []).join(" ")}`);
                     transport = new StdioClientTransport({
@@ -85,7 +116,7 @@ export class McpClientManager {
     async executeTool(fullName: string, args: any): Promise<Part> {
         const [requestedServerName, ...toolNameParts] = fullName.split("__");
         const toolName = toolNameParts.join("__");
-        
+
         // Try exact match, then normalized match
         let client = this.clients.get(requestedServerName);
         let serverName = requestedServerName;
