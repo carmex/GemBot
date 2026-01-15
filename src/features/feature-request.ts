@@ -8,6 +8,7 @@ enum FeatureRequestState {
     SELECTING_REPO = 'SELECTING_REPO',
     AWAITING_REQUEST = 'AWAITING_REQUEST',
     IMPLEMENTING = 'IMPLEMENTING', // Running first gemini command
+    REVISING = 'REVISING',         // Revising the plan based on feedback
     AWAITING_APPROVAL = 'AWAITING_APPROVAL',
     FINALIZING = 'FINALIZING',     // Running second gemini command
 }
@@ -101,9 +102,10 @@ export class FeatureRequestHandler {
                 this.handleFeatureRequestText(session, text, threadTs, say);
                 break;
             case FeatureRequestState.AWAITING_APPROVAL:
-                this.handleApproval(session, event.user, text, threadTs, say);
+                this.handlePlanAction(session, event.user, text, threadTs, say);
                 break;
             case FeatureRequestState.IMPLEMENTING:
+            case FeatureRequestState.REVISING:
             case FeatureRequestState.FINALIZING:
                 await say({ text: "I'm currently running a command, please wait...", thread_ts: threadTs });
                 break;
@@ -195,14 +197,16 @@ export class FeatureRequestHandler {
 
             session.state = FeatureRequestState.AWAITING_APPROVAL;
             say({
-                text: `Implementation Request Complete. Output:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed to the next step (merging/PR logic), or anything else to abort (currently only approve is handled).`,
+                text: `Implementation Request Complete. Output:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed to the next step (merging/PR logic), "abort" to cancel the request, or provide feedback to revise the plan.`,
                 thread_ts: threadTs
             });
         });
     }
 
-    private async handleApproval(session: FeatureRequestSession, userId: string, text: string, threadTs: string, say: SayFn) {
-        if (text.toLowerCase() === 'approve') {
+    private async handlePlanAction(session: FeatureRequestSession, userId: string, text: string, threadTs: string, say: SayFn) {
+        const lowerText = text.toLowerCase();
+
+        if (lowerText === 'approve') {
             // Reinforce authorization check for approval
             if (session.userId && userId !== session.userId) {
                 await say({
@@ -276,10 +280,68 @@ ${planText}`
                 });
             });
 
-        } else {
+        } else if (lowerText === 'abort') {
+            this.sessions.delete(threadTs);
             await say({
-                text: `Approval required to proceed. Please say "approve" to continue.`,
+                text: "Feature request workflow has been aborted.",
                 thread_ts: threadTs
+            });
+        } else {
+            // Feedback - trigger revision
+            session.state = FeatureRequestState.REVISING;
+            await say({
+                text: "Acknowledged. Revising implementation plan based on your feedback... (this may take a while)",
+                thread_ts: threadTs
+            });
+
+            const command = 'gemini';
+            const args = [
+                '-y',
+                '-p',
+                `You are an expert software architect. Below is an initial feature request, a proposed implementation plan, and user feedback on that plan.
+
+Please provide an updated implementation plan that incorporates the user's feedback.
+
+**Initial Feature Request:**
+${session.requestText}
+
+**Current Implementation Plan:**
+${session.planText}
+
+**User Feedback:**
+${text}
+
+Follow the same format as before: perform any necessary investigation without changing code, and when ready, print the exact string <<<FINAL_PLAN>>> on a new line, followed by the updated plan in Slack mrkdwn format. don't change any code!`
+            ];
+
+            this.runShellCommand(command, args, session.repoPath!, threadTs, say, (output) => {
+                // Parse output for <<<FINAL_PLAN>>>
+                const delimiter = '<<<FINAL_PLAN>>>';
+                let planThoughts = output;
+                let finalPlan = output;
+
+                if (output.includes(delimiter)) {
+                    const parts = output.split(delimiter);
+                    planThoughts = parts[0].trim();
+                    finalPlan = parts[1].trim();
+                } else {
+                    // Fallback if tag missing
+                    planThoughts = "No thoughts captured (tag missing)";
+                }
+
+                // Store DB
+                updateFeatureRequest(threadTs, {
+                    plan_thoughts: planThoughts,
+                    final_plan: finalPlan
+                });
+
+                session.planText = finalPlan; // Use trimmed plan for next step logic
+
+                session.state = FeatureRequestState.AWAITING_APPROVAL;
+                say({
+                    text: `Revised Implementation Plan:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed, "abort" to cancel, or provide further feedback to revise the plan again.`,
+                    thread_ts: threadTs
+                });
             });
         }
     }
