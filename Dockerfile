@@ -4,6 +4,7 @@ FROM node:20-bookworm-slim
 RUN apt-get update && apt-get install -y \
     build-essential \
     python3 \
+    python3-pip \
     libcairo2-dev \
     libpango1.0-dev \
     libjpeg-dev \
@@ -20,6 +21,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get update \
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install mcp --break-system-packages
 
 WORKDIR /app
 
