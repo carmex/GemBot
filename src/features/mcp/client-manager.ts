@@ -94,11 +94,22 @@ export class McpClientManager {
             throw new Error(`MCP server not found: ${requestedServerName}`);
         }
 
+        const isPython = serverName.startsWith('python_interpreter');
+        if (isPython) {
+            console.log(`[Python Interpreter] Executing tool: ${toolName}`);
+            console.log(`[Python Interpreter] Arguments:\n${JSON.stringify(args, null, 2)}`);
+        }
+
         try {
             const result = await client.callTool({
                 name: toolName,
                 arguments: args
             });
+
+            if (isPython) {
+                console.log(`[Python Interpreter] Result:\n${JSON.stringify(result, null, 2)}`);
+            }
+
             return {
                 functionResponse: {
                     name: fullName,
@@ -107,6 +118,9 @@ export class McpClientManager {
             };
         } catch (error) {
             console.error(`[MCP] Error executing tool ${fullName} on server ${serverName}:`, error);
+            if (isPython) {
+                console.error(`[Python Interpreter] Tool execution failed:`, error);
+            }
             return {
                 functionResponse: {
                     name: fullName,
