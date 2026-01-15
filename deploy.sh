@@ -38,9 +38,21 @@ elif [ -f "../../../.env" ]; then
     cp "../../../.env" .env
 fi
 
-if [ ! -f ".env" ]; then
     echo "❌ [Error] .env file not found! Please place it at ~/slack-bot.env on the server."
     exit 1
+fi
+
+# Inject GitHub Token if available on host
+if command -v gh >/dev/null 2>&1; then
+    echo "🔑 [Deploy] Fetching GitHub token from host..."
+    if GH_TOKEN=$(gh auth token 2>/dev/null); then
+        echo "GITHUB_TOKEN=$GH_TOKEN" >> .env
+        echo "✅ [Deploy] Injected GITHUB_TOKEN into .env"
+    else
+        echo "⚠️ [Deploy] 'gh' installed but not authenticated on host. Container 'gh' might fail."
+    fi
+else
+    echo "⚠️ [Deploy] 'gh' not found on host. Container 'gh' might not be authenticated."
 fi
 
 if [ -f "$HOME/gcloud-credentials.json" ]; then
@@ -61,6 +73,22 @@ echo "📦 [Deploy] Building and revisiting containers..."
 echo "🔧 [Deploy] Fixing permissions for gemini-config..."
 mkdir -p gemini-config
 docker run --rm -v "$(pwd)/gemini-config:/tmp/config" node:20-bookworm-slim chown -R 1001:1001 /tmp/config
+
+# FIX: Copy and mount 'gh' config for authentication
+echo "🔧 [Deploy] Setting up GitHub CLI authentication..."
+rm -rf gh-config
+mkdir -p gh-config
+if [ -d "$HOME/.config/gh" ]; then
+    echo "Found ~/.config/gh, copying..."
+    cp -r "$HOME/.config/gh/"* gh-config/
+elif [ -d "$HOME/.gh" ]; then
+    echo "Found ~/.gh, copying..."
+    cp -r "$HOME/.gh/"* gh-config/
+else
+    echo "⚠️ [Warning] No gh config found in $HOME/.config/gh or $HOME/.gh"
+fi
+# Fix permissions for gh-config (user 1001)
+docker run --rm -v "$(pwd)/gh-config:/tmp/gh-config" node:20-bookworm-slim chown -R 1001:1001 /tmp/gh-config
 
 # --remove-orphans cleans up containers for services not defined in the Compose file
 $COMPOSE_CMD up -d --build --remove-orphans

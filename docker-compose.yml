@@ -15,3 +15,5 @@ services:
       - /home/carmex/slackRepos:/app/mnt/repos
       # Mount Gemini config for persistence
       - ./gemini-config:/home/slackbot/.gemini
+      # Mount GitHub CLI config for auth
+      - ./gh-config:/home/slackbot/.config/gh
