@@ -33,7 +33,7 @@ if [ -f "$HOME/slack-bot.env" ]; then
     echo "Found persistent env file at $HOME/slack-bot.env, copying..."
     cp "$HOME/slack-bot.env" .env
 elif [ -f "../../../.env" ]; then
-    # Fallback: Check in the actions-runner root (3 levels up from _work/Repo/Repo)
+    # Fallback: Check in the actions-runner root (3 levels up from _work/Repo/Repo) 
     echo "Found env file in runner root, copying..."
     cp "../../../.env" .env
 fi
