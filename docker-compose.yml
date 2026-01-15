@@ -14,4 +14,4 @@ services:
       # Mount repositories for feature requests
       - /home/carmex/slackRepos:/app/mnt/repos
       # Mount Gemini config for persistence
-      - ./gemini-config:/root/.gemini
+      - ./gemini-config:/home/slackbot/.gemini

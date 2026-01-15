@@ -41,5 +41,13 @@ RUN npm run build
 # Expose the API port
 EXPOSE 3000
 
+# Create a non-root user with UID 1001 (matching the host user)
+RUN groupadd -g 1001 slackbot && \
+    useradd -u 1001 -g slackbot -m slackbot && \
+    chown -R slackbot:slackbot /app
+
+# Switch to the non-root user
+USER slackbot
+
 # Start the application
 CMD ["npm", "start"]
