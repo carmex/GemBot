@@ -580,11 +580,10 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                 if (code) {
                     try {
                         console.log(`[Python] Uploading code snippet to Slack channel ${channelId}...`);
-                        await this.app.client.files.upload({
+                        await this.app.client.files.uploadV2({
                             content: code,
                             filename: 'generated_code.py',
-                            filetype: 'python',
-                            channels: channelId,
+                            channel_id: channelId,
                             thread_ts: threadTs,
                             initial_comment: '_Executing generated Python code:_'
                         });
