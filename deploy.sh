@@ -38,6 +38,7 @@ elif [ -f "../../../.env" ]; then
     cp "../../../.env" .env
 fi
 
+if [ ! -f ".env" ]; then
     echo "❌ [Error] .env file not found! Please place it at ~/slack-bot.env on the server."
     exit 1
 fi
