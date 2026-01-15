@@ -36,6 +36,7 @@ export class McpClientManager {
                     }
                 );
 
+                console.log(`[MCP] Starting server "${name}" with command: ${serverConfig.command} ${serverConfig.args.join(" ")}`);
                 await client.connect(transport);
                 this.clients.set(name, client);
                 console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
