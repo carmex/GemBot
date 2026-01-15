@@ -17,3 +17,5 @@ services:
       - ./gemini-config:/home/slackbot/.gemini
       # Mount GitHub CLI config for auth
       - ./gh-config:/home/slackbot/.config/gh
+      # Python MCP Server
+      - /home/carmex/python-mcp-server:/app/python-mcp-server
