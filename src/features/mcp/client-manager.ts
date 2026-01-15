@@ -8,7 +8,13 @@ export class McpClientManager {
     private clients: Map<string, Client> = new Map();
 
     async initialize() {
-        for (const [name, serverConfig] of Object.entries(config.mcp.servers)) {
+        let servers = config.mcp.servers;
+        // Handle Claude-style config format if present
+        if ((servers as any).mcpServers) {
+            servers = (servers as any).mcpServers;
+        }
+
+        for (const [name, serverConfig] of Object.entries(servers)) {
             try {
                 const transport = new StdioClientTransport({
                     command: serverConfig.command,
@@ -29,6 +35,14 @@ export class McpClientManager {
                 await client.connect(transport);
                 this.clients.set(name, client);
                 console.log(`[MCP] Connected to server: ${name}`);
+
+                // Discovery logging
+                try {
+                    const response = await client.listTools();
+                    console.log(`[MCP] Registered tools for ${name}: ${response.tools.map(t => t.name).join(", ")}`);
+                } catch (toolError) {
+                    console.error(`[MCP] Failed to list tools for ${name} during initialization:`, toolError);
+                }
             } catch (error) {
                 console.error(`[MCP] Failed to connect to server ${name}:`, error);
             }
