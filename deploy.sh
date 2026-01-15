@@ -43,6 +43,15 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
+if [ -f "$HOME/gcloud-credentials.json" ]; then
+    echo "Found persistent gcloud credentials at $HOME/gcloud-credentials.json, copying..."
+    cp "$HOME/gcloud-credentials.json" gcloud-credentials.json
+elif [ -f "../../../gcloud-credentials.json" ]; then
+    # Fallback: Check in the actions-runner root
+    echo "Found gcloud credentials in runner root, copying..."
+    cp "../../../gcloud-credentials.json" gcloud-credentials.json
+fi
+
 # 2. Build and start the containers
 echo "📦 [Deploy] Building and revisiting containers..."
 # --remove-orphans cleans up containers for services not defined in the Compose file
