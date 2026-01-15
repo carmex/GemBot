@@ -82,6 +82,15 @@ export class FeatureRequestHandler {
         const session = this.sessions.get(threadTs);
         if (!session) return;
 
+        // Authorization check: Only the initiator can interact with the workflow
+        if (session.userId && event.user !== session.userId) {
+            await say({
+                text: `Sorry, only the user who initiated this request (<@${session.userId}>) can interact with this workflow.`,
+                thread_ts: threadTs
+            });
+            return;
+        }
+
         const text = event.text.trim();
 
         switch (session.state) {
@@ -92,7 +101,7 @@ export class FeatureRequestHandler {
                 this.handleFeatureRequestText(session, text, threadTs, say);
                 break;
             case FeatureRequestState.AWAITING_APPROVAL:
-                this.handleApproval(session, text, threadTs, say);
+                this.handleApproval(session, event.user, text, threadTs, say);
                 break;
             case FeatureRequestState.IMPLEMENTING:
             case FeatureRequestState.FINALIZING:
@@ -156,6 +165,7 @@ export class FeatureRequestHandler {
         createFeatureRequest({
             slack_msg_ts: threadTs,
             username: session.username || 'unknown',
+            user_id: session.userId,
             repo_name: session.repoName || 'unknown',
             request_text: text
         });
@@ -191,8 +201,17 @@ export class FeatureRequestHandler {
         });
     }
 
-    private async handleApproval(session: FeatureRequestSession, text: string, threadTs: string, say: SayFn) {
+    private async handleApproval(session: FeatureRequestSession, userId: string, text: string, threadTs: string, say: SayFn) {
         if (text.toLowerCase() === 'approve') {
+            // Reinforce authorization check for approval
+            if (session.userId && userId !== session.userId) {
+                await say({
+                    text: `Sorry, only the initiator (<@${session.userId}>) can approve this request.`,
+                    thread_ts: threadTs
+                });
+                return;
+            }
+
             session.state = FeatureRequestState.FINALIZING;
             await say({
                 text: "Approved. Proceeding with finalization (merge/PR)...",
