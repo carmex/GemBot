@@ -122,10 +122,10 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     });
 
     app.message(/^!chart\s*$/i, async ({say}) => {
-        await say('Usage: `!chart TICKER [RANGE]`\nExample: `!chart AAPL 1y`\nAvailable ranges: 1m, 3m, 6m, 1y, 5y (default is 1y)');
+        await say('Usage: `!chart TICKER [RANGE] [-c COMPARE_TICKER]`\nExample: `!chart AAPL 1y -c MSFT`\nAvailable ranges: 1m, 3m, 6m, 1y, 5y (default is 1y)');
     });
 
-    app.message(/^!chart ([A-Z]+)(?:\s+(1m|3m|6m|1y|5y))?/i, async ({message, context, say, client}) => {
+    app.message(/^!chart ([A-Z.]+)(?:\s+(1m|3m|6m|1y|5y))?(?:\s+-c\s+([A-Z.]+))?/i, async ({message, context, say, client}) => {
         if (!('user' in message) || !message.user || !context.matches?.[1]) return;
         if (!config.alphaVantageApiKey) {
             await say({text: 'The charting feature is not configured. An API key for Alpha Vantage is required.'});
@@ -133,21 +133,42 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
         }
         const ticker = context.matches[1].toUpperCase();
         const range = context.matches[2] || '1y';
+        const compareTicker = context.matches[3]?.toUpperCase();
         try {
-            const workingMessage = await say({text: `📈 Generating chart for *${ticker}* over the last *${range}*...`});
+            const comparisonText = compareTicker ? ` and *${compareTicker}*` : '';
+            const workingMessage = await say({text: `📈 Generating chart for *${ticker}*${comparisonText} over the last *${range}*...`});
+            
             const candles = await getStockCandles(ticker, range);
             if (candles.length === 0) {
                 await say({text: `No data found for *${ticker}* in the selected range.`});
                 if (workingMessage.ts) await client.chat.delete({channel: message.channel, ts: workingMessage.ts});
                 return;
             }
-            const chartImage = await generateChart(ticker, candles);
+
+            let compareCandles = undefined;
+            if (compareTicker) {
+                compareCandles = await getStockCandles(compareTicker, range);
+                if (compareCandles.length === 0) {
+                    await say({text: `⚠️ No data found for comparison ticker *${compareTicker}*. Showing chart for *${ticker}* only.`});
+                }
+            }
+
+            const chartImage = await generateChart(ticker, candles, compareTicker, compareCandles);
+            
+            const uploadTitle = compareTicker && compareCandles && compareCandles.length > 0
+                ? `${ticker} vs ${compareTicker} Chart (${range})`
+                : `${ticker} Chart (${range})`;
+            
+            const initialComment = compareTicker && compareCandles && compareCandles.length > 0
+                ? `Here's the comparison chart for <@${message.user}> for *${ticker}* vs *${compareTicker}* (${range}):`
+                : `Here's the chart for <@${message.user}> for *${ticker}* (${range}):`;
+
             await client.files.uploadV2({
                 channel_id: message.channel,
-                initial_comment: `Here's the chart for <@${message.user}> for *${ticker}* (${range}):`,
+                initial_comment: initialComment,
                 file: chartImage,
                 filename: `${ticker}_chart.png`,
-                title: `${ticker} Chart (${range})`,
+                title: uploadTitle,
             });
             if (workingMessage.ts) {
                 await client.chat.delete({channel: message.channel, ts: workingMessage.ts});
@@ -672,7 +693,7 @@ ${formatInventory(character.inventory)}
 *Stocks & Crypto*
 • \`!q <TICKER...>\`: Get a real-time stock quote.
 • \`!cq <TICKER...>\`: Get a real-time crypto quote (e.g., \`!cq BTC ETH\`).
-• \`!chart <TICKER> [range]\`: Generates a stock chart. Ranges: \`1m\`, \`3m\`, \`6m\`, \`1y\`, \`5y\`.
+• \`!chart <TICKER> [range] [-c COMPARE_TICKER]\`: Generates a stock chart. Ranges: \`1m\`, \`3m\`, \`6m\`, \`1y\`, \`5y\`. Use \`-c\` to compare two tickers.
 • \`!stats <TICKER...>\`: Get key statistics for a stock (Market Cap, 52-week high/low).
 • \`!earnings <TICKER>\`: Get upcoming earnings dates.
 • \`!stocknews\`: Fetches the latest general stock market news.

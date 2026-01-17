@@ -3,7 +3,12 @@ import { config } from '../config';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { ChartConfiguration } from 'chart.js';
 
-export async function getStockCandles(ticker: string, range: string = '1y'): Promise<{ t: number; c: number }[]> {
+export interface Candle {
+    t: number;
+    c: number;
+}
+
+export async function getStockCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
     let functionName = 'TIME_SERIES_DAILY';
     // Use Weekly for ranges >= 6m to avoid premium 'outputsize=full' requirement on Daily
     if (['6m', '1y', '5y'].includes(range)) {
@@ -34,7 +39,7 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
         return [];
     }
 
-    let candles = Object.entries(timeSeries)
+    let candles: Candle[] = Object.entries(timeSeries)
         .map(([date, values]) => ({
             t: new Date(date).getTime(),
             c: parseFloat(values["4. close"]),
@@ -58,29 +63,68 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
     return candles;
 }
 
-export async function generateChart(ticker: string, data: { t: number; c: number }[]): Promise<Buffer> {
+export async function generateChart(
+    mainTicker: string,
+    mainData: Candle[],
+    compareTicker?: string,
+    compareData?: Candle[]
+): Promise<Buffer> {
     const width = 800;
     const height = 400;
     const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height, backgroundColour: '#ffffff' });
-    const lastPrice = data[data.length - 1].c;
-    const firstPrice = data[0].c;
+
+    const lastPrice = mainData[mainData.length - 1].c;
+    const firstPrice = mainData[0].c;
     const isUp = lastPrice >= firstPrice;
-    const color = isUp ? 'rgb(75, 192, 192)' : 'rgb(255, 99, 132)';
+    const mainColor = isUp ? 'rgb(75, 192, 192)' : 'rgb(255, 99, 132)';
+    const compareColor = 'rgb(54, 162, 235)'; // Blue
+
+    // Date alignment
+    const allTimestamps = new Set<number>();
+    mainData.forEach(d => allTimestamps.add(d.t));
+    if (compareData) {
+        compareData.forEach(d => allTimestamps.add(d.t));
+    }
+    const sortedTimestamps = Array.from(allTimestamps).sort((a, b) => a - b);
+    const labels = sortedTimestamps.map(t => new Date(t).toLocaleDateString());
+
+    const datasets: any[] = [
+        {
+            label: `${mainTicker} Closing Price`,
+            data: sortedTimestamps.map(t => {
+                const candle = mainData.find(d => d.t === t);
+                return candle ? candle.c : null;
+            }),
+            borderColor: mainColor,
+            backgroundColor: mainColor + '33',
+            fill: !compareTicker, // Only fill if not comparing
+            pointRadius: 0,
+            tension: 0.4,
+            spanGaps: true,
+        }
+    ];
+
+    if (compareTicker && compareData && compareData.length > 0) {
+        datasets.push({
+            label: `${compareTicker} Closing Price`,
+            data: sortedTimestamps.map(t => {
+                const candle = compareData.find(d => d.t === t);
+                return candle ? candle.c : null;
+            }),
+            borderColor: compareColor,
+            backgroundColor: compareColor + '33',
+            fill: false,
+            pointRadius: 0,
+            tension: 0.4,
+            spanGaps: true,
+        });
+    }
+
     const configuration: ChartConfiguration = {
         type: 'line',
         data: {
-            labels: data.map(d => new Date(d.t).toLocaleDateString()),
-            datasets: [
-                {
-                    label: `${ticker} Closing Price`,
-                    data: data.map(d => d.c),
-                    borderColor: color,
-                    backgroundColor: color + '33',
-                    fill: true,
-                    pointRadius: 0,
-                    tension: 0.4,
-                },
-            ],
+            labels,
+            datasets,
         },
         options: {
             scales: {
@@ -93,13 +137,13 @@ export async function generateChart(ticker: string, data: { t: number; c: number
                 },
                 y: {
                     ticks: {
-                        callback: value => '$' + value,
+                        callback: (value: any) => '$' + value,
                     },
                 },
             },
             plugins: {
                 legend: {
-                    display: false,
+                    display: !!(compareTicker && compareData && compareData.length > 0),
                 },
             },
         },
