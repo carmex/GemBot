@@ -50,6 +50,7 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
     const now = Date.now();
     let msBack = 0;
     switch (range) {
+        case '1w': msBack = 7 * 24 * 60 * 60 * 1000; break;
         case '1m': msBack = 31 * 24 * 60 * 60 * 1000; break;
         case '3m': msBack = 93 * 24 * 60 * 60 * 1000; break;
         case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
