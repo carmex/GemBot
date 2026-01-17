@@ -28,7 +28,7 @@ import {
 } from "../features/usage-db";
 import {fetchCryptoNews, fetchEarningsCalendar, fetchStockNews} from "../features/finnhub-api";
 import Roll from 'roll';
-import {formatQuote, getColoredTileEmoji, buildUserPrompt} from "../features/utils";
+import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep} from "../features/utils";
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, generateChart } from '../features/stock-charts';
 
@@ -147,6 +147,7 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
 
             let compareCandles = undefined;
             if (compareTicker) {
+                await sleep(1000); // Proactive delay to avoid Alpha Vantage rate limit
                 compareCandles = await getStockCandles(compareTicker, range);
                 if (compareCandles.length === 0) {
                     await say({text: `⚠️ No data found for comparison ticker *${compareTicker}*. Showing chart for *${ticker}* only.`});

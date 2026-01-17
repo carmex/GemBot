@@ -2,6 +2,7 @@ import fetch from 'node-fetch';
 import { config } from '../config';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { ChartConfiguration } from 'chart.js';
+import { sleep } from './utils';
 
 export interface Candle {
     t: number;
@@ -18,50 +19,67 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
     // outputsize=full is premium-only now, so we omit it (defaulting to compact)
     const url = `https://www.alphavantage.co/query?function=${functionName}&symbol=${ticker}&apikey=${config.alphaVantageApiKey}`;
 
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+        attempts++;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
+        }
+
+        // Type definition for both Daily and Weekly responses
+        type AlphaVantageResponse = {
+            "Time Series (Daily)"?: { [key: string]: { "4. close": string } };
+            "Weekly Time Series"?: { [key: string]: { "4. close": string } };
+            "Information"?: string;
+            "Note"?: string;
+        };
+
+        const data = (await response.json()) as AlphaVantageResponse;
+
+        // Check for either Daily or Weekly key
+        const timeSeries = data["Time Series (Daily)"] || data["Weekly Time Series"];
+
+        if (!timeSeries) {
+            const info = data.Information || data.Note || "";
+            if (info.toLowerCase().includes("rate limit") || info.toLowerCase().includes("spreading out") || info.toLowerCase().includes("standard api call frequency")) {
+                console.warn(`[StockCharts] Rate limit hit for ${ticker} (attempt ${attempts}/${maxAttempts}). Waiting 1.5s...`);
+                await sleep(1500);
+                continue;
+            }
+
+            console.error(`[StockCharts] No Time Series data found for ${ticker} (${functionName}). Response:`, JSON.stringify(data, null, 2));
+            return [];
+        }
+
+        let candles: Candle[] = Object.entries(timeSeries)
+            .map(([date, values]) => ({
+                t: new Date(date).getTime(),
+                c: parseFloat(values["4. close"]),
+            }))
+            .sort((a, b) => a.t - b.t); // oldest to newest
+
+        // Filter by range
+        const now = Date.now();
+        let msBack = 0;
+        switch (range) {
+            case '1w': msBack = 7 * 24 * 60 * 60 * 1000; break;
+            case '1m': msBack = 31 * 24 * 60 * 60 * 1000; break;
+            case '3m': msBack = 93 * 24 * 60 * 60 * 1000; break;
+            case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
+            case '1y': msBack = 365 * 24 * 60 * 60 * 1000; break;
+            case '5y': msBack = 5 * 365 * 24 * 60 * 60 * 1000; break;
+            default: msBack = 365 * 24 * 60 * 60 * 1000; break;
+        }
+        const minTime = now - msBack;
+        candles = candles.filter(c => c.t >= minTime);
+
+        return candles;
     }
 
-    // Type definition for both Daily and Weekly responses
-    type AlphaVantageResponse = {
-        "Time Series (Daily)"?: { [key: string]: { "4. close": string } };
-        "Weekly Time Series"?: { [key: string]: { "4. close": string } };
-    };
-
-    const data = (await response.json()) as AlphaVantageResponse;
-
-    // Check for either Daily or Weekly key
-    const timeSeries = data["Time Series (Daily)"] || data["Weekly Time Series"];
-
-    if (!timeSeries) {
-        console.error(`[StockCharts] No Time Series data found for ${ticker} (${functionName}). Response:`, JSON.stringify(data, null, 2));
-        return [];
-    }
-
-    let candles: Candle[] = Object.entries(timeSeries)
-        .map(([date, values]) => ({
-            t: new Date(date).getTime(),
-            c: parseFloat(values["4. close"]),
-        }))
-        .sort((a, b) => a.t - b.t); // oldest to newest
-
-    // Filter by range
-    const now = Date.now();
-    let msBack = 0;
-    switch (range) {
-        case '1w': msBack = 7 * 24 * 60 * 60 * 1000; break;
-        case '1m': msBack = 31 * 24 * 60 * 60 * 1000; break;
-        case '3m': msBack = 93 * 24 * 60 * 60 * 1000; break;
-        case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
-        case '1y': msBack = 365 * 24 * 60 * 60 * 1000; break;
-        case '5y': msBack = 5 * 365 * 24 * 60 * 60 * 1000; break;
-        default: msBack = 365 * 24 * 60 * 60 * 1000; break;
-    }
-    const minTime = now - msBack;
-    candles = candles.filter(c => c.t >= minTime);
-
-    return candles;
+    return [];
 }
 
 export async function generateChart(
