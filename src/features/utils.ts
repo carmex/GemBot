@@ -117,3 +117,5 @@ export function buildUserPrompt(promptData: {channel: string, user: string, text
     // Keep internal scaffolding for logging only; provider history will strip it later.
     return `channel_id: ${promptData.channel} | user_id: ${promptData.user} | message: ${promptData.text || ''}`;
 }
+
+export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
