@@ -3,10 +3,27 @@ import { config } from '../config';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { ChartConfiguration } from 'chart.js';
 import { sleep } from './utils';
+import { fetchStockSplits, Split } from './finnhub-api';
 
 export interface Candle {
     t: number;
     c: number;
+}
+
+function applySplits(candles: Candle[], splits: Split[]) {
+    if (!splits || splits.length === 0) return;
+
+    for (const split of splits) {
+        const splitTime = new Date(split.date).getTime();
+        const ratio = split.toFactor / split.fromFactor;
+
+        // Adjust all candles with a timestamp BEFORE the split date
+        for (const candle of candles) {
+            if (candle.t < splitTime) {
+                candle.c /= ratio;
+            }
+        }
+    }
 }
 
 export async function getStockCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
@@ -65,6 +82,16 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
                 c: parseFloat(values["4. close"]),
             }))
             .sort((a, b) => a.t - b.t); // oldest to newest
+
+        // Apply split adjustments
+        if (candles.length > 0) {
+            const startDate = new Date(candles[0].t).toISOString().split('T')[0];
+            const endDate = new Date().toISOString().split('T')[0];
+            const splits = await fetchStockSplits(ticker, startDate, endDate);
+            if (splits && splits.length > 0) {
+                applySplits(candles, splits);
+            }
+        }
 
         // Filter by range
         const now = Date.now();
