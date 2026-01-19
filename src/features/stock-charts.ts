@@ -11,8 +11,12 @@ export interface Candle {
 
 export async function getStockCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
     let functionName = 'TIME_SERIES_DAILY';
-    // Use Weekly for ranges >= 6m to avoid premium 'outputsize=full' requirement on Daily
-    if (['6m', '1y', '5y'].includes(range)) {
+    // Use Monthly for 'my' (max years) to get full history
+    if (range === 'my') {
+        functionName = 'TIME_SERIES_MONTHLY';
+    }
+    // Use Weekly for ranges >= 6m and <= 5y to avoid premium 'outputsize=full' requirement on Daily
+    else if (['6m', '1y', '5y'].includes(range)) {
         functionName = 'TIME_SERIES_WEEKLY';
     }
 
@@ -29,18 +33,19 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
             throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
         }
 
-        // Type definition for both Daily and Weekly responses
+        // Type definition for Daily, Weekly and Monthly responses
         type AlphaVantageResponse = {
             "Time Series (Daily)"?: { [key: string]: { "4. close": string } };
             "Weekly Time Series"?: { [key: string]: { "4. close": string } };
+            "Monthly Time Series"?: { [key: string]: { "4. close": string } };
             "Information"?: string;
             "Note"?: string;
         };
 
         const data = (await response.json()) as AlphaVantageResponse;
 
-        // Check for either Daily or Weekly key
-        const timeSeries = data["Time Series (Daily)"] || data["Weekly Time Series"];
+        // Check for Daily, Weekly or Monthly key
+        const timeSeries = data["Time Series (Daily)"] || data["Weekly Time Series"] || data["Monthly Time Series"];
 
         if (!timeSeries) {
             const info = data.Information || data.Note || "";
@@ -71,6 +76,7 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
             case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
             case '1y': msBack = 365 * 24 * 60 * 60 * 1000; break;
             case '5y': msBack = 5 * 365 * 24 * 60 * 60 * 1000; break;
+            case 'my': msBack = Infinity; break;
             default: msBack = 365 * 24 * 60 * 60 * 1000; break;
         }
         const minTime = now - msBack;
