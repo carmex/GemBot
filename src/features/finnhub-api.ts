@@ -99,21 +99,3 @@ export async function fetchEarningsCalendar(ticker: string): Promise<any[] | nul
             return null;
         }
     }
-    
-    export interface Split {
-        date: string;
-        fromFactor: number;
-        toFactor: number;
-        symbol: string;
-    }
-    
-    export async function fetchStockSplits(ticker: string, from: string, to: string): Promise<Split[] | null> {
-        try {
-            const data = await apiFetch(`stock/split?symbol=${ticker}&from=${from}&to=${to}`) as Split[];
-            return data;
-        } catch (error) {
-            console.error(`Error fetching splits for ${ticker}:`, error);
-            return null;
-        }
-    }
-     

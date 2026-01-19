@@ -37,6 +37,7 @@ import {
     getAllUserUsage,
 } from './usage-db';
 import { initializeThreadDatabase } from './thread-db';
+import { initializeMarketDataDatabase } from './market-data-db';
 import { config } from '../config';
 import { createProvider } from './llm/provider-factory';
 import { HistoryBuilder } from './history-builder';
@@ -131,6 +132,7 @@ export class AIHandler {
         this.loadRpgEnabledChannels();
         initUsageDb();
         initializeThreadDatabase();
+        initializeMarketDataDatabase();
 
         this.imageGenerator = new ImageGenerator(this.app, this.auth);
 

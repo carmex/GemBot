@@ -3,12 +3,8 @@ import { config } from '../config';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { ChartConfiguration } from 'chart.js';
 import { sleep } from './utils';
-import { fetchStockSplits, Split } from './finnhub-api';
-
-export interface Candle {
-    t: number;
-    c: number;
-}
+import { Candle, Split } from '../types';
+import { fetchStockSplits, fetchStockCandles } from './alphavantage-api';
 
 function applySplits(candles: Candle[], splits: Split[]) {
     if (!splits || splits.length === 0) return;
@@ -27,70 +23,15 @@ function applySplits(candles: Candle[], splits: Split[]) {
 }
 
 export async function getStockCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
-    let functionName = 'TIME_SERIES_DAILY';
-    // Use Monthly for 'my' (max years) to get full history
-    if (range === 'my') {
-        functionName = 'TIME_SERIES_MONTHLY';
-    }
-    // Use Weekly for ranges >= 6m and <= 5y to avoid premium 'outputsize=full' requirement on Daily
-    else if (['6m', '1y', '5y'].includes(range)) {
-        functionName = 'TIME_SERIES_WEEKLY';
-    }
+    let candles = await fetchStockCandles(ticker, range);
 
-    // outputsize=full is premium-only now, so we omit it (defaulting to compact)
-    const url = `https://www.alphavantage.co/query?function=${functionName}&symbol=${ticker}&apikey=${config.alphaVantageApiKey}`;
-
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-        attempts++;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
-        }
-
-        // Type definition for Daily, Weekly and Monthly responses
-        type AlphaVantageResponse = {
-            "Time Series (Daily)"?: { [key: string]: { "4. close": string } };
-            "Weekly Time Series"?: { [key: string]: { "4. close": string } };
-            "Monthly Time Series"?: { [key: string]: { "4. close": string } };
-            "Information"?: string;
-            "Note"?: string;
-        };
-
-        const data = (await response.json()) as AlphaVantageResponse;
-
-        // Check for Daily, Weekly or Monthly key
-        const timeSeries = data["Time Series (Daily)"] || data["Weekly Time Series"] || data["Monthly Time Series"];
-
-        if (!timeSeries) {
-            const info = data.Information || data.Note || "";
-            if (info.toLowerCase().includes("rate limit") || info.toLowerCase().includes("spreading out") || info.toLowerCase().includes("standard api call frequency")) {
-                console.warn(`[StockCharts] Rate limit hit for ${ticker} (attempt ${attempts}/${maxAttempts}). Waiting 1.5s...`);
-                await sleep(1500);
-                continue;
-            }
-
-            console.error(`[StockCharts] No Time Series data found for ${ticker} (${functionName}). Response:`, JSON.stringify(data, null, 2));
-            return [];
-        }
-
-        let candles: Candle[] = Object.entries(timeSeries)
-            .map(([date, values]) => ({
-                t: new Date(date).getTime(),
-                c: parseFloat(values["4. close"]),
-            }))
-            .sort((a, b) => a.t - b.t); // oldest to newest
-
+    if (candles.length > 0) {
         // Apply split adjustments
-        if (candles.length > 0) {
-            const startDate = new Date(candles[0].t).toISOString().split('T')[0];
-            const endDate = new Date().toISOString().split('T')[0];
-            const splits = await fetchStockSplits(ticker, startDate, endDate);
-            if (splits && splits.length > 0) {
-                applySplits(candles, splits);
-            }
+        const startDate = new Date(candles[0].t).toISOString().split('T')[0];
+        const endDate = new Date().toISOString().split('T')[0];
+        const splits = await fetchStockSplits(ticker, startDate, endDate);
+        if (splits && splits.length > 0) {
+            applySplits(candles, splits);
         }
 
         // Filter by range
@@ -108,11 +49,9 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
         }
         const minTime = now - msBack;
         candles = candles.filter(c => c.t >= minTime);
-
-        return candles;
     }
 
-    return [];
+    return candles;
 }
 
 export async function generateChart(
