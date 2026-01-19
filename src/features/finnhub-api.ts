@@ -94,8 +94,26 @@ export async function fetchEarningsCalendar(ticker: string): Promise<any[] | nul
         const today = new Date().toISOString().split('T')[0];
         const data = await apiFetch(`calendar/earnings?from=${today}&to=${today}&symbol=${ticker}`) as {earningsCalendar?: any[]};
         return data?.earningsCalendar || null;
-    } catch (error) {
-        console.error(`Error fetching earnings for ${ticker}:`, error);
-        return null;
+        } catch (error) {
+            console.error(`Error fetching earnings for ${ticker}:`, error);
+            return null;
+        }
     }
-} 
+    
+    export interface Split {
+        date: string;
+        fromFactor: number;
+        toFactor: number;
+        symbol: string;
+    }
+    
+    export async function fetchStockSplits(ticker: string, from: string, to: string): Promise<Split[] | null> {
+        try {
+            const data = await apiFetch(`stock/split?symbol=${ticker}&from=${from}&to=${to}`) as Split[];
+            return data;
+        } catch (error) {
+            console.error(`Error fetching splits for ${ticker}:`, error);
+            return null;
+        }
+    }
+     

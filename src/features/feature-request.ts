@@ -60,6 +60,7 @@ export class FeatureRequestHandler {
                     channelId: req.channel_id,
                     prUrl: req.pr_url
                 });
+                console.log(`[FeatureRequest] Loaded session ${req.slack_msg_ts} in state ${req.state}`);
             }
             console.log(`[FeatureRequest] Loaded ${openRequests.length} active sessions from DB`);
         } catch (error) {
@@ -71,6 +72,8 @@ export class FeatureRequestHandler {
         // Run every 5 minutes
         cron.schedule('*/5 * * * *', async () => {
             console.log('[FeatureRequest] Checking PR statuses...');
+            const monitoringSessions = Array.from(this.sessions.values()).filter(s => s.state === FeatureRequestState.MONITORING_PR);
+            console.log(`[FeatureRequest] Found ${monitoringSessions.length} sessions in MONITORING_PR state.`);
             for (const [threadTs, session] of this.sessions.entries()) {
                 if (session.state === FeatureRequestState.MONITORING_PR && session.prUrl) {
                     await this.checkPrStatus(threadTs, session);
@@ -81,6 +84,7 @@ export class FeatureRequestHandler {
 
     private async checkPrStatus(threadTs: string, session: FeatureRequestSession) {
         if (!session.prUrl) return;
+        console.log(`[FeatureRequest] Checking PR status for ${session.prUrl} (thread: ${threadTs})`);
 
         try {
             // Use gh pr view <URL> --json state
@@ -98,10 +102,14 @@ export class FeatureRequestHandler {
             });
 
             child.on('close', async (code) => {
+                console.log(`[FeatureRequest] gh process for ${session.prUrl} exited with code ${code}`);
+                console.log(`[FeatureRequest] gh stdout: ${stdout}`);
+                console.log(`[FeatureRequest] gh stderr: ${stderr}`);
+
                 if (code === 0) {
                     try {
                         const { state } = JSON.parse(stdout);
-                        console.log(`[FeatureRequest] PR ${session.prUrl} state: ${state}`);
+                        console.log(`[FeatureRequest] PR ${session.prUrl} parsed state: ${state}`);
 
                         if (state === 'MERGED' || state === 'CLOSED') {
                             const message = state === 'MERGED' 
