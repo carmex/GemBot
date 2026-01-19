@@ -98,17 +98,4 @@ export async function fetchEarningsCalendar(ticker: string): Promise<any[] | nul
         console.error(`Error fetching earnings for ${ticker}:`, error);
         return null;
     }
-}
-
-export async function fetchStockCandles(symbol: string, resolution: string, from: number, to: number): Promise<{ c: number[], t: number[], s: string } | null> {
-    try {
-        const data = await apiFetch(`stock/candle?symbol=${symbol}&resolution=${resolution}&from=${from}&to=${to}`) as { c: number[], t: number[], s: string };
-        if (data.s === 'no_data') {
-            return null;
-        }
-        return data;
-    } catch (error) {
-        console.error(`Error fetching candles for ${symbol}:`, error);
-        return null;
-    }
 } 

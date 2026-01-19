@@ -1,7 +1,8 @@
+import fetch from 'node-fetch';
 import { config } from '../config';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { ChartConfiguration } from 'chart.js';
-import { fetchStockCandles } from './finnhub-api';
+import { sleep } from './utils';
 
 export interface Candle {
     t: number;
@@ -9,57 +10,82 @@ export interface Candle {
 }
 
 export async function getStockCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
-    const to = Math.floor(Date.now() / 1000);
-    let from: number;
-    let resolution: string = 'D';
-
-    switch (range) {
-        case '1w':
-            from = to - (7 * 24 * 60 * 60);
-            resolution = '60';
-            break;
-        case '1m':
-            from = to - (31 * 24 * 60 * 60);
-            resolution = 'D';
-            break;
-        case '3m':
-            from = to - (93 * 24 * 60 * 60);
-            resolution = 'D';
-            break;
-        case '6m':
-            from = to - (186 * 24 * 60 * 60);
-            resolution = 'D';
-            break;
-        case '1y':
-            from = to - (365 * 24 * 60 * 60);
-            resolution = 'D';
-            break;
-        case '5y':
-            from = to - (5 * 365 * 24 * 60 * 60);
-            resolution = 'W';
-            break;
-        case 'my':
-            from = 0; // All time
-            resolution = 'M';
-            break;
-        default:
-            from = to - (365 * 24 * 60 * 60);
-            resolution = 'D';
-            break;
+    let functionName = 'TIME_SERIES_DAILY';
+    // Use Monthly for 'my' (max years) to get full history
+    if (range === 'my') {
+        functionName = 'TIME_SERIES_MONTHLY';
+    }
+    // Use Weekly for ranges >= 6m and <= 5y to avoid premium 'outputsize=full' requirement on Daily
+    else if (['6m', '1y', '5y'].includes(range)) {
+        functionName = 'TIME_SERIES_WEEKLY';
     }
 
-    const data = await fetchStockCandles(ticker, resolution, from, to);
+    // outputsize=full is premium-only now, so we omit it (defaulting to compact)
+    const url = `https://www.alphavantage.co/query?function=${functionName}&symbol=${ticker}&apikey=${config.alphaVantageApiKey}`;
 
-    if (!data || !data.c || !data.t) {
-        return [];
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+        attempts++;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
+        }
+
+        // Type definition for Daily, Weekly and Monthly responses
+        type AlphaVantageResponse = {
+            "Time Series (Daily)"?: { [key: string]: { "4. close": string } };
+            "Weekly Time Series"?: { [key: string]: { "4. close": string } };
+            "Monthly Time Series"?: { [key: string]: { "4. close": string } };
+            "Information"?: string;
+            "Note"?: string;
+        };
+
+        const data = (await response.json()) as AlphaVantageResponse;
+
+        // Check for Daily, Weekly or Monthly key
+        const timeSeries = data["Time Series (Daily)"] || data["Weekly Time Series"] || data["Monthly Time Series"];
+
+        if (!timeSeries) {
+            const info = data.Information || data.Note || "";
+            if (info.toLowerCase().includes("rate limit") || info.toLowerCase().includes("spreading out") || info.toLowerCase().includes("standard api call frequency")) {
+                console.warn(`[StockCharts] Rate limit hit for ${ticker} (attempt ${attempts}/${maxAttempts}). Waiting 1.5s...`);
+                await sleep(1500);
+                continue;
+            }
+
+            console.error(`[StockCharts] No Time Series data found for ${ticker} (${functionName}). Response:`, JSON.stringify(data, null, 2));
+            return [];
+        }
+
+        let candles: Candle[] = Object.entries(timeSeries)
+            .map(([date, values]) => ({
+                t: new Date(date).getTime(),
+                c: parseFloat(values["4. close"]),
+            }))
+            .sort((a, b) => a.t - b.t); // oldest to newest
+
+        // Filter by range
+        const now = Date.now();
+        let msBack = 0;
+        switch (range) {
+            case '1w': msBack = 7 * 24 * 60 * 60 * 1000; break;
+            case '1m': msBack = 31 * 24 * 60 * 60 * 1000; break;
+            case '3m': msBack = 93 * 24 * 60 * 60 * 1000; break;
+            case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
+            case '1y': msBack = 365 * 24 * 60 * 60 * 1000; break;
+            case '5y': msBack = 5 * 365 * 24 * 60 * 60 * 1000; break;
+            case 'my': msBack = Infinity; break;
+            default: msBack = 365 * 24 * 60 * 60 * 1000; break;
+        }
+        const minTime = now - msBack;
+        candles = candles.filter(c => c.t >= minTime);
+
+        return candles;
     }
 
-    const candles: Candle[] = data.t.map((time, index) => ({
-        t: time * 1000, // Convert to ms
-        c: data.c[index]
-    }));
-
-    return candles;
+    return [];
 }
 
 export async function generateChart(
