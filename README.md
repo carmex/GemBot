@@ -55,8 +55,8 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
 
 ### Visual Insights
 
--   **Stock Charts**: Generate and display a customizable, split-adjusted chart for any stock.
-    -   `!chart <TICKER> [range] [-c COMPARE_TICKER]` - Available ranges are `1w`, `1m`, `3m`, `6m`, `1y` (default), `5y`, and `my`. Use `-c` to compare with another ticker.
+-   **Stock Charts**: Generate and display a customizable chart for any stock.
+    -   `!chart <TICKER> [range]` - Available ranges are `1w`, `1m`, `3m`, `6m`, `1y` (default), `5y`, and `my`.
 
 ### Personal Portfolio Tracking
 
@@ -73,11 +73,11 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
 -   A Google Cloud account with a project set up
 -   API keys for:
     -   [Google Gemini](https://ai.google.dev/gemini-api/docs/api-key)
-    -   [Finnhub](https://finnhub.io/) (required for financial data and charts)
-    -   [Alpha Vantage](https://www.alphavantage.co/support/#api-key) (optional)
+    -   [Finnhub](https://finnhub.io/) (optional, for financial data)
+    -   [Alpha Vantage](https://www.alphavantage.co/support/#api-key) (optional, for financial charts)
     -   [SerpApi](https://serpapi.com/) or [Google Custom Search](https://developers.google.com/custom-search/v1/overview) (optional, for web search)
 
-> **⚠️ Note on API Costs:** This bot uses paid Google Cloud services, including the Gemini and Vertex AI APIs. You are responsible for all costs associated with your API usage. Depending on the models you use and your level of interaction with the bot, these costs can be substantial. Please monitor your Google Cloud billing and set up budgets and alerts to avoid unexpected charges. It is strongly recommended *not* to deploy this bot in very large Slack workspaces or in environments where the users are not trusted. For Finnhub, a free API key is probably sufficient, but high utilization may use up your free quota.
+> **⚠️ Note on API Costs:** This bot uses paid Google Cloud services, including the Gemini and Vertex AI APIs. You are responsible for all costs associated with your API usage. Depending on the models you use and your level of interaction with the bot, these costs can be substantial. Please monitor your Google Cloud billing and set up budgets and alerts to avoid unexpected charges. It is strongly recommended *not* to deploy this bot in very large Slack workspaces or in environments where the users are not trusted. For Finnhub and Alpha Vantage, free API keys are probably sufficient, but high utilization may use up your free quota.
 
 ## Setup
 
@@ -147,10 +147,10 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
     VERTEX_PROJECT_ID=your-gcloud-project-id
     VERTEX_LOCATION=us-central1
     
-    # Finnhub API Key for financial commands (required for quotes and charts)
+    # Finnhub API Key for financial commands (optional)
     FINNHUB_API_KEY=your-finnhub-api-key
     
-    # Alpha Vantage API Key (optional)
+    # Alpha Vantage API Key for !chart command (optional)
     ALPHA_VANTAGE_API_KEY=your-alpha-vantage-api-key
     ```
 
@@ -221,7 +221,7 @@ The bot will connect to Slack and be ready for commands.
 
 -   `!q <TICKER...>`: Get a real-time stock quote.
 -   `!cq <TICKER...>`: Get a real-time crypto quote (e.g., `!cq BTC ETH`).
--   `!chart <TICKER> [range] [-c COMPARE_TICKER]`: Generates a stock chart. Ranges: `1w`, `1m`, `3m`, `6m`, `1y`, `5y`, `my`. Use `-c` to compare two tickers.
+-   `!chart <TICKER> [range]`: Generates a stock chart. Ranges: `1w`, `1m`, `3m`, `6m`, `1y`, `5y`, `my`.
 -   `!stats <TICKER...>`: Get key statistics for a stock (Market Cap, 52-week high/low).
 -   `!earnings <TICKER>`: Get upcoming earnings dates.
 -   `!stocknews`: Fetches the latest general stock market news.
