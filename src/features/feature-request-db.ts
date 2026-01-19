@@ -9,14 +9,18 @@ const db = new Database(dbPath);
 export interface FeatureRequestData {
     formatted_timestamp?: string; // ISO string
     slack_msg_ts: string;
+    channel_id: string;
     username: string;
     user_id?: string;
     repo_name: string;
+    repo_path?: string;
     request_text: string;
     plan_thoughts?: string;
     final_plan?: string;
     implementation_thoughts?: string;
     final_summary?: string;
+    state?: string;
+    pr_url?: string;
     last_updated?: string;
 }
 
@@ -31,26 +35,40 @@ export function initFeatureRequestDb(): void {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         formatted_timestamp TEXT,
         slack_msg_ts TEXT UNIQUE,
+        channel_id TEXT,
         username TEXT,
         user_id TEXT,
         repo_name TEXT,
+        repo_path TEXT,
         request_text TEXT,
         plan_thoughts TEXT,
         final_plan TEXT,
         implementation_thoughts TEXT,
         final_summary TEXT,
+        state TEXT,
+        pr_url TEXT,
         last_updated DATETIME DEFAULT (datetime('now', 'localtime'))
       )
     `);
 
-        // Migration: Add user_id column if it doesn't exist
-        try {
-            db.exec("ALTER TABLE feature_requests ADD COLUMN user_id TEXT;");
-            console.log(`[FeatureRequestDB] Migration: Added user_id column to feature_requests table`);
-        } catch (error: any) {
-            // Ignore error if column already exists
-            if (!error.message.includes('duplicate column name')) {
-                console.warn(`[FeatureRequestDB] Migration warning: ${error.message}`);
+        // Migration: Add new columns if they don't exist
+        const columns = [
+            { name: 'user_id', type: 'TEXT' },
+            { name: 'channel_id', type: 'TEXT' },
+            { name: 'repo_path', type: 'TEXT' },
+            { name: 'state', type: 'TEXT' },
+            { name: 'pr_url', type: 'TEXT' }
+        ];
+
+        for (const col of columns) {
+            try {
+                db.exec(`ALTER TABLE feature_requests ADD COLUMN ${col.name} ${col.type};`);
+                console.log(`[FeatureRequestDB] Migration: Added ${col.name} column to feature_requests table`);
+            } catch (error: any) {
+                // Ignore error if column already exists
+                if (!error.message.includes('duplicate column name')) {
+                    console.warn(`[FeatureRequestDB] Migration warning for ${col.name}: ${error.message}`);
+                }
             }
         }
 
@@ -67,12 +85,13 @@ export function createFeatureRequest(data: FeatureRequestData): void {
     try {
         const stmt = db.prepare(`
             INSERT INTO feature_requests (
-                formatted_timestamp, slack_msg_ts, username, user_id, repo_name, request_text, last_updated
-            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                formatted_timestamp, slack_msg_ts, channel_id, username, user_id, repo_name, request_text, last_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         `);
         stmt.run(
             new Date().toISOString(),
             data.slack_msg_ts,
+            data.channel_id,
             data.username,
             data.user_id || null,
             data.repo_name,
@@ -108,6 +127,18 @@ export function updateFeatureRequest(slack_msg_ts: string, data: Partial<Feature
             fields.push('final_summary = ?');
             values.push(data.final_summary);
         }
+        if (data.repo_path !== undefined) {
+            fields.push('repo_path = ?');
+            values.push(data.repo_path);
+        }
+        if (data.state !== undefined) {
+            fields.push('state = ?');
+            values.push(data.state);
+        }
+        if (data.pr_url !== undefined) {
+            fields.push('pr_url = ?');
+            values.push(data.pr_url);
+        }
 
         if (fields.length === 0) return;
 
@@ -124,5 +155,21 @@ export function updateFeatureRequest(slack_msg_ts: string, data: Partial<Feature
         console.log(`[FeatureRequestDB] Updated request for thread ${slack_msg_ts}`);
     } catch (error) {
         console.error(`[FeatureRequestDB] Error updating feature request:`, error);
+    }
+}
+
+/**
+ * Retrieves all open feature requests (those not in COMPLETED or ABORTED state).
+ */
+export function getOpenFeatureRequests(): FeatureRequestData[] {
+    try {
+        const stmt = db.prepare(`
+            SELECT * FROM feature_requests 
+            WHERE state IS NULL OR (state != 'COMPLETED' AND state != 'ABORTED')
+        `);
+        return stmt.all() as FeatureRequestData[];
+    } catch (error) {
+        console.error(`[FeatureRequestDB] Error fetching open feature requests:`, error);
+        return [];
     }
 }

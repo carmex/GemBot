@@ -2,7 +2,8 @@ import { App, SayFn } from '@slack/bolt';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { initFeatureRequestDb, createFeatureRequest, updateFeatureRequest } from './feature-request-db';
+import * as cron from 'node-cron';
+import { initFeatureRequestDb, createFeatureRequest, updateFeatureRequest, getOpenFeatureRequests } from './feature-request-db';
 
 enum FeatureRequestState {
     SELECTING_REPO = 'SELECTING_REPO',
@@ -11,6 +12,9 @@ enum FeatureRequestState {
     REVISING = 'REVISING',         // Revising the plan based on feedback
     AWAITING_APPROVAL = 'AWAITING_APPROVAL',
     FINALIZING = 'FINALIZING',     // Running second gemini command
+    MONITORING_PR = 'MONITORING_PR',
+    COMPLETED = 'COMPLETED',
+    ABORTED = 'ABORTED',
 }
 
 interface FeatureRequestSession {
@@ -21,6 +25,8 @@ interface FeatureRequestSession {
     planText?: string;
     userId?: string;
     username?: string;
+    channelId?: string;
+    prUrl?: string;
 }
 
 export class FeatureRequestHandler {
@@ -35,6 +41,93 @@ export class FeatureRequestHandler {
 
     constructor(private app: App) {
         initFeatureRequestDb();
+        this.loadActiveSessions();
+        this.startPrMonitoring();
+    }
+
+    private loadActiveSessions() {
+        try {
+            const openRequests = getOpenFeatureRequests();
+            for (const req of openRequests) {
+                this.sessions.set(req.slack_msg_ts, {
+                    state: (req.state as FeatureRequestState) || FeatureRequestState.AWAITING_REQUEST,
+                    repoName: req.repo_name,
+                    repoPath: req.repo_path,
+                    requestText: req.request_text,
+                    planText: req.final_plan,
+                    userId: req.user_id,
+                    username: req.username,
+                    channelId: req.channel_id,
+                    prUrl: req.pr_url
+                });
+            }
+            console.log(`[FeatureRequest] Loaded ${openRequests.length} active sessions from DB`);
+        } catch (error) {
+            console.error(`[FeatureRequest] Error loading active sessions:`, error);
+        }
+    }
+
+    private startPrMonitoring() {
+        // Run every 5 minutes
+        cron.schedule('*/5 * * * *', async () => {
+            console.log('[FeatureRequest] Checking PR statuses...');
+            for (const [threadTs, session] of this.sessions.entries()) {
+                if (session.state === FeatureRequestState.MONITORING_PR && session.prUrl) {
+                    await this.checkPrStatus(threadTs, session);
+                }
+            }
+        });
+    }
+
+    private async checkPrStatus(threadTs: string, session: FeatureRequestSession) {
+        if (!session.prUrl) return;
+
+        try {
+            // Use gh pr view <URL> --json state
+            const child = spawn('gh', ['pr', 'view', session.prUrl, '--json', 'state'], {
+                shell: false
+            });
+
+            let stdout = '';
+            let stderr = '';
+            child.stdout.on('data', (data) => stdout += data.toString());
+            child.stderr.on('data', (data) => stderr += data.toString());
+
+            child.on('error', (err) => {
+                console.error(`[FeatureRequest] Failed to spawn gh for ${session.prUrl}:`, err);
+            });
+
+            child.on('close', async (code) => {
+                if (code === 0) {
+                    try {
+                        const { state } = JSON.parse(stdout);
+                        console.log(`[FeatureRequest] PR ${session.prUrl} state: ${state}`);
+
+                        if (state === 'MERGED' || state === 'CLOSED') {
+                            const message = state === 'MERGED' 
+                                ? `🎉 Good news! Your Pull Request has been *MERGED*! \nURL: ${session.prUrl}`
+                                : `Your Pull Request has been *CLOSED* without merging.\nURL: ${session.prUrl}`;
+
+                            await this.app.client.chat.postMessage({
+                                channel: session.channelId!,
+                                thread_ts: threadTs,
+                                text: message
+                            });
+
+                            session.state = FeatureRequestState.COMPLETED;
+                            updateFeatureRequest(threadTs, { state: FeatureRequestState.COMPLETED });
+                            this.sessions.delete(threadTs);
+                        }
+                    } catch (e) {
+                        console.error(`[FeatureRequest] Error parsing gh output for ${session.prUrl}. Output: ${stdout}`, e);
+                    }
+                } else {
+                    console.error(`[FeatureRequest] gh pr view failed for ${session.prUrl} with code ${code}. Stderr: ${stderr}`);
+                }
+            });
+        } catch (error) {
+            console.error(`[FeatureRequest] Error monitoring PR ${session.prUrl}:`, error);
+        }
     }
 
     public isFeatureRequestThread(threadTs: string): boolean {
@@ -45,6 +138,7 @@ export class FeatureRequestHandler {
         // Start a new flow
         // If message is in a thread, use that thread. If not, the reply starts a new thread.
         const threadTs = event.thread_ts || event.ts;
+        const channelId = event.channel;
 
         // If existing session, maybe reset or ignore? 
         // User requirements say "any further requests to this thread should respond with a message to start a new feature request"
@@ -67,7 +161,8 @@ export class FeatureRequestHandler {
         this.sessions.set(threadTs, {
             state: FeatureRequestState.SELECTING_REPO,
             userId: event.user,
-            username: username
+            username: username,
+            channelId: channelId
         });
 
         await say({
@@ -104,6 +199,12 @@ export class FeatureRequestHandler {
             case FeatureRequestState.AWAITING_APPROVAL:
                 this.handlePlanAction(session, event.user, text, threadTs, say);
                 break;
+            case FeatureRequestState.MONITORING_PR:
+                await say({ 
+                    text: `I'm currently monitoring your PR: ${session.prUrl}. I'll notify you here once it's merged or closed.`, 
+                    thread_ts: threadTs 
+                });
+                break;
             case FeatureRequestState.IMPLEMENTING:
             case FeatureRequestState.REVISING:
             case FeatureRequestState.FINALIZING:
@@ -133,6 +234,10 @@ export class FeatureRequestHandler {
             }
 
             session.state = FeatureRequestState.AWAITING_REQUEST;
+            
+            // Persist repo path update
+            updateFeatureRequest(threadTs, { repo_path: session.repoPath });
+
             await say({
                 text: `Selected repository: \`${repoName}\`. What is your feature request?`,
                 thread_ts: threadTs
@@ -166,6 +271,7 @@ export class FeatureRequestHandler {
         // Persist initial request
         createFeatureRequest({
             slack_msg_ts: threadTs,
+            channel_id: session.channelId || 'unknown',
             username: session.username || 'unknown',
             user_id: session.userId,
             repo_name: session.repoName || 'unknown',
@@ -272,15 +378,35 @@ ${planText}`
                     final_summary: finalSummary
                 });
 
-                // Workflow end
-                this.sessions.delete(threadTs); // Cleanup session
-                say({
-                    text: `Workflow Complete. Output:\n\`\`\`${finalSummary}\`\`\`\n\nThis workflow is now closed.`,
-                    thread_ts: threadTs
-                });
+                // Extract PR URL
+                const prUrl = this.extractPrUrl(finalSummary);
+
+                if (prUrl) {
+                    session.prUrl = prUrl;
+                    session.state = FeatureRequestState.MONITORING_PR;
+                    updateFeatureRequest(threadTs, { 
+                        pr_url: prUrl,
+                        state: FeatureRequestState.MONITORING_PR
+                    });
+
+                    say({
+                        text: `Implementation Complete. I've detected a Pull Request: ${prUrl}\n\nI will monitor this PR and notify you here when it is merged or closed.`,
+                        thread_ts: threadTs
+                    });
+                } else {
+                    // Workflow end if no PR found
+                    session.state = FeatureRequestState.COMPLETED;
+                    updateFeatureRequest(threadTs, { state: FeatureRequestState.COMPLETED });
+                    this.sessions.delete(threadTs); // Cleanup session
+                    say({
+                        text: `Workflow Complete. Output:\n\`\`\`${finalSummary}\`\`\`\n\nThis workflow is now closed.`,
+                        thread_ts: threadTs
+                    });
+                }
             });
 
         } else if (lowerText === 'abort') {
+            updateFeatureRequest(threadTs, { state: FeatureRequestState.ABORTED });
             this.sessions.delete(threadTs);
             await say({
                 text: "Feature request workflow has been aborted.",
@@ -344,6 +470,13 @@ Follow the same format as before: perform any necessary investigation without ch
                 });
             });
         }
+    }
+
+    private extractPrUrl(text: string): string | undefined {
+        // Regex to match GitHub PR URL
+        const prRegex = /https:\/\/github\.com\/[^\/]+\/[^\/]+\/pull\/\d+/;
+        const match = text.match(prRegex);
+        return match ? match[0] : undefined;
     }
 
     private runShellCommand(command: string, args: string[], cwd: string, threadTs: string, say: SayFn, onComplete: (output: string) => void) {
