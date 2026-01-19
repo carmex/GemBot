@@ -126,8 +126,8 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     });
     
     app.message(/^!chart ([A-Z.]+)(?:\s+(1w|1m|3m|6m|1y|5y|my))?(?:\s+-c\s+([A-Z.]+))?/i, async ({message, context, say, client}) => {        if (!('user' in message) || !message.user || !context.matches?.[1]) return;
-        if (!config.alphaVantageApiKey) {
-            await say({text: 'The charting feature is not configured. An API key for Alpha Vantage is required.'});
+        if (!config.finnhubApiKey) {
+            await say({text: 'The charting feature is not configured. An API key for Finnhub is required.'});
             return;
         }
         const ticker = context.matches[1].toUpperCase();
@@ -146,7 +146,6 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
 
             let compareCandles = undefined;
             if (compareTicker) {
-                await sleep(1000); // Proactive delay to avoid Alpha Vantage rate limit
                 compareCandles = await getStockCandles(compareTicker, range);
                 if (compareCandles.length === 0) {
                     await say({text: `⚠️ No data found for comparison ticker *${compareTicker}*. Showing chart for *${ticker}* only.`});
