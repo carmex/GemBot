@@ -64,6 +64,10 @@ export async function generateChart(
     const height = 400;
     const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height, backgroundColour: '#ffffff' });
 
+    const isComparison = !!(compareTicker && compareData && compareData.length > 0);
+    const mainBaseline = mainData.length > 0 ? mainData[0].c : 0;
+    const compareBaseline = (isComparison && compareData && compareData.length > 0) ? compareData[0].c : 0;
+
     const lastPrice = mainData[mainData.length - 1].c;
     const firstPrice = mainData[0].c;
     const isUp = lastPrice >= firstPrice;
@@ -73,7 +77,7 @@ export async function generateChart(
     // Date alignment
     const allTimestamps = new Set<number>();
     mainData.forEach(d => allTimestamps.add(d.t));
-    if (compareData) {
+    if (isComparison && compareData) {
         compareData.forEach(d => allTimestamps.add(d.t));
     }
     const sortedTimestamps = Array.from(allTimestamps).sort((a, b) => a - b);
@@ -81,26 +85,34 @@ export async function generateChart(
 
     const datasets: any[] = [
         {
-            label: `${mainTicker} Closing Price`,
+            label: isComparison ? `${mainTicker} % Change` : `${mainTicker} Closing Price`,
             data: sortedTimestamps.map(t => {
                 const candle = mainData.find(d => d.t === t);
-                return candle ? candle.c : null;
+                if (!candle) return null;
+                if (isComparison && mainBaseline !== 0) {
+                    return ((candle.c - mainBaseline) / mainBaseline) * 100;
+                }
+                return candle.c;
             }),
             borderColor: mainColor,
             backgroundColor: mainColor + '33',
-            fill: !compareTicker, // Only fill if not comparing
+            fill: !isComparison, // Only fill if not comparing
             pointRadius: 0,
             tension: 0.4,
             spanGaps: true,
         }
     ];
 
-    if (compareTicker && compareData && compareData.length > 0) {
+    if (isComparison && compareData && compareData.length > 0) {
         datasets.push({
-            label: `${compareTicker} Closing Price`,
+            label: `${compareTicker} % Change`,
             data: sortedTimestamps.map(t => {
                 const candle = compareData.find(d => d.t === t);
-                return candle ? candle.c : null;
+                if (!candle) return null;
+                if (compareBaseline !== 0) {
+                    return ((candle.c - compareBaseline) / compareBaseline) * 100;
+                }
+                return candle.c;
             }),
             borderColor: compareColor,
             backgroundColor: compareColor + '33',
@@ -128,13 +140,21 @@ export async function generateChart(
                 },
                 y: {
                     ticks: {
-                        callback: (value: any) => '$' + value,
+                        callback: (value: any) => isComparison ? value + '%' : '$' + value,
                     },
+                    grid: {
+                        color: (context: any) => {
+                            if (isComparison && context.tick.value === 0) {
+                                return 'rgba(0, 0, 0, 0.5)';
+                            }
+                            return 'rgba(0, 0, 0, 0.1)';
+                        }
+                    }
                 },
             },
             plugins: {
                 legend: {
-                    display: !!(compareTicker && compareData && compareData.length > 0),
+                    display: isComparison,
                 },
             },
         },
