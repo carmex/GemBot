@@ -513,10 +513,14 @@ Follow the same format as before: perform any necessary investigation without ch
 
         console.log(`[FeatureRequest] Spawning ${commandName} in ${cwd}`);
 
+        const env = { ...process.env };
+        delete env.GEMINI_API_KEY;
+        delete env.GOOGLE_API_KEY;
+
         const child = spawn(commandName, args, {
             cwd: cwd,
             shell: false, // Changed to false to avoid quoting issues
-            env: process.env // Ensure PATH is passed
+            env: env // Use the filtered environment
         });
 
         let stdoutData = '';
