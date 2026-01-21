@@ -94,8 +94,8 @@ export async function fetchEarningsCalendar(ticker: string): Promise<any[] | nul
         const today = new Date().toISOString().split('T')[0];
         const data = await apiFetch(`calendar/earnings?from=${today}&to=${today}&symbol=${ticker}`) as {earningsCalendar?: any[]};
         return data?.earningsCalendar || null;
-    } catch (error) {
-        console.error(`Error fetching earnings for ${ticker}:`, error);
-        return null;
+        } catch (error) {
+            console.error(`Error fetching earnings for ${ticker}:`, error);
+            return null;
+        }
     }
-} 

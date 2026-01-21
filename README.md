@@ -56,7 +56,7 @@ GemBot provides a suite of tools to keep you connected to the financial markets 
 ### Visual Insights
 
 -   **Stock Charts**: Generate and display a customizable chart for any stock.
-    -   `!chart <TICKER> [range]` - Available ranges are `1m`, `3m`, `6m`, `1y` (default), and `5y`.
+    -   `!chart <TICKER> [range]` - Available ranges are `1w`, `1m`, `3m`, `6m`, `1y` (default), `5y`, and `my`.
 
 ### Personal Portfolio Tracking
 
@@ -221,7 +221,7 @@ The bot will connect to Slack and be ready for commands.
 
 -   `!q <TICKER...>`: Get a real-time stock quote.
 -   `!cq <TICKER...>`: Get a real-time crypto quote (e.g., `!cq BTC ETH`).
--   `!chart <TICKER> [range]`: Generates a stock chart. Ranges: `1m`, `3m`, `6m`, `1y`, `5y`.
+-   `!chart <TICKER> [range]`: Generates a stock chart. Ranges: `1w`, `1m`, `3m`, `6m`, `1y`, `5y`, `my`.
 -   `!stats <TICKER...>`: Get key statistics for a stock (Market Cap, 52-week high/low).
 -   `!earnings <TICKER>`: Get upcoming earnings dates.
 -   `!stocknews`: Fetches the latest general stock market news.

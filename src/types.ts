@@ -46,9 +46,41 @@ export interface CommandEvent {
 }
 
 // Action types
+
 export interface ActionEvent {
+
     user: {
+
         id: string;
+
     };
+
     action_id: string;
-} 
+
+}
+
+
+
+export interface Candle {
+
+    t: number;
+
+    c: number;
+
+}
+
+
+
+export interface Split {
+
+    date: string;
+
+    fromFactor: number;
+
+    toFactor: number;
+
+    symbol: string;
+
+}
+
+ 
