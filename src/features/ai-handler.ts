@@ -42,6 +42,7 @@ import { config } from '../config';
 import { createProvider } from './llm/provider-factory';
 import { HistoryBuilder } from './history-builder';
 import { executeTool } from './tool-executor';
+import { markdownToSlack } from './utils';
 import { Content, Part } from '@google/generative-ai';
 import { LLMMessage, LLMTool, LLMToolCall } from './llm/providers/types';
 import { registerEventListeners } from '../listeners/events';
@@ -549,6 +550,9 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     .replace(/^\s*Act as Game Master.*$/gim, '')
                     .replace(/^\s*Here's an overview of how to interact with me:.*$/gim, '')
                     .trim();
+
+                // Apply Slack-specific formatting safety net
+                cleanFinal = markdownToSlack(cleanFinal);
 
                 const confidence = iteration > 0 ? 0.9 : 0.8;
 
