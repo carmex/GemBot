@@ -173,6 +173,16 @@ export class FeatureRequestHandler {
             channelId: channelId
         });
 
+        // Persist initial session creation
+        createFeatureRequest({
+            slack_msg_ts: threadTs,
+            channel_id: channelId,
+            username: username,
+            user_id: event.user,
+            repo_name: 'selecting...',
+            state: FeatureRequestState.SELECTING_REPO
+        });
+
         await say({
             text: `Sure, I can help with that. Please select a repository from the following list:\n${repos.map(r => `• ${r}`).join('\n')}`,
             thread_ts: event.ts, // Always reply to the initial message content or thread
@@ -238,13 +248,18 @@ export class FeatureRequestHandler {
                     thread_ts: threadTs
                 });
                 this.sessions.delete(threadTs);
+                updateFeatureRequest(threadTs, { state: FeatureRequestState.ABORTED });
                 return;
             }
 
             session.state = FeatureRequestState.AWAITING_REQUEST;
             
-            // Persist repo path update
-            updateFeatureRequest(threadTs, { repo_path: session.repoPath });
+            // Persist repo path and state update
+            updateFeatureRequest(threadTs, { 
+                repo_name: repoName,
+                repo_path: session.repoPath,
+                state: FeatureRequestState.AWAITING_REQUEST
+            });
 
             await say({
                 text: `Selected repository: \`${repoName}\`. What is your feature request?`,
@@ -263,6 +278,12 @@ export class FeatureRequestHandler {
         session.requestText = text;
         session.state = FeatureRequestState.IMPLEMENTING;
 
+        // Persist request text and state
+        updateFeatureRequest(threadTs, {
+            request_text: text,
+            state: FeatureRequestState.IMPLEMENTING
+        });
+
         await say({
             text: "Acknowledged. Starting implementation... (this may take a while)",
             thread_ts: threadTs
@@ -275,16 +296,6 @@ export class FeatureRequestHandler {
             '-p',
             `create an implementation plan for modifying this codebase with the feature request below. start by making sure you have the lastest code from master (or main, whichever applicable) branch (fetch and pull). The plan should be detailed enough to be used by a coding agent to implement the feature. State what files will be modified, added, or deleted. State the dependencies of the feature. When you have finished your investigation and are ready to present the plan, print the exact string <<<FINAL_PLAN>>> on a new line, followed by the plan formatted in Slack mrkdwn format. don't change any code! feature: ${text}`
         ];
-
-        // Persist initial request
-        createFeatureRequest({
-            slack_msg_ts: threadTs,
-            channel_id: session.channelId || 'unknown',
-            username: session.username || 'unknown',
-            user_id: session.userId,
-            repo_name: session.repoName || 'unknown',
-            request_text: text
-        });
 
         this.runShellCommand(command, args, session.repoPath!, threadTs, say, (output) => {
             // Parse output for <<<FINAL_PLAN>>>
@@ -301,15 +312,16 @@ export class FeatureRequestHandler {
                 planThoughts = "No thoughts captured (tag missing)";
             }
 
+            session.planText = finalPlan; // Use trimmed plan for next step logic
+            session.state = FeatureRequestState.AWAITING_APPROVAL;
+
             // Store DB
             updateFeatureRequest(threadTs, {
                 plan_thoughts: planThoughts,
-                final_plan: finalPlan
+                final_plan: finalPlan,
+                state: FeatureRequestState.AWAITING_APPROVAL
             });
 
-            session.planText = finalPlan; // Use trimmed plan for next step logic
-
-            session.state = FeatureRequestState.AWAITING_APPROVAL;
             say({
                 text: `Implementation Request Complete. Output:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed to the next step (merging/PR logic), "abort" to cancel the request, or provide feedback to revise the plan.`,
                 thread_ts: threadTs
@@ -331,6 +343,8 @@ export class FeatureRequestHandler {
             }
 
             session.state = FeatureRequestState.FINALIZING;
+            updateFeatureRequest(threadTs, { state: FeatureRequestState.FINALIZING });
+
             await say({
                 text: "Approved. Proceeding with finalization (merge/PR)...",
                 thread_ts: threadTs
@@ -380,12 +394,6 @@ ${planText}`
                     implThoughts = "No thoughts captured (tag missing)";
                 }
 
-                // Store DB
-                updateFeatureRequest(threadTs, {
-                    implementation_thoughts: implThoughts,
-                    final_summary: finalSummary
-                });
-
                 // Extract PR URL
                 const prUrl = this.extractPrUrl(finalSummary);
 
@@ -393,6 +401,8 @@ ${planText}`
                     session.prUrl = prUrl;
                     session.state = FeatureRequestState.MONITORING_PR;
                     updateFeatureRequest(threadTs, { 
+                        implementation_thoughts: implThoughts,
+                        final_summary: finalSummary,
                         pr_url: prUrl,
                         state: FeatureRequestState.MONITORING_PR
                     });
@@ -404,7 +414,11 @@ ${planText}`
                 } else {
                     // Workflow end if no PR found
                     session.state = FeatureRequestState.COMPLETED;
-                    updateFeatureRequest(threadTs, { state: FeatureRequestState.COMPLETED });
+                    updateFeatureRequest(threadTs, { 
+                        implementation_thoughts: implThoughts,
+                        final_summary: finalSummary,
+                        state: FeatureRequestState.COMPLETED 
+                    });
                     this.sessions.delete(threadTs); // Cleanup session
                     say({
                         text: `Workflow Complete. Output:\n\`\`\`${finalSummary}\`\`\`\n\nThis workflow is now closed.`,
@@ -423,6 +437,8 @@ ${planText}`
         } else {
             // Feedback - trigger revision
             session.state = FeatureRequestState.REVISING;
+            updateFeatureRequest(threadTs, { state: FeatureRequestState.REVISING });
+
             await say({
                 text: "Acknowledged. Revising implementation plan based on your feedback... (this may take a while)",
                 thread_ts: threadTs
@@ -463,15 +479,16 @@ Follow the same format as before: perform any necessary investigation without ch
                     planThoughts = "No thoughts captured (tag missing)";
                 }
 
+                session.planText = finalPlan; // Use trimmed plan for next step logic
+                session.state = FeatureRequestState.AWAITING_APPROVAL;
+
                 // Store DB
                 updateFeatureRequest(threadTs, {
                     plan_thoughts: planThoughts,
-                    final_plan: finalPlan
+                    final_plan: finalPlan,
+                    state: FeatureRequestState.AWAITING_APPROVAL
                 });
 
-                session.planText = finalPlan; // Use trimmed plan for next step logic
-
-                session.state = FeatureRequestState.AWAITING_APPROVAL;
                 say({
                     text: `Revised Implementation Plan:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed, "abort" to cancel, or provide further feedback to revise the plan again.`,
                     thread_ts: threadTs

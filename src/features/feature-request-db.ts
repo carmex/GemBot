@@ -14,7 +14,7 @@ export interface FeatureRequestData {
     user_id?: string;
     repo_name: string;
     repo_path?: string;
-    request_text: string;
+    request_text?: string;
     plan_thoughts?: string;
     final_plan?: string;
     implementation_thoughts?: string;
@@ -30,28 +30,30 @@ export interface FeatureRequestData {
 export function initFeatureRequestDb(): void {
     try {
         console.log(`[FeatureRequestDB] Initializing database at path: ${dbPath}`);
+        
+        // Create table with all columns from the start if it doesn't exist
         db.exec(`
-      CREATE TABLE IF NOT EXISTS feature_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        formatted_timestamp TEXT,
-        slack_msg_ts TEXT UNIQUE,
-        channel_id TEXT,
-        username TEXT,
-        user_id TEXT,
-        repo_name TEXT,
-        repo_path TEXT,
-        request_text TEXT,
-        plan_thoughts TEXT,
-        final_plan TEXT,
-        implementation_thoughts TEXT,
-        final_summary TEXT,
-        state TEXT,
-        pr_url TEXT,
-        last_updated DATETIME DEFAULT (datetime('now', 'localtime'))
-      )
-    `);
+          CREATE TABLE IF NOT EXISTS feature_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            formatted_timestamp TEXT,
+            slack_msg_ts TEXT UNIQUE,
+            channel_id TEXT,
+            username TEXT,
+            user_id TEXT,
+            repo_name TEXT,
+            repo_path TEXT,
+            request_text TEXT,
+            plan_thoughts TEXT,
+            final_plan TEXT,
+            implementation_thoughts TEXT,
+            final_summary TEXT,
+            state TEXT,
+            pr_url TEXT,
+            last_updated DATETIME DEFAULT (datetime('now', 'localtime'))
+          )
+        `);
 
-        // Migration: Add new columns if they don't exist
+        // Migration: Add new columns if they don't exist (for existing databases)
         const columns = [
             { name: 'user_id', type: 'TEXT' },
             { name: 'channel_id', type: 'TEXT' },
@@ -60,13 +62,16 @@ export function initFeatureRequestDb(): void {
             { name: 'pr_url', type: 'TEXT' }
         ];
 
+        // Get existing columns
+        const tableInfo = db.prepare("PRAGMA table_info(feature_requests)").all() as any[];
+        const existingColumnNames = tableInfo.map(c => c.name);
+
         for (const col of columns) {
-            try {
-                db.exec(`ALTER TABLE feature_requests ADD COLUMN ${col.name} ${col.type};`);
-                console.log(`[FeatureRequestDB] Migration: Added ${col.name} column to feature_requests table`);
-            } catch (error: any) {
-                // Ignore error if column already exists
-                if (!error.message.includes('duplicate column name')) {
+            if (!existingColumnNames.includes(col.name)) {
+                try {
+                    db.exec(`ALTER TABLE feature_requests ADD COLUMN ${col.name} ${col.type};`);
+                    console.log(`[FeatureRequestDB] Migration: Added ${col.name} column to feature_requests table`);
+                } catch (error: any) {
                     console.warn(`[FeatureRequestDB] Migration warning for ${col.name}: ${error.message}`);
                 }
             }
@@ -85,8 +90,8 @@ export function createFeatureRequest(data: FeatureRequestData): void {
     try {
         const stmt = db.prepare(`
             INSERT INTO feature_requests (
-                formatted_timestamp, slack_msg_ts, channel_id, username, user_id, repo_name, request_text, last_updated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                formatted_timestamp, slack_msg_ts, channel_id, username, user_id, repo_name, request_text, state, last_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         `);
         stmt.run(
             new Date().toISOString(),
@@ -95,11 +100,18 @@ export function createFeatureRequest(data: FeatureRequestData): void {
             data.username,
             data.user_id || null,
             data.repo_name,
-            data.request_text
+            data.request_text || null,
+            data.state || null
         );
-        console.log(`[FeatureRequestDB] Created new request for thread ${data.slack_msg_ts}`);
+        console.log(`[FeatureRequestDB] Created new record for thread ${data.slack_msg_ts} in state ${data.state}`);
     } catch (error) {
-        console.error(`[FeatureRequestDB] Error creating feature request:`, error);
+        // If it already exists (UNIQUE constraint on slack_msg_ts), we might want to update it or ignore
+        if ((error as any).message?.includes('UNIQUE constraint failed')) {
+            console.log(`[FeatureRequestDB] Record for thread ${data.slack_msg_ts} already exists, updating...`);
+            updateFeatureRequest(data.slack_msg_ts, data);
+        } else {
+            console.error(`[FeatureRequestDB] Error creating feature request:`, error);
+        }
     }
 }
 
@@ -131,6 +143,14 @@ export function updateFeatureRequest(slack_msg_ts: string, data: Partial<Feature
             fields.push('repo_path = ?');
             values.push(data.repo_path);
         }
+        if (data.repo_name !== undefined) {
+            fields.push('repo_name = ?');
+            values.push(data.repo_name);
+        }
+        if (data.request_text !== undefined) {
+            fields.push('request_text = ?');
+            values.push(data.request_text);
+        }
         if (data.state !== undefined) {
             fields.push('state = ?');
             values.push(data.state);
@@ -138,6 +158,14 @@ export function updateFeatureRequest(slack_msg_ts: string, data: Partial<Feature
         if (data.pr_url !== undefined) {
             fields.push('pr_url = ?');
             values.push(data.pr_url);
+        }
+        if (data.user_id !== undefined) {
+            fields.push('user_id = ?');
+            values.push(data.user_id);
+        }
+        if (data.channel_id !== undefined) {
+            fields.push('channel_id = ?');
+            values.push(data.channel_id);
         }
 
         if (fields.length === 0) return;
@@ -152,7 +180,7 @@ export function updateFeatureRequest(slack_msg_ts: string, data: Partial<Feature
         `);
 
         stmt.run(...values);
-        console.log(`[FeatureRequestDB] Updated request for thread ${slack_msg_ts}`);
+        console.log(`[FeatureRequestDB] Updated request for thread ${slack_msg_ts} with fields: ${fields.map(f => f.split(' ')[0]).join(', ')}`);
     } catch (error) {
         console.error(`[FeatureRequestDB] Error updating feature request:`, error);
     }
