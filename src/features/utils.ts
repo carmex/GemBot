@@ -119,3 +119,29 @@ export function buildUserPrompt(promptData: {channel: string, user: string, text
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Converts standard Markdown to Slack-compatible mrkdwn.
+ */
+export function markdownToSlack(text: string): string {
+    if (!text) return text;
+
+    let out = text;
+
+    // 1. Headers: # Header -> *Header*
+    out = out.replace(/^(#{1,6})\s+(.+)$/gm, '*$2*');
+
+    // 2. Bold: **text** -> *text*
+    out = out.replace(/\*\*(.*?)\*\*/g, '*$1*');
+
+    // 3. Italic: __text__ -> _text_
+    out = out.replace(/__(.*?)__/g, '_$1_');
+
+    // 4. Links: [text](url) or [text](<url>) -> <url|text>
+    out = out.replace(/\[([^\]]+)\]\((<?)(https?:\/\/[^\s>)]+)(>?)\)/g, '<$3|$1>');
+
+    // 5. Bullets: * , - , + at the start of a line -> •
+    out = out.replace(/^(\s*)([*+-])\s+/gm, '$1• ');
+
+    return out;
+}
