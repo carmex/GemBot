@@ -73,6 +73,12 @@ echo "📦 [Deploy] Building and revisiting containers..."
 # We map the local folder to /tmp/config and chown it to 1001:1001.
 echo "🔧 [Deploy] Fixing permissions for gemini-config..."
 mkdir -p gemini-config
+if [ -d "$HOME/.gemini" ]; then
+    echo "🔑 [Deploy] Copying cached Gemini credentials from $HOME/.gemini..."
+    cp -r "$HOME/.gemini/." gemini-config/ 2>/dev/null || echo "⚠️ [Deploy] Failed to copy some files (maybe permission issues?)"
+else
+    echo "⚠️ [Deploy] No cached Gemini credentials found in $HOME/.gemini"
+fi
 docker run --rm -v "$(pwd)/gemini-config:/tmp/config" node:20-bookworm-slim chown -R 1001:1001 /tmp/config
 
 # FIX: Copy and mount 'gh' config for authentication
