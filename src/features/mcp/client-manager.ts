@@ -4,7 +4,15 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { config } from "../../config";
 import { LLMTool } from "../llm/providers/types";
 import { Part } from "@google/generative-ai";
-import fetch from "node-fetch";
+import fetch, { Headers, Request, Response } from "node-fetch";
+
+// Polyfill fetch for Node.js - the MCP SDK expects globalThis.fetch
+if (!globalThis.fetch) {
+    (globalThis as any).fetch = fetch;
+    (globalThis as any).Headers = Headers;
+    (globalThis as any).Request = Request;
+    (globalThis as any).Response = Response;
+}
 
 export class McpClientManager {
     private clients: Map<string, Client> = new Map();
@@ -26,35 +34,15 @@ export class McpClientManager {
                 if (serverConfig.url) {
                     console.log(`[MCP] Starting remote server "${name}" with URL: ${serverConfig.url}`);
 
-                    // Merge configured headers
+                    // Merge configured headers if any
                     const headers = { ...(serverConfig.headers || {}) };
-                    let sessionId: string | undefined;
 
-                    // Pre-flight check for auto-recovery of session ID (e.g. Dice MCP)
-                    // Some servers return 400 + session ID header on first connect.
-                    try {
-                        const preflightResp = await fetch(serverConfig.url, {
-                            headers: {
-                                "Accept": "text/event-stream",
-                                "Cache-Control": "no-cache",
-                                ...headers
-                            }
-                        });
-
-                        // Check specifically for the Dice behavior (400 + mcp-session-id)
-                        if (preflightResp.status === 400 && preflightResp.headers.get('mcp-session-id')) {
-                            const recoveredId = preflightResp.headers.get('mcp-session-id');
-                            console.log(`[MCP] Auto-recovered session ID for ${name}: ${recoveredId}`);
-                            sessionId = recoveredId!;
-                            headers['mcp-session-id'] = recoveredId!;
-                        }
-                    } catch (preflightErr) {
-                        console.warn(`[MCP] Pre-flight check failed for ${name}, proceeding with standard connection:`, preflightErr);
-                    }
-
+                    // Create transport - the SDK handles session management automatically
+                    // No manual preflight needed; the SDK will:
+                    // 1. Connect and receive session ID from the server response
+                    // 2. Include the session ID in subsequent requests automatically
                     transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
-                        requestInit: { headers },
-                        sessionId
+                        requestInit: Object.keys(headers).length > 0 ? { headers } : undefined
                     });
                 } else if (serverConfig.command) {
                     console.log(`[MCP] Starting local server "${name}" with command: ${serverConfig.command} ${(serverConfig.args || []).join(" ")}`);
