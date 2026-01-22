@@ -28,9 +28,10 @@ import {
 } from "../features/usage-db";
 import {fetchCryptoNews, fetchEarningsCalendar, fetchStockNews} from "../features/finnhub-api";
 import Roll from 'roll';
-import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep} from "../features/utils";
+import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlack} from "../features/utils";
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, generateChart } from '../features/stock-charts';
+import { fetchUrbanDefinitions } from '../features/urban-dictionary';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     app.message(/^!fetch_url\s+(.+)/i, async ({message, context, say}) => {
@@ -671,6 +672,55 @@ ${formatInventory(character.inventory)}
         });
     });
 
+    app.message(/^!(ud|urban)\s+(.+)/i, async ({message, context, client}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+        const searchTerm = context.matches[2].trim();
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+
+        try {
+            const definitions = await fetchUrbanDefinitions(searchTerm);
+
+            if (definitions.length === 0) {
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: `No definitions found for *${searchTerm}* on Urban Dictionary.`,
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            let responseText = `*Urban Dictionary: ${searchTerm}*\n\n`;
+
+            for (const item of definitions) {
+                // Remove Urban Dictionary cross-reference brackets [word] -> word
+                const cleanDefinition = item.definition.replace(/\[/g, '').replace(/\]/g, '');
+                const cleanExample = item.example.replace(/\[/g, '').replace(/\]/g, '');
+
+                responseText += `*${item.word}*\n`;
+                responseText += `${markdownToSlack(cleanDefinition)}\n`;
+                if (cleanExample) {
+                    responseText += `_Example: ${markdownToSlack(cleanExample)}_\n`;
+                }
+                responseText += `👍 ${item.thumbs_up}  👎 ${item.thumbs_down}  | <${item.permalink}|Permalink>\n\n`;
+            }
+
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: responseText.trim(),
+                thread_ts: threadTs,
+            });
+        } catch (error) {
+            console.error('Error in !ud handler:', error);
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: `Sorry, I couldn't fetch the Urban Dictionary definition for "${searchTerm}".`,
+                thread_ts: threadTs,
+            });
+        }
+    });
+
     app.message(/^!gembot help$/i, async ({message, say}) => {
         const helpText = `
 *Available Commands*
@@ -679,6 +729,7 @@ ${formatInventory(character.inventory)}
 • \`@<BotName> <prompt>\`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
 • \`!image <prompt>\`: Generates an image based on your text prompt using Imagen 4.
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
+• \`!ud <term>\`: Get definitions from Urban Dictionary.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
 
