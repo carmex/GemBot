@@ -703,7 +703,7 @@ ${formatInventory(character.inventory)}
                 if (cleanExample) {
                     responseText += `_Example: ${markdownToSlack(cleanExample)}_\n`;
                 }
-                responseText += `👍 ${item.thumbs_up}  👎 ${item.thumbs_down}  | <${item.permalink}|Permalink>\n\n`;
+                responseText += `👍 ${item.thumbs_up}  👎 ${item.thumbs_down}\n\n`;
             }
 
             await client.chat.postMessage({
