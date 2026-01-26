@@ -19,12 +19,18 @@ export class McpClientManager {
 
     async initialize() {
         let servers = config.mcp.servers;
+        let isClaudeStyle = false;
         // Handle Claude-style config format if present
         if ((servers as any).mcpServers) {
             servers = (servers as any).mcpServers;
+            isClaudeStyle = true;
         }
 
-        console.log(`[MCP] Initializing with ${Object.keys(servers).length} potential servers...`);
+        const serverNames = Object.keys(servers);
+        console.log(`[MCP] Initializing with ${serverNames.length} servers...`);
+        if (process.env.MCP_SERVERS_JSON) {
+            console.log(`[MCP] Using custom configuration from MCP_SERVERS_JSON${isClaudeStyle ? " (Claude-style)" : ""}`);
+        }
 
         for (const [originalName, serverConfig] of Object.entries(servers)) {
             // Normalize name: hyphens to underscores for LLM compatibility

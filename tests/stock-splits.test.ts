@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { Candle, Split } from '../types';
+import { Candle, Split } from '../src/types';
 
 function applySplits(candles: Candle[], splits: Split[]) {
     if (!splits || splits.length === 0) return;
