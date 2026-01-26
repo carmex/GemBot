@@ -7,7 +7,7 @@ import { LLMTool } from "../llm/providers/types";
 import { Part } from "@google/generative-ai";
 import fetch, { Headers, Request, Response } from "node-fetch";
 
-// Polyfill fetch for Node.js - the MCP SDK expects globalThis.fetch
+// Polyfill fetch for Node.js
 if (!globalThis.fetch) {
     (globalThis as any).fetch = fetch;
     (globalThis as any).Headers = Headers;
@@ -21,225 +21,242 @@ if (!(globalThis as any).EventSource) {
     (globalThis as any).EventSource = EventSourceModule.EventSource;
 }
 
+interface StoredTool extends LLMTool {
+    serverName: string;
+    originalName: string;
+}
+
 export class McpClientManager {
-    private clients: Map<string, Client> = new Map();
+    // Store normalizedName -> Config
+    private serverConfigs: Map<string, any> = new Map();
+    private tools: StoredTool[] = [];
 
-    async initialize() {
-        let servers = config.mcp.servers;
-        let isClaudeStyle = false;
-        // Handle Claude-style config format if present
-        if ((servers as any).mcpServers) {
-            servers = (servers as any).mcpServers;
-            isClaudeStyle = true;
+    constructor() {
+        this.loadServerConfigs();
+    }
+
+    private loadServerConfigs() {
+        this.serverConfigs.clear();
+        let rawConfigs: Record<string, any> = {};
+
+        // 1. Load from config.ts
+        if (config.mcp && config.mcp.servers) {
+            rawConfigs = { ...(config.mcp.servers as any).mcpServers || config.mcp.servers };
         }
 
-        const serverNames = Object.keys(servers);
-        console.log(`[MCP] Initializing with ${serverNames.length} servers...`);
-        if (process.env.MCP_SERVERS_JSON) {
-            console.log(`[MCP] Using custom configuration from MCP_SERVERS_JSON${isClaudeStyle ? " (Claude-style)" : ""}`);
-        }
-
-        for (const [originalName, serverConfig] of Object.entries(servers)) {
-            // Normalize name: hyphens to underscores for LLM compatibility
-            const name = originalName.replace(/-/g, "_");
+        // 2. Load from env var (overrides/adds)
+        const envServers = process.env.MCP_SERVERS_JSON;
+        if (envServers) {
             try {
-                if (serverConfig.url) {
-                    console.log(`[MCP] Starting remote server "${name}" with URL: ${serverConfig.url}`);
-
-                    // Merge configured headers if any
-                    const headers = { ...(serverConfig.headers || {}) };
-
-                    const createClient = () => new Client(
-                        {
-                            name: "GemBot-MCP-Client",
-                            version: "1.0.0",
-                        },
-                        {
-                            capabilities: {}
-                        }
-                    );
-
-                    // Strategy: Try StreamableHTTP first (required for Dice), fallback to SSE (required for standard SSE servers)
-                    try {
-                        console.log(`[MCP] Attempting connection to ${name} using StreamableHTTP...`);
-                        const client = createClient();
-                        const transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
-                            requestInit: Object.keys(headers).length > 0 ? { headers } : undefined
-                        });
-
-                        await client.connect(transport);
-                        this.clients.set(name, client);
-                        console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
-                    } catch (streamableError) {
-                        console.warn(`[MCP] StreamableHTTP connection failed for ${name}:`, streamableError);
-                        console.log(`[MCP] Falling back to SSEClientTransport for ${name}...`);
-
-                        try {
-                            const client = createClient();
-                            const transport = new SSEClientTransport(new URL(serverConfig.url), {
-                                requestInit: Object.keys(headers).length > 0 ? { headers } : undefined
-                            });
-
-                            await client.connect(transport);
-                            this.clients.set(name, client);
-                            console.log(`[MCP] Connected to server: ${name} (using SSE fallback)`);
-                        } catch (sseError) {
-                            console.error(`[MCP] SSE connection also failed for ${name}:`, sseError);
-                            throw streamableError; // Throw original error or a composite one
-                        }
-                    }
-
-                } else if (serverConfig.command) {
-                    console.log(`[MCP] Starting local server "${name}" with command: ${serverConfig.command} ${(serverConfig.args || []).join(" ")}`);
-                    const client = new Client(
-                        {
-                            name: "GemBot-MCP-Client",
-                            version: "1.0.0",
-                        },
-                        {
-                            capabilities: {}
-                        }
-                    );
-                    const transport = new StdioClientTransport({
-                        command: serverConfig.command,
-                        args: serverConfig.args || [],
-                        env: { ...process.env, ...(serverConfig.env || {}) } as any
-                    });
-
-                    await client.connect(transport);
-                    this.clients.set(name, client);
-                    console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
-                } else {
-                    console.error(`[MCP] Invalid configuration for server ${originalName}: missing 'url' or 'command'`);
-                    continue;
-                }
-
-                // Discovery logging (for registered client)
-                const client = this.clients.get(name);
-                if (client) {
-                    try {
-                        const response = await client.listTools();
-                        console.log(`[MCP] Registered tools for ${name}: ${response.tools.map(t => t.name).join(", ")}`);
-                    } catch (toolError) {
-                        console.error(`[MCP] Failed to list tools for ${name} during initialization:`, toolError);
-                    }
-                }
-            } catch (error) {
-                console.error(`[MCP] Failed to connect to server ${originalName}:`, error);
+                const parsed = JSON.parse(envServers);
+                const servers = (parsed as any).mcpServers || parsed;
+                rawConfigs = { ...rawConfigs, ...servers };
+            } catch (e) {
+                console.error('[MCP] Failed to parse MCP_SERVERS_JSON', e);
             }
+        }
+
+        // 3. Normalize and store
+        for (const [key, value] of Object.entries(rawConfigs)) {
+            const normalizedName = key.replace(/-/g, "_");
+            this.serverConfigs.set(normalizedName, value);
         }
     }
 
-    async getTools(): Promise<LLMTool[]> {
-        const allTools: LLMTool[] = [];
-        for (const [serverName, client] of this.clients.entries()) {
-            try {
-                console.log(`[MCP] Requesting tools from ${serverName}...`);
-                const startTime = Date.now();
-                const response = await client.listTools();
-                const duration = Date.now() - startTime;
-                console.log(`[MCP] Received tools from ${serverName} in ${duration}ms`);
+    private async createClientAndConnect(name: string, serverConfig: any): Promise<{ client: Client; transport: any }> {
+        const client = new Client(
+            {
+                name: "GemBot-MCP-Client",
+                version: "1.0.0",
+            },
+            {
+                capabilities: {},
+            }
+        );
 
-                const mcpTools = response.tools.map(tool => ({
-                    name: `${serverName}__${tool.name}`,
-                    description: tool.description || "",
-                    parameters: tool.inputSchema as Record<string, any>
+        let transport;
+        const transportType = serverConfig.transport;
+
+        if (transportType === 'stdio') {
+            transport = new StdioClientTransport({
+                command: serverConfig.command,
+                args: serverConfig.args || [],
+                env: { ...process.env, ...(serverConfig.env || {}) } as Record<string, string>
+            });
+        } else if (transportType === 'sse') {
+            transport = new SSEClientTransport(new URL(serverConfig.url));
+        } else {
+            // Default to StreamableHTTP, with fallback to SSE (Smart Fallback)
+            try {
+                const opts: any = {};
+                if (serverConfig.headers) {
+                    opts.requestInit = { headers: serverConfig.headers };
+                }
+                transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), opts);
+                await client.connect(transport);
+                return { client, transport };
+            } catch (streamableErr) {
+                console.warn(`[MCP] StreamableHTTP failed for ${name}, attempting SSE fallback...`, streamableErr);
+
+                const fallbackClient = new Client(
+                    { name: "GemBot-MCP-Fallback", version: "1.0.0" },
+                    { capabilities: {} }
+                );
+
+                const opts: any = {};
+                if (serverConfig.headers) {
+                    opts.requestInit = { headers: serverConfig.headers };
+                }
+
+                transport = new SSEClientTransport(new URL(serverConfig.url), opts);
+
+                await fallbackClient.connect(transport);
+                return { client: fallbackClient, transport };
+            }
+        }
+
+        // For stdio and explicit sse
+        if (!transport) throw new Error(`Unknown transport type or initialization failed for ${name}`);
+
+        await client.connect(transport);
+        return { client, transport };
+    }
+
+    public async initialize() {
+        console.log("[MCP] Initializing MCP Client Manager (On-Demand Mode)...");
+        this.loadServerConfigs();
+        this.tools = [];
+
+        for (const [name, config] of this.serverConfigs.entries()) {
+            if (config.disabled) continue;
+
+            console.log(`[MCP] Discovering tools for ${name}...`);
+            let client: Client | null = null;
+
+            try {
+                const connection = await this.createClientAndConnect(name, config);
+                client = connection.client;
+
+                // List Tools
+                const result = await client.listTools();
+
+                const serverTools: StoredTool[] = result.tools.map(t => ({
+                    name: `${name}__${t.name}`,
+                    description: t.description || "",
+                    parameters: t.inputSchema as Record<string, any>,
+                    serverName: name,
+                    originalName: t.name
                 }));
-                allTools.push(...mcpTools);
+
+                this.tools.push(...serverTools);
+                console.log(`[MCP] Discovered ${serverTools.length} tools from ${name}.`);
+
             } catch (error) {
-                if (serverName === 'dice') {
-                    console.log(`[MCP] Manually registering tools for ${serverName} (auto-discovery failed)`);
-                    allTools.push({
-                        name: `${serverName}__search_jobs`,
-                        description: "Search for jobs on Dice.com. Requires 'keyword'. Optional filters for workplace_types (Remote, On-Site, Hybrid), employment_types (FULLTIME, CONTRACTS, PARTTIME, THIRD_PARTY), posted_date (ONE...THIRTY), etc.",
+                console.error(`[MCP] Failed to discover tools for ${name}:`, error);
+                // Fallback for known problematic servers if discovery fails (e.g. Dice)
+                if (name === 'dice') {
+                    console.log(`[MCP] Adding manual fallback tool for Dice...`);
+                    this.tools.push({
+                        name: `dice__search_jobs`,
+                        originalName: 'search_jobs',
+                        serverName: 'dice',
+                        description: "Search for jobs on Dice.com. Requires 'keyword'.",
                         parameters: {
                             type: "object",
                             properties: {
-                                keyword: { type: "string", description: "Job title or keywords" },
+                                keyword: { type: "string" },
                                 workplace_types: { type: "string", enum: ["Remote", "On-Site", "Hybrid"] },
-                                employment_types: { type: "string", enum: ["FULLTIME", "CONTRACTS", "PARTTIME", "THIRD_PARTY"] },
-                                posted_date: { type: "string", enum: ["ONE", "THREE", "SEVEN", "FOURTEEN", "THIRTY"] },
-                                radius_unit: { type: "string", enum: ["miles", "kilometers"], default: "miles" },
-                                jobs_per_page: { type: "integer", maximum: 100 },
-                                page_number: { type: "integer", minimum: 1 }
+                                employment_types: { type: "string" }
                             },
                             required: ["keyword"]
                         }
                     });
-                } else {
-                    console.error(`[MCP] Failed to list tools for server ${serverName}:`, error);
+                }
+            } finally {
+                // DISCONNECT IMMEDIATELY
+                if (client) {
+                    try {
+                        await client.close();
+                        console.log(`[MCP] Disconnected from ${name} (discovery complete).`);
+                    } catch (e) {
+                        console.warn(`[MCP] Error disconnecting ${name}:`, e);
+                    }
                 }
             }
         }
-        return allTools;
+
+        console.log(`[MCP] Initialization complete. Total tools: ${this.tools.length}`);
     }
 
-    async executeTool(fullName: string, args: any): Promise<Part> {
-        const [requestedServerName, ...toolNameParts] = fullName.split("__");
-        const toolName = toolNameParts.join("__");
+    public getTools(): LLMTool[] {
+        return this.tools.map(t => ({
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters
+        }));
+    }
 
-        // Try exact match, then normalized match
-        let client = this.clients.get(requestedServerName);
-        let serverName = requestedServerName;
+    public async executeTool(fullName: string, args: any): Promise<Part> {
+        console.log(`[MCP] Executing tool: ${fullName} (On-Demand)`);
 
-        if (!client) {
-            const normalizedName = requestedServerName.replace(/-/g, "_");
-            client = this.clients.get(normalizedName);
-            if (client) {
-                serverName = normalizedName;
-            }
+        const tool = this.tools.find(t => t.name === fullName);
+        if (!tool) {
+            throw new Error(`Tool definition not found for ${fullName}`);
         }
 
-        if (!client) {
-            const availableServers = Array.from(this.clients.keys()).join(", ");
-            console.error(`[MCP] Server not found: ${requestedServerName}. Available: ${availableServers}`);
-            throw new Error(`MCP server not found: ${requestedServerName}`);
+        const serverName = tool.serverName;
+        const config = this.serverConfigs.get(serverName);
+
+        if (!config) {
+            throw new Error(`Configuration for server ${serverName} not found`);
         }
 
-        const isPython = serverName.startsWith('python_interpreter');
-        if (isPython) {
-            console.log(`[Python Interpreter] Executing tool: ${toolName}`);
-            console.log(`[Python Interpreter] Arguments:\n${JSON.stringify(args, null, 2)}`);
-        }
+        let client: Client | null = null;
+        let transport: any = null;
 
         try {
+            // CONNECT
+            const connection = await this.createClientAndConnect(serverName, config);
+            client = connection.client;
+            transport = connection.transport;
+
+            // EXECUTE
+            console.log(`[MCP] Calling ${tool.originalName} on ${serverName}...`);
             const result = await client.callTool({
-                name: toolName,
+                name: tool.originalName,
                 arguments: args
             });
 
-            if (isPython) {
-                console.log(`[Python Interpreter] Result:\n${JSON.stringify(result, null, 2)}`);
-            }
-
+            console.log(`[MCP] Tool response received.`);
             return {
                 functionResponse: {
                     name: fullName,
                     response: result
                 }
             };
+
         } catch (error) {
-            console.error(`[MCP] Error executing tool ${fullName} on server ${serverName}:`, error);
-            if (isPython) {
-                console.error(`[Python Interpreter] Tool execution failed:`, error);
-            }
+            console.error(`[MCP] Error executing ${fullName}:`, error);
             return {
                 functionResponse: {
                     name: fullName,
                     response: { error: (error as Error).message }
                 }
             };
+        } finally {
+            // DISCONNECT
+            if (client) {
+                try {
+                    await client.close();
+                    console.log(`[MCP] Disconnected from ${serverName} after execution.`);
+                } catch (e) {
+                    console.warn(`[MCP] Error disconnecting ${serverName}:`, e);
+                }
+            }
         }
     }
 
-    async shutdown() {
-        for (const [name, client] of this.clients.entries()) {
-            try {
-                await client.close();
-                console.log(`[MCP] Disconnected from server: ${name}`);
-            } catch (error) {
-                console.error(`[MCP] Error closing client ${name}:`, error);
-            }
-        }
+    public async shutdown() {
+        console.log('[MCP] Shutdown called (no persistent connections to close).');
     }
 }
