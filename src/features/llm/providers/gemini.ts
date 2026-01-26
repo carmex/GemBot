@@ -33,21 +33,57 @@ function toGeminiHistory(history: LLMMessage[] | Content[] | undefined): Content
     });
 }
 
-function toGeminiFunctions(tools: LLMTool[] | undefined): FunctionDeclaration[] | undefined {
+/**
+ * Recursively sanitizes a schema object to ensure it is compatible with Gemini's requirements.
+ * Specifically, it converts all 'enum' values to strings and ensures the 'type' is set to STRING.
+ */
+function sanitizeSchema(schema: any): any {
+    if (!schema || typeof schema !== 'object') {
+        return schema;
+    }
+
+    // Clone to avoid mutating original
+    const sanitized = { ...schema };
+
+    // Handle Enums: Gemini requires enums to be strings
+    if (sanitized.enum && Array.isArray(sanitized.enum)) {
+        sanitized.type = SchemaType.STRING;
+        sanitized.enum = sanitized.enum.map((val: any) => String(val));
+    }
+
+    // Recursively handle properties
+    if (sanitized.properties) {
+        const newProps: any = {};
+        for (const [key, prop] of Object.entries(sanitized.properties)) {
+            newProps[key] = sanitizeSchema(prop);
+        }
+        sanitized.properties = newProps;
+    }
+
+    // Recursively handle array items
+    if (sanitized.items) {
+        sanitized.items = sanitizeSchema(sanitized.items);
+    }
+
+    return sanitized;
+}
+
+export function toGeminiFunctions(tools: LLMTool[] | undefined): FunctionDeclaration[] | undefined {
     if (!tools || tools.length === 0) return undefined;
     // Strictly coerce to Gemini FunctionDeclaration schema
     return tools.map((t) => {
         const params = t.parameters || {};
-        const properties = params.properties || {};
-        const required = params.required || [];
+
+        // Deep sanitize the parameters schema
+        const sanitizedParams = sanitizeSchema(params);
+
+        // Ensure the root is an object (it should be for function parameters)
+        sanitizedParams.type = SchemaType.OBJECT;
+
         return {
             name: t.name,
             description: t.description,
-            parameters: {
-                type: SchemaType.OBJECT,
-                properties,
-                required,
-            },
+            parameters: sanitizedParams,
         } as FunctionDeclaration;
     });
 }
