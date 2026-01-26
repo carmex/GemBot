@@ -85,6 +85,39 @@ export interface Config {
     };
 }
 
+export function getMcpServers(envJson?: string) {
+    const defaultServers = {
+        dice: {
+            url: "https://mcp.dice.com/mcp"
+        },
+        "open-meteo": {
+            command: "npx",
+            args: ["-y", "open-meteo-mcp-server"]
+        }
+    };
+    
+    const json = envJson ?? process.env.MCP_SERVERS_JSON;
+    
+    if (json) {
+        try {
+            const envServers = JSON.parse(json);
+            // Handle Claude-style wrapper
+            if (envServers.mcpServers) {
+                return {
+                    ...envServers,
+                    mcpServers: { ...defaultServers, ...envServers.mcpServers }
+                };
+            }
+            // Flat merge
+            return { ...defaultServers, ...envServers };
+        } catch (e) {
+            console.error('Error parsing MCP_SERVERS_JSON:', e);
+            return defaultServers;
+        }
+    }
+    return defaultServers;
+}
+
 export const config: Config = {
     slack: {
         botToken: process.env.SLACK_BOT_TOKEN || '',
@@ -131,15 +164,7 @@ export const config: Config = {
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
     serpapiApiKey: process.env.SERPAPI_API_KEY || '',
     mcp: {
-        servers: process.env.MCP_SERVERS_JSON ? JSON.parse(process.env.MCP_SERVERS_JSON) : {
-            dice: {
-                url: "https://mcp.dice.com/mcp"
-            },
-            "open-meteo": {
-                command: "npx",
-                args: ["-y", "open-meteo-mcp-server"]
-            }
-        },
+        servers: getMcpServers(),
     },
     summarization: {
         triggerPercent: parseInt(process.env.SUMMARY_TRIGGER_PERCENT || '85', 10),
