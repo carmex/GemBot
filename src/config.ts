@@ -134,6 +134,10 @@ export const config: Config = {
         servers: process.env.MCP_SERVERS_JSON ? JSON.parse(process.env.MCP_SERVERS_JSON) : {
             dice: {
                 url: "https://mcp.dice.com/mcp"
+            },
+            "open-meteo": {
+                command: "npx",
+                args: ["-y", "open-meteo-mcp-server"]
             }
         },
     },
