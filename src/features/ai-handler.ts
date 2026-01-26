@@ -628,6 +628,22 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                 }
             }
 
+            // Generic MCP feedback for others (excluding python/dice/open_meteo which are handled above)
+            if (!name.startsWith('python_interpreter') && !name.startsWith('dice__') && !name.startsWith('open_meteo__')) {
+                const parts = name.split('__');
+                const toolDisplayName = parts.length > 1 ? parts[1].replace(/_/g, ' ') : name;
+                const feedbackMsg = `_calling tool ${toolDisplayName}..._`;
+                try {
+                    await this.app.client.chat.postMessage({
+                        channel: channelId,
+                        thread_ts: threadTs,
+                        text: feedbackMsg
+                    });
+                } catch (err) {
+                    console.error('[MCP] Failed to post feedback message:', err);
+                }
+            }
+
             const toolResult = await this.mcpClientManager.executeTool(name, args);
 
             // Check for image content in the tool result

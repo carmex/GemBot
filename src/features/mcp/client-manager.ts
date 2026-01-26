@@ -134,7 +134,12 @@ export class McpClientManager {
         const allTools: LLMTool[] = [];
         for (const [serverName, client] of this.clients.entries()) {
             try {
+                console.log(`[MCP] Requesting tools from ${serverName}...`);
+                const startTime = Date.now();
                 const response = await client.listTools();
+                const duration = Date.now() - startTime;
+                console.log(`[MCP] Received tools from ${serverName} in ${duration}ms`);
+
                 const mcpTools = response.tools.map(tool => ({
                     name: `${serverName}__${tool.name}`,
                     description: tool.description || "",
