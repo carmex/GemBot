@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { config } from "../../config";
 import { LLMTool } from "../llm/providers/types";
 import { Part } from "@google/generative-ai";
@@ -12,6 +13,12 @@ if (!globalThis.fetch) {
     (globalThis as any).Headers = Headers;
     (globalThis as any).Request = Request;
     (globalThis as any).Response = Response;
+}
+
+// Polyfill EventSource for SSEClientTransport
+const EventSourceModule = require("eventsource");
+if (!(globalThis as any).EventSource) {
+    (globalThis as any).EventSource = EventSourceModule.EventSource;
 }
 
 export class McpClientManager {
@@ -36,52 +43,86 @@ export class McpClientManager {
             // Normalize name: hyphens to underscores for LLM compatibility
             const name = originalName.replace(/-/g, "_");
             try {
-                let transport;
                 if (serverConfig.url) {
                     console.log(`[MCP] Starting remote server "${name}" with URL: ${serverConfig.url}`);
 
                     // Merge configured headers if any
                     const headers = { ...(serverConfig.headers || {}) };
 
-                    // Create transport - the SDK handles session management automatically
-                    // No manual preflight needed; the SDK will:
-                    // 1. Connect and receive session ID from the server response
-                    // 2. Include the session ID in subsequent requests automatically
-                    transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
-                        requestInit: Object.keys(headers).length > 0 ? { headers } : undefined
-                    });
+                    const createClient = () => new Client(
+                        {
+                            name: "GemBot-MCP-Client",
+                            version: "1.0.0",
+                        },
+                        {
+                            capabilities: {}
+                        }
+                    );
+
+                    // Strategy: Try StreamableHTTP first (required for Dice), fallback to SSE (required for standard SSE servers)
+                    try {
+                        console.log(`[MCP] Attempting connection to ${name} using StreamableHTTP...`);
+                        const client = createClient();
+                        const transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
+                            requestInit: Object.keys(headers).length > 0 ? { headers } : undefined
+                        });
+
+                        await client.connect(transport);
+                        this.clients.set(name, client);
+                        console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
+                    } catch (streamableError) {
+                        console.warn(`[MCP] StreamableHTTP connection failed for ${name}:`, streamableError);
+                        console.log(`[MCP] Falling back to SSEClientTransport for ${name}...`);
+
+                        try {
+                            const client = createClient();
+                            const transport = new SSEClientTransport(new URL(serverConfig.url), {
+                                requestInit: Object.keys(headers).length > 0 ? { headers } : undefined
+                            });
+
+                            await client.connect(transport);
+                            this.clients.set(name, client);
+                            console.log(`[MCP] Connected to server: ${name} (using SSE fallback)`);
+                        } catch (sseError) {
+                            console.error(`[MCP] SSE connection also failed for ${name}:`, sseError);
+                            throw streamableError; // Throw original error or a composite one
+                        }
+                    }
+
                 } else if (serverConfig.command) {
                     console.log(`[MCP] Starting local server "${name}" with command: ${serverConfig.command} ${(serverConfig.args || []).join(" ")}`);
-                    transport = new StdioClientTransport({
+                    const client = new Client(
+                        {
+                            name: "GemBot-MCP-Client",
+                            version: "1.0.0",
+                        },
+                        {
+                            capabilities: {}
+                        }
+                    );
+                    const transport = new StdioClientTransport({
                         command: serverConfig.command,
                         args: serverConfig.args || [],
                         env: { ...process.env, ...(serverConfig.env || {}) } as any
                     });
+
+                    await client.connect(transport);
+                    this.clients.set(name, client);
+                    console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
                 } else {
                     console.error(`[MCP] Invalid configuration for server ${originalName}: missing 'url' or 'command'`);
                     continue;
                 }
 
-                const client = new Client(
-                    {
-                        name: "GemBot-MCP-Client",
-                        version: "1.0.0",
-                    },
-                    {
-                        capabilities: {}
+                // Discovery logging (for registered client)
+                const client = this.clients.get(name);
+                if (client) {
+                    try {
+                        const response = await client.listTools();
+                        console.log(`[MCP] Registered tools for ${name}: ${response.tools.map(t => t.name).join(", ")}`);
+                    } catch (toolError) {
+                        console.error(`[MCP] Failed to list tools for ${name} during initialization:`, toolError);
                     }
-                );
-
-                await client.connect(transport);
-                this.clients.set(name, client);
-                console.log(`[MCP] Connected to server: ${name}${originalName !== name ? ` (from ${originalName})` : ""}`);
-
-                // Discovery logging
-                try {
-                    const response = await client.listTools();
-                    console.log(`[MCP] Registered tools for ${name}: ${response.tools.map(t => t.name).join(", ")}`);
-                } catch (toolError) {
-                    console.error(`[MCP] Failed to list tools for ${name} during initialization:`, toolError);
                 }
             } catch (error) {
                 console.error(`[MCP] Failed to connect to server ${originalName}:`, error);
