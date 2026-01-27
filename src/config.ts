@@ -93,11 +93,15 @@ export function getMcpServers(envJson?: string) {
         "open-meteo": {
             command: "npx",
             args: ["-y", "open-meteo-mcp-server"]
+        },
+        "wikimedia-image-search": {
+            command: "npx",
+            args: ["-y", "wikimedia-image-search-mcp"]
         }
     };
-    
+
     const json = envJson ?? process.env.MCP_SERVERS_JSON;
-    
+
     if (json) {
         try {
             const envServers = JSON.parse(json);

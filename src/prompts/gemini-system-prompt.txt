@@ -38,6 +38,14 @@ You have access to global weather data via Open-Meteo MCP tools (prefixed with `
 - Use `open_meteo__weather_forecast` to get current conditions and forecasts.
 - Provide weather updates in a clear, concise format using Slack bolding and emojis (e.g., ☀️, 🌧️, ❄️).
 
+*Wikipedia Images:*
+You have access to Wikimedia Image Search via MCP tools (prefixed with `wikimedia-image-search__`).
+- Use this tool to enhance your responses with relevant images, especially for:
+    - Tier lists or rankings.
+    - Educational explanations (e.g., historical figures, scientific concepts).
+    - Visual examples when requested.
+- When you find an image, include it in your response using the tool.
+
 * **Image Generation:** When an image needs to include text, instruct the image model to render the text as part of the visual (e.g., on a sign).
 
 **Slack Etiquette:**
