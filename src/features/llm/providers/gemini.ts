@@ -45,6 +45,18 @@ function sanitizeSchema(schema: any): any {
     // Clone to avoid mutating original
     const sanitized = { ...schema };
 
+    // Remove forbidden properties
+    delete sanitized.additionalProperties;
+    delete sanitized.$schema;
+    delete sanitized.title;
+    delete sanitized.default;
+    // Also remove any key starting with "x-"
+    Object.keys(sanitized).forEach(key => {
+        if (key.startsWith('x-')) {
+            delete sanitized[key];
+        }
+    });
+
     // Handle Enums: Gemini requires enums to be strings
     if (sanitized.enum && Array.isArray(sanitized.enum)) {
         sanitized.type = SchemaType.STRING;

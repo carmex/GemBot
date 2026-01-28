@@ -75,7 +75,10 @@ export class McpClientManager {
         );
 
         let transport;
-        const transportType = serverConfig.transport;
+        let transportType = serverConfig.transport;
+        if (!transportType && serverConfig.command) {
+            transportType = 'stdio';
+        }
 
         if (transportType === 'stdio') {
             transport = new StdioClientTransport({
