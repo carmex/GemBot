@@ -30,7 +30,7 @@ export class HistoryBuilder {
         private imageGenerator: ImageGenerator,
         private summarizer: Summarizer,
         private config: any
-    ) {}
+    ) { }
 
     public async buildHistoryFromThread(channel: string, thread_ts: string | undefined, trigger_ts: string, client: WebClient, botUserId: string): Promise<Content[]> {
         const history: Content[] = [];
@@ -80,7 +80,7 @@ export class HistoryBuilder {
                 if (!reply.user && !reply.bot_id) {
                     continue; // Skip messages without user or bot
                 }
-            
+
                 let role: 'user' | 'model';
                 if (reply.bot_id || (reply.user && reply.user === botUserId)) {
                     role = 'model';
@@ -89,19 +89,26 @@ export class HistoryBuilder {
                 } else {
                     continue;
                 }
-            
+
                 let parts: Part[] = [];
-            
+
                 if (reply.text) {
-                    const text = role === 'model' ? reply.text : buildUserPrompt({channel, user: reply.user!, text: reply.text});
-                    parts.push({text});
+                    const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, text: reply.text });
+                    parts.push({ text });
                 }
-            
+
                 console.log(`[Debug-Image] Message ${reply.ts} has ${(reply.files || []).length} files`);
 
                 if (reply.files && reply.files.length > 0) {
                     for (const file of reply.files) {
                         if (file.mimetype && file.mimetype.startsWith('image/') && file.url_private) {
+                            // Gemini doesn't allow images in 'model' role history
+                            if (role === 'model') {
+                                parts.push({ text: `[Image attachment: ${file.name || 'unknown'}]` });
+                                console.log(`[Debug-Image] Skipping image processing for model message ${reply.ts}, added placeholder.`);
+                                continue;
+                            }
+
                             console.log(`[Debug-Image] Processing image file: ${file.name || 'unknown'} from message ${reply.ts}, URL: ${file.url_private}`);
                             try {
                                 const imagePart = await this.imageGenerator.processImagePublic(file.url_private, file.mimetype);
@@ -115,11 +122,11 @@ export class HistoryBuilder {
                         }
                     }
                 }
-            
+
                 console.log(`[Debug-Image] Message ${reply.ts} (${role}) final parts count: ${parts.length} (text: ${parts.some(p => p.text) ? 'yes' : 'no'}, images: ${parts.filter(p => p.inlineData).length})`);
 
                 if (parts.length > 0) {
-                    history.push({role, parts});
+                    history.push({ role, parts });
                 }
             }
         } catch (error) {
@@ -160,13 +167,17 @@ export class HistoryBuilder {
                 let parts: Part[] = [];
 
                 if (reply.text) {
-                    const text = role === 'model' ? reply.text : buildUserPrompt({channel, user: reply.user!, text: reply.text});
-                    parts.push({text});
+                    const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, text: reply.text });
+                    parts.push({ text });
                 }
 
                 if (reply.files && reply.files.length > 0) {
                     for (const file of reply.files) {
                         if (file.mimetype && file.mimetype.startsWith('image/') && file.url_private) {
+                            if (role === 'model') {
+                                parts.push({ text: `[Image attachment: ${file.name || 'unknown'}]` });
+                                continue;
+                            }
                             try {
                                 const imagePart = await this.imageGenerator.processImagePublic(file.url_private, file.mimetype);
                                 parts.push(imagePart);
@@ -178,7 +189,7 @@ export class HistoryBuilder {
                 }
 
                 if (parts.length > 0) {
-                    history.push({role, parts});
+                    history.push({ role, parts });
                 }
             }
         } catch (error) {
@@ -223,7 +234,7 @@ export class HistoryBuilder {
             }
             for (const reply of relevantMessages.reverse()) {
                 if (reply.user) {
-                    history.push({role: 'user', parts: [{text: buildUserPrompt({channel, user: reply.user, text: reply.text})}]});
+                    history.push({ role: 'user', parts: [{ text: buildUserPrompt({ channel, user: reply.user, text: reply.text }) }] });
                 }
             }
         } catch (error) {
