@@ -79,6 +79,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts);
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                     console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
+                    await client.reactions.add({
+                        name: 'dnr',
+                        channel: event.channel,
+                        timestamp: event.ts
+                    });
                 } else if (response.text.trim()) {
                     const responseText = response.text;
                     await say({ text: responseText, thread_ts: event.thread_ts });
@@ -161,6 +166,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 const condition = response.text && response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>');
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                     console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
+                    await client.reactions.add({
+                        name: 'dnr',
+                        channel: event.channel,
+                        timestamp: event.ts
+                    });
                 }
 
                 if (condition) {
@@ -344,6 +354,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     const response = await aiHandler.processAIQuestion(question, history, message.channel, threadTs);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                         console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
+                        await client.reactions.add({
+                            name: 'dnr',
+                            channel: message.channel,
+                            timestamp: message.ts
+                        });
                     } else if (response.text.trim()) {
                         const responseText = response.text;
                         await say({ text: responseText, thread_ts: threadTs });
@@ -407,6 +422,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                         console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
+                        await client.reactions.add({
+                            name: 'dnr',
+                            channel: message.channel,
+                            timestamp: message.ts
+                        });
                     }
 
                     if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
