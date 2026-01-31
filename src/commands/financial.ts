@@ -20,6 +20,7 @@ import {App} from '@slack/bolt';
 import {config} from '../config';
 import {fetchQuote, fetchCompanyProfile, fetchStockMetrics, fetchStockNews, fetchCryptoNews, fetchEarningsCalendar} from '../features/finnhub-api';
 import {getColoredTileEmoji, formatMarketCap, formatQuote} from '../features/utils';
+import {getCryptoCandles} from '../features/stock-charts';
 
 export const registerFinancialCommands = (app: App) => {
     // New command handler for !cq
@@ -57,6 +58,59 @@ export const registerFinancialCommands = (app: App) => {
             await say({
                 text: `Sorry, I couldn't fetch the crypto prices. Error: ${(error as Error).message}`,
             });
+        }
+    });
+
+    // New command handler for !cstats
+    app.message(/^!cstats ([A-Z\s]+)$/i, async ({message, context, say}) => {
+        if (!('user' in message) || !context.matches?.[1]) return;
+
+        if (!config.finnhubApiKey) {
+            await say({
+                text: 'The cstats feature is not configured. An API key for Finnhub is required.',
+            });
+            return;
+        }
+
+        const tickers = context.matches[1].toUpperCase().split(/\s+/).filter(Boolean);
+        try {
+            const results = await Promise.all(tickers.map(async (ticker: string) => {
+                const cryptoTicker = `BINANCE:${ticker}USDT`;
+                const quote = await fetchQuote(cryptoTicker);
+
+                // Fetch historical data for 52-week high/low
+                const candles = await getCryptoCandles(ticker, '1y');
+
+                let high52 = 0;
+                let low52 = Infinity;
+
+                if (candles.length > 0) {
+                    candles.forEach(c => {
+                        if (c.c > high52) high52 = c.c;
+                        if (c.c < low52) low52 = c.c;
+                    });
+                }
+
+                if (!quote && candles.length === 0) {
+                    return `*${ticker}*: No crypto stats found.`;
+                }
+
+                let response = `*${ticker}* crypto stats:\n`;
+                if (quote) {
+                    const emoji = getColoredTileEmoji(quote.percentChange);
+                    response += `• Current Price: $${quote.price.toLocaleString()} ${emoji} (${quote.percentChange >= 0 ? '+' : ''}${quote.percentChange.toFixed(2)}%)\n`;
+                }
+                if (candles.length > 0) {
+                    response += `• 52-Week High: $${high52.toLocaleString()}\n`;
+                    response += `• 52-Week Low: $${low52.toLocaleString()}`;
+                }
+                return response;
+            }));
+
+            await say({text: results.join('\n\n')});
+        } catch (error) {
+            console.error('Crypto stats error:', error);
+            await say({text: `Sorry, I couldn't fetch the crypto stats. Error: ${(error as Error).message}`});
         }
     });
 

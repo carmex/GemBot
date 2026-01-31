@@ -4,7 +4,7 @@ import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { ChartConfiguration } from 'chart.js';
 import { sleep } from './utils';
 import { Candle, Split } from '../types';
-import { fetchStockSplits, fetchStockCandles } from './alphavantage-api';
+import { fetchStockSplits, fetchStockCandles, fetchCryptoCandles } from './alphavantage-api';
 
 function applySplits(candles: Candle[], splits: Split[]) {
     if (!splits || splits.length === 0) return;
@@ -34,6 +34,30 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
             applySplits(candles, splits);
         }
 
+        // Filter by range
+        const now = Date.now();
+        let msBack = 0;
+        switch (range) {
+            case '1w': msBack = 7 * 24 * 60 * 60 * 1000; break;
+            case '1m': msBack = 31 * 24 * 60 * 60 * 1000; break;
+            case '3m': msBack = 93 * 24 * 60 * 60 * 1000; break;
+            case '6m': msBack = 186 * 24 * 60 * 60 * 1000; break;
+            case '1y': msBack = 365 * 24 * 60 * 60 * 1000; break;
+            case '5y': msBack = 5 * 365 * 24 * 60 * 60 * 1000; break;
+            case 'my': msBack = Infinity; break;
+            default: msBack = 365 * 24 * 60 * 60 * 1000; break;
+        }
+        const minTime = now - msBack;
+        candles = candles.filter(c => c.t >= minTime);
+    }
+
+    return candles;
+}
+
+export async function getCryptoCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
+    let candles = await fetchCryptoCandles(ticker);
+
+    if (candles.length > 0) {
         // Filter by range
         const now = Date.now();
         let msBack = 0;
