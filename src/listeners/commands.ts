@@ -30,7 +30,7 @@ import {fetchCryptoNews, fetchEarningsCalendar, fetchStockNews} from "../feature
 import Roll from 'roll';
 import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlack} from "../features/utils";
 import {sendMorningGreeting} from '../features/utils';
-import { getStockCandles, generateChart } from '../features/stock-charts';
+import { getStockCandles, getCryptoCandles, generateChart } from '../features/stock-charts';
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
@@ -177,6 +177,45 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
         } catch (error) {
             console.error(`Chart generation error for ${ticker}:`, error);
             await say({text: `Sorry, I couldn't generate the chart. Error: ${(error as Error).message}`});
+        }
+    });
+
+    app.message(/^!cchart ([A-Z.]+)(?:\s+(1w|1m|3m|6m|1y|5y|my))?/i, async ({message, context, say, client}) => {
+        if (!('user' in message) || !message.user || !context.matches?.[1]) return;
+        if (!config.alphaVantageApiKey) {
+            await say({text: 'The charting feature is not configured. An API key for Alpha Vantage is required.'});
+            return;
+        }
+        const ticker = context.matches[1].toUpperCase();
+        const range = context.matches[2] || '1y';
+        try {
+            const workingMessage = await say({text: `📈 Generating crypto chart for *${ticker}* over the last *${range}*...`});
+
+            const candles = await getCryptoCandles(ticker, range);
+            if (candles.length === 0) {
+                await say({text: `No data found for *${ticker}* in the selected range.`});
+                if (workingMessage.ts) await client.chat.delete({channel: message.channel, ts: workingMessage.ts});
+                return;
+            }
+
+            const chartImage = await generateChart(ticker, candles);
+
+            const uploadTitle = `${ticker} Crypto Chart (${range})`;
+            const initialComment = `Here's the crypto chart for <@${message.user}> for *${ticker}* (${range}):`;
+
+            await client.files.uploadV2({
+                channel_id: message.channel,
+                initial_comment: initialComment,
+                file: chartImage,
+                filename: `${ticker}_crypto_chart.png`,
+                title: uploadTitle,
+            });
+            if (workingMessage.ts) {
+                await client.chat.delete({channel: message.channel, ts: workingMessage.ts});
+            }
+        } catch (error) {
+            console.error(`Crypto chart generation error for ${ticker}:`, error);
+            await say({text: `Sorry, I couldn't generate the crypto chart. Error: ${(error as Error).message}`});
         }
     });
 
@@ -745,7 +784,9 @@ ${formatInventory(character.inventory)}
 • \`!q <TICKER...>\`: Get a real-time stock quote.
 • \`!cq <TICKER...>\`: Get a real-time crypto quote (e.g., \`!cq BTC ETH\`).
 • \`!chart <TICKER> [range] [-c COMPARE_TICKER]\`: Generates a stock chart. Ranges: \`1w\`, \`1m\`, \`3m\`, \`6m\`, \`1y\`, \`5y\`, \`my\`. Use \`-c\` to compare two tickers.
+• \`!cchart <TICKER> [range]\`: Generates a crypto chart.
 • \`!stats <TICKER...>\`: Get key statistics for a stock (Market Cap, 52-week high/low).
+• \`!cstats <TICKER...>\`: Get key statistics for a crypto (Current Price, 52-week high/low).
 • \`!earnings <TICKER>\`: Get upcoming earnings dates.
 • \`!stocknews\`: Fetches the latest general stock market news.
 • \`!cryptonews\`: Fetches the latest cryptocurrency news.

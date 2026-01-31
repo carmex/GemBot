@@ -159,3 +159,55 @@ export async function fetchStockCandles(ticker: string, range: string = '1y'): P
 
     return [];
 }
+
+/**
+ * Fetches crypto candle data from Alpha Vantage.
+ * @param ticker The crypto ticker symbol (e.g., BTC, ETH).
+ */
+export async function fetchCryptoCandles(ticker: string): Promise<Candle[]> {
+    const url = `https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol=${ticker}&market=USD&apikey=${config.alphaVantageApiKey}`;
+
+    try {
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+            attempts++;
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Alpha Vantage API request failed: ${response.statusText}`);
+            }
+
+            const data = (await response.json()) as any;
+            const timeSeries = data["Time Series (Digital Currency Daily)"];
+
+            if (!timeSeries) {
+                const info = data.Information || data.Note || "";
+                if (info.toLowerCase().includes("rate limit") || info.toLowerCase().includes("spreading out") || info.toLowerCase().includes("standard api call frequency")) {
+                    console.warn(`[AlphaVantage] Rate limit hit for crypto candles ${ticker} (attempt ${attempts}/${maxAttempts}). Waiting 1.5s...`);
+                    await sleep(1500);
+                    continue;
+                }
+
+                if (data["Error Message"]) {
+                    console.error(`[AlphaVantage] Error fetching crypto candles for ${ticker}: ${data["Error Message"]}`);
+                } else {
+                    console.error(`[AlphaVantage] No Crypto Time Series data found for ${ticker}.`);
+                }
+                return [];
+            }
+
+            return Object.entries(timeSeries)
+                .map(([date, values]: [string, any]) => ({
+                    t: new Date(date).getTime(),
+                    c: parseFloat(values["4a. close (USD)"]),
+                }))
+                .sort((a, b) => a.t - b.t);
+        }
+    } catch (error) {
+        console.error(`[AlphaVantage] Error in fetchCryptoCandles for ${ticker}:`, error);
+        return [];
+    }
+
+    return [];
+}
