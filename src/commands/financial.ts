@@ -92,17 +92,22 @@ export const registerFinancialCommands = (app: App) => {
                 }
 
                 if (!quote && candles.length === 0) {
-                    return `*${ticker}*: No crypto stats found.`;
+                    return `*${ticker}*: Sorry, I couldn't find any current or historical data for this crypto ticker.`;
                 }
 
                 let response = `*${ticker}* crypto stats:\n`;
                 if (quote) {
                     const emoji = getColoredTileEmoji(quote.percentChange);
                     response += `• Current Price: $${quote.price.toLocaleString()} ${emoji} (${quote.percentChange >= 0 ? '+' : ''}${quote.percentChange.toFixed(2)}%)\n`;
+                } else {
+                    response += `• Current Price: Data unavailable\n`;
                 }
+
                 if (candles.length > 0) {
                     response += `• 52-Week High: $${high52.toLocaleString()}\n`;
                     response += `• 52-Week Low: $${low52.toLocaleString()}`;
+                } else {
+                    response += `• 52-Week High/Low: Historical data unavailable (Alpha Vantage rate limit or ticker not found)`;
                 }
                 return response;
             }));

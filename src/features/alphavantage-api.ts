@@ -200,7 +200,7 @@ export async function fetchCryptoCandles(ticker: string): Promise<Candle[]> {
             return Object.entries(timeSeries)
                 .map(([date, values]: [string, any]) => ({
                     t: new Date(date).getTime(),
-                    c: parseFloat(values["4a. close (USD)"]),
+                    c: parseFloat(values["4. close"] || values["4a. close (USD)"]),
                 }))
                 .sort((a, b) => a.t - b.t);
         }
