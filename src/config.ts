@@ -70,6 +70,7 @@ export interface Config {
         userAgent: string;
     };
     alphaVantageApiKey: string;
+    cryptoCompareApiKey: string;
     finnhubApiKey: string;
     serpapiApiKey: string; // for backwards compat
     apiPort: number;
@@ -165,6 +166,7 @@ export const config: Config = {
     apiPort: process.env.API_PORT ? parseInt(process.env.API_PORT, 10) : 3000,
     apiKey: process.env.API_KEY || '',
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
+    cryptoCompareApiKey: process.env.CRYPTOCOMPARE_API_KEY || '',
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
     serpapiApiKey: process.env.SERPAPI_API_KEY || '',
     mcp: {

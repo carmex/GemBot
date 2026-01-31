@@ -112,5 +112,9 @@ gcloud-credentials.json
 # Newly added db.json
 db.json
 
+# Gemini CLI and GitHub config
+gemini-config/
+gh-config/
+
 # PM2 related files
 .pm2/

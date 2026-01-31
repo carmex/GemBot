@@ -5,6 +5,7 @@ import { ChartConfiguration } from 'chart.js';
 import { sleep } from './utils';
 import { Candle, Split } from '../types';
 import { fetchStockSplits, fetchStockCandles, fetchCryptoCandles } from './alphavantage-api';
+import { fetchCryptoCompareCandles } from './cryptocompare-api';
 
 function applySplits(candles: Candle[], splits: Split[]) {
     if (!splits || splits.length === 0) return;
@@ -55,10 +56,20 @@ export async function getStockCandles(ticker: string, range: string = '1y'): Pro
 }
 
 export async function getCryptoCandles(ticker: string, range: string = '1y'): Promise<Candle[]> {
-    let candles = await fetchCryptoCandles(ticker);
+    let candles: Candle[] = [];
+
+    // Try CryptoCompare first
+    if (config.cryptoCompareApiKey) {
+        candles = await fetchCryptoCompareCandles(ticker, range);
+    }
+
+    // Fallback to Alpha Vantage if CryptoCompare fails or has no key
+    if (candles.length === 0) {
+        candles = await fetchCryptoCandles(ticker);
+    }
 
     if (candles.length > 0) {
-        // Filter by range
+        // Filter by range (important for Alpha Vantage fallback which returns all data)
         const now = Date.now();
         let msBack = 0;
         switch (range) {
