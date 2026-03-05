@@ -78,7 +78,6 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
 
                 const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts);
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
-                    console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
                     await client.reactions.add({
                         name: 'dnr',
                         channel: event.channel,
@@ -161,11 +160,9 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 }
 
                 const response = await aiHandler.processAIQuestion(question, [], event.channel, event.ts);
-                console.log(`[DEBUG] response =`, JSON.stringify(response, null, 2));
 
                 const condition = response.text && response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>');
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
-                    console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
                     await client.reactions.add({
                         name: 'dnr',
                         channel: event.channel,
@@ -203,15 +200,10 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
         },
         async ({ message, context, say, client }) => {
 
-            // Although the middleware should guarantee 'text' exists, the linter doesn't know that.
-            if (!('text' in message) || !message.text) {
-                return;
-            }
-
             const health = providerHealth();
-            if (!health.ok) {
+            if (health && !health.ok) {
                 const shouldHaveTriggered =
-                    ('thread_ts' in message && (message as any).thread_ts && message.text.length > 5) ||
+                    ('thread_ts' in message && (message as any).thread_ts && (message.text?.length ?? 0) > 5) ||
                     aiHandler.enabledChannels.has(message.channel) ||
                     aiHandler.rpgEnabledChannels.has(message.channel);
 
@@ -238,13 +230,40 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 return;
             }
 
+
             if (message.text.includes(`<@${context.botUserId}>`)) {
-                return;
+                // Strip the mention to get the prompt
+                const prompt = message.text.replace(/<@[^>]+>\s*/, '').trim();
+
+                // If it's already in a thread, the thread logic below will handle it.
+                // If it's NOT in a thread, we handle it as a new mention here.
+                if (!('thread_ts' in message) || !(message as any).thread_ts) {
+                    try {
+                        const userPrompt = buildUserPrompt({ channel: message.channel, user: message.user, text: prompt });
+                        const response = await aiHandler.processAIQuestion(userPrompt, [], message.channel, message.ts);
+
+                        if (response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>')) {
+                            await say({
+                                text: response.text,
+                                thread_ts: message.ts,
+                            });
+
+                            const finalHistory: Content[] = [
+                                { role: 'user', parts: [{ text: userPrompt }] },
+                                { role: 'assistant', parts: [{ text: response.text }] },
+                            ];
+                            saveThreadHistory(message.ts, message.channel, finalHistory);
+                        }
+                        // Mark as processed so app_mention doesn't trigger if it arrives late
+                        processedEvents.add(message.ts);
+                    } catch (error) {
+                        console.error('Error in fallback mention handler:', error);
+                    }
+                    return;
+                }
             }
 
-            if (processedEvents.has(message.ts)) {
-                return;
-            }
+            // Regular non-mention message processing follows...
             processedEvents.add(message.ts);
 
             // Check if this is a feature request workflow
@@ -486,7 +505,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
 
                     const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
-                        console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
+                        // No action needed
                     } else if (response.text.trim()) {
                         const responseText = response.text;
                         await say({ text: responseText });
