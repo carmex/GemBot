@@ -56,6 +56,10 @@ export interface Config {
         targetPercent: number;
         maxRecentMessages: number;
     };
+    imgflip: {
+        username?: string;
+        password?: string;
+    };
     vertex: {
         projectId: string;
         location: string;
@@ -176,6 +180,10 @@ export const config: Config = {
         triggerPercent: parseInt(process.env.SUMMARY_TRIGGER_PERCENT || '85', 10),
         targetPercent: parseInt(process.env.SUMMARY_TARGET_PERCENT || '50', 10),
         maxRecentMessages: parseInt(process.env.MAX_RECENT_MESSAGES || '15', 10),
+    },
+    imgflip: {
+        username: process.env.IMGFLIP_USERNAME,
+        password: process.env.IMGFLIP_PASSWORD,
     },
 };
 
