@@ -25,25 +25,27 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
     // !meme list
     app.message(/^!meme\s+list$/i, async ({ message, say }) => {
         if (!('user' in message)) return;
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
 
         try {
             const memes = await MemeGenerator.getPopularMemes();
             if (memes.length === 0) {
-                await say('Failed to fetch meme templates.');
+                await say({ text: 'Failed to fetch meme templates.', thread_ts: threadTs });
                 return;
             }
 
             const list = memes.slice(0, 25).map(m => `• *${m.name}* (ID: ${m.id}, Boxes: ${m.box_count})`).join('\n');
-            await say(`*Popular Meme Templates:*\n${list}\n\nUse \`!meme search <term>\` to find more.`);
+            await say({ text: `*Popular Meme Templates:*\n${list}\n\nUse \`!meme search <term>\` to find more.`, thread_ts: threadTs });
         } catch (error) {
             console.error('Error in !meme list:', error);
-            await say('An error occurred while fetching meme templates.');
+            await say({ text: 'An error occurred while fetching meme templates.', thread_ts: threadTs });
         }
     });
 
     // !meme search <term>
     app.message(/^!meme\s+search\s+(.+)$/i, async ({ message, context, say }) => {
         if (!('user' in message) || !context.matches?.[1]) return;
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
 
         const term = context.matches[1].trim();
         try {
@@ -51,21 +53,22 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
             const results = memes.filter(m => m.name.toLowerCase().includes(term.toLowerCase())).slice(0, 15);
 
             if (results.length === 0) {
-                await say(`No templates found for "${term}".`);
+                await say({ text: `No templates found for "${term}".`, thread_ts: threadTs });
                 return;
             }
 
             const list = results.map(m => `• *${m.name}* (ID: ${m.id}, Boxes: ${m.box_count})`).join('\n');
-            await say(`*Search Results for "${term}":*\n${list}`);
+            await say({ text: `*Search Results for "${term}":*\n${list}`, thread_ts: threadTs });
         } catch (error) {
             console.error('Error in !meme search:', error);
-            await say('An error occurred while searching for meme templates.');
+            await say({ text: 'An error occurred while searching for meme templates.', thread_ts: threadTs });
         }
     });
 
     // !meme <id_or_name> <text1> [| <text2> | <text3> ... ]
     app.message(/^!meme\s+(.+)$/i, async ({ message, context, say, client }) => {
         if (!('user' in message) || !context.matches?.[1] || (message as any).subtype) return;
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
 
         const fullInput = context.matches[1].trim();
         
@@ -79,7 +82,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
             // Regex to handle quoted template names: ^(?:"([^"]+)"|(\S+))\s*(.*)$
             const match = fullInput.match(/^(?:"([^"]+)"|(\S+))\s*(.*)$/);
             if (!match) {
-                await say('Invalid meme command format. Use `!meme "template name" text1 | text2`');
+                await say({ text: 'Invalid meme command format. Use `!meme "template name" text1 | text2`', thread_ts: threadTs });
                 return;
             }
 
@@ -90,7 +93,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
             const template = await MemeGenerator.findMeme(templateSearch);
             if (!template) {
                 if (aiHandler) {
-                    await say(`Template "${templateSearch}" not found. Generating an AI version instead...`);
+                    await say({ text: `Template "${templateSearch}" not found. Generating an AI version instead...`, thread_ts: threadTs });
                     
                     let descriptivePrompt = `A meme based on '${templateSearch}'`;
                     if (texts.length >= 2) {
@@ -98,7 +101,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
                     } else if (texts.length === 1) {
                         descriptivePrompt += ` with text: '${texts[0]}'`;
                     } else {
-                        await say(`Please provide text for the meme. Example: \`!meme "${templateSearch}" Top Text | Bottom Text\``);
+                        await say({ text: `Please provide text for the meme. Example: \`!meme "${templateSearch}" Top Text | Bottom Text\``, thread_ts: threadTs });
                         return;
                     }
 
@@ -109,31 +112,32 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
                             file: buffer,
                             filename: 'ai_meme.png',
                             channel_id: message.channel,
-                            thread_ts: 'thread_ts' in message ? message.thread_ts : undefined,
+                            thread_ts: threadTs,
                             initial_comment: `_AI-generated meme for "${templateSearch}":_`
                         });
                     } else {
-                        await say(`Failed to generate an AI fallback for "${templateSearch}". ${aiResult.filteredReason || ''}`);
+                        await say({ text: `Failed to generate an AI fallback for "${templateSearch}". ${aiResult.filteredReason || ''}`, thread_ts: threadTs });
                     }
                 } else {
-                    await say(`Could not find meme template: "${templateSearch}"`);
+                    await say({ text: `Could not find meme template: "${templateSearch}"`, thread_ts: threadTs });
                 }
                 return;
             }
 
             if (texts.length === 0) {
-                await say(`Please provide text for the meme. Example: \`!meme "${template.name}" Top Text | Bottom Text\``);
+                await say({ text: `Please provide text for the meme. Example: \`!meme "${template.name}" Top Text | Bottom Text\``, thread_ts: threadTs });
                 return;
             }
 
             const imageUrl = await MemeGenerator.captionImage(template.id, texts);
             if (!imageUrl) {
-                await say('Failed to generate meme. Please check your inputs and try again.');
+                await say({ text: 'Failed to generate meme. Please check your inputs and try again.', thread_ts: threadTs });
                 return;
             }
 
             // Post the image
             await say({
+                thread_ts: threadTs,
                 blocks: [
                     {
                         type: 'image',
@@ -149,7 +153,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
 
         } catch (error) {
             console.error('Error in !meme:', error);
-            await say('An error occurred while generating your meme.');
+            await say({ text: 'An error occurred while generating your meme.', thread_ts: threadTs });
         }
     });
 };
