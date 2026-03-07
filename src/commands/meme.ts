@@ -19,8 +19,9 @@
 import { App } from '@slack/bolt';
 import { MemeGenerator } from '../features/meme-generator';
 import { config } from '../config';
+import { AIHandler } from '../features/ai-handler';
 
-export const registerMemeCommands = (app: App) => {
+export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
     // !meme list
     app.message(/^!meme\s+list$/i, async ({ message, say }) => {
         if (!('user' in message)) return;
@@ -73,11 +74,6 @@ export const registerMemeCommands = (app: App) => {
             return;
         }
 
-        if (!config.imgflip.username || !config.imgflip.password) {
-            await say('Imgflip credentials are not configured. Please set IMGFLIP_USERNAME and IMGFLIP_PASSWORD.');
-            return;
-        }
-
         try {
             // Parse template and texts
             // Regex to handle quoted template names: ^(?:"([^"]+)"|(\S+))\s*(.*)$
@@ -89,24 +85,45 @@ export const registerMemeCommands = (app: App) => {
 
             const templateSearch = match[1] || match[2];
             const textContent = match[3] || '';
+            const texts = textContent.split('|').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
 
             const template = await MemeGenerator.findMeme(templateSearch);
             if (!template) {
-                await say(`Could not find meme template: "${templateSearch}"`);
+                if (aiHandler) {
+                    await say(`Template "${templateSearch}" not found. Generating an AI version instead...`);
+                    
+                    let descriptivePrompt = `A meme based on '${templateSearch}'`;
+                    if (texts.length >= 2) {
+                        descriptivePrompt += ` with text: '${texts[0]}' at the top and '${texts[1]}' at the bottom.`;
+                    } else if (texts.length === 1) {
+                        descriptivePrompt += ` with text: '${texts[0]}'`;
+                    } else {
+                        await say(`Please provide text for the meme. Example: \`!meme "${templateSearch}" Top Text | Bottom Text\``);
+                        return;
+                    }
+
+                    const aiResult = await aiHandler.generateImage(descriptivePrompt);
+                    if (aiResult.imageBase64) {
+                        const buffer = Buffer.from(aiResult.imageBase64, 'base64');
+                        await client.files.uploadV2({
+                            file: buffer,
+                            filename: 'ai_meme.png',
+                            channel_id: message.channel,
+                            thread_ts: message.thread_ts,
+                            initial_comment: `_AI-generated meme for "${templateSearch}":_`
+                        });
+                    } else {
+                        await say(`Failed to generate an AI fallback for "${templateSearch}". ${aiResult.filteredReason || ''}`);
+                    }
+                } else {
+                    await say(`Could not find meme template: "${templateSearch}"`);
+                }
                 return;
             }
 
-            // Split by | and trim
-            const texts = textContent.split('|').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
-            
             if (texts.length === 0) {
                 await say(`Please provide text for the meme. Example: \`!meme "${template.name}" Top Text | Bottom Text\``);
                 return;
-            }
-
-            // Inform user if box count mismatch (optional but helpful)
-            if (texts.length < template.box_count) {
-                // We'll proceed anyway, Imgflip handles missing boxes
             }
 
             const imageUrl = await MemeGenerator.captionImage(template.id, texts);
@@ -116,7 +133,6 @@ export const registerMemeCommands = (app: App) => {
             }
 
             // Post the image
-            // We can use blocks for a better look or just say it
             await say({
                 blocks: [
                     {

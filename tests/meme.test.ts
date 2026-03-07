@@ -2,10 +2,12 @@
  * GemBot: Meme Generator Test Suite
  */
 
+import { MemeGenerator } from '../src/features/meme-generator';
+
 function assert(condition: boolean, message: string) {
     if (!condition) {
         console.error(`FAILED: ${message}`);
-        process.exit(1);
+        throw new Error(`Test failed: ${message}`);
     }
     console.log(`PASSED: ${message}`);
 }
@@ -21,7 +23,7 @@ function parseMemeInput(fullInput: string) {
     return { templateSearch, texts };
 }
 
-function runTests() {
+async function runTests() {
     console.log("Running Meme Command Parsing Tests...");
 
     // 1. Simple template with two texts
@@ -60,7 +62,38 @@ function runTests() {
     assert(test5?.texts[1] === "My Cat", "Test 5: Should trim second segment");
     assert(test5?.texts[2] === "The Salad", "Test 5: Should trim third segment");
 
-    console.log("\nAll Meme parsing tests passed!");
+    console.log("\nRunning memegen.link URL Formatting Tests...");
+
+    const url1 = await MemeGenerator.captionImage("ack", ["hello world", "test? & % # / \\ \" - _"]);
+    const expected1 = "https://api.memegen.link/images/ack/hello_world/test~q_~a_~p_~h_~s_~b_''_--___.png";
+    assert(url1 === expected1, `URL 1 should match expected format.\nGot:      ${url1}\nExpected: ${expected1}`);
+
+    const url2 = await MemeGenerator.captionImage("doge", ["wow"]);
+    const expected2 = "https://api.memegen.link/images/doge/wow.png";
+    assert(url2 === expected2, "URL 2 should handle single text correctly");
+
+    console.log("\nRunning AI Fallback Prompt Tests...");
+    
+    function generateAiPrompt(templateSearch: string, texts: string[]) {
+        let descriptivePrompt = `A meme based on '${templateSearch}'`;
+        if (texts.length >= 2) {
+            descriptivePrompt += ` with text: '${texts[0]}' at the top and '${texts[1]}' at the bottom.`;
+        } else if (texts.length === 1) {
+            descriptivePrompt += ` with text: '${texts[0]}'`;
+        }
+        return descriptivePrompt;
+    }
+
+    const aiPrompt1 = generateAiPrompt("nonexistent_meme", ["Top Text", "Bottom Text"]);
+    assert(aiPrompt1 === "A meme based on 'nonexistent_meme' with text: 'Top Text' at the top and 'Bottom Text' at the bottom.", "AI Prompt 1 should match");
+
+    const aiPrompt2 = generateAiPrompt("another_fake", ["Only Text"]);
+    assert(aiPrompt2 === "A meme based on 'another_fake' with text: 'Only Text'", "AI Prompt 2 should match");
+
+    console.log("\nAll Meme tests passed!");
 }
 
-runTests();
+runTests().catch(err => {
+    console.error(err);
+    process.exit(1);
+});

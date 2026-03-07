@@ -164,7 +164,7 @@ export class AIHandler {
     private initializeListeners(): void {
         registerWatchlistCommands(this.app);
         registerFinancialCommands(this.app);
-        registerMemeCommands(this.app);
+        registerMemeCommands(this.app, this);
         registerEventListeners(this.app, this);
         registerCommandListeners(this.app, this);
     }

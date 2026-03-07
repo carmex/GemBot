@@ -24,10 +24,9 @@ export interface MemeTemplate {
     id: string;
     name: string;
     url: string;
-    width: number;
-    height: number;
+    width?: number;
+    height?: number;
     box_count: number;
-    captions: number;
 }
 
 export class MemeGenerator {
@@ -36,7 +35,7 @@ export class MemeGenerator {
     private static readonly CACHE_DURATION = 1000 * 60 * 60 * 24; // 24 hours
 
     /**
-     * Fetches popular meme templates from Imgflip.
+     * Fetches popular meme templates from memegen.link.
      */
     static async getPopularMemes(): Promise<MemeTemplate[]> {
         const now = Date.now();
@@ -45,19 +44,24 @@ export class MemeGenerator {
         }
 
         try {
-            const response = await fetch('https://api.imgflip.com/get_memes');
-            const data = await response.json() as any;
+            const response = await fetch('https://api.memegen.link/templates');
+            const data = await response.json() as any[];
 
-            if (data.success) {
-                this.memeCache = data.data.memes;
+            if (Array.isArray(data)) {
+                this.memeCache = data.map((t: any) => ({
+                    id: t.id,
+                    name: t.name,
+                    url: t.blank,
+                    box_count: t.lines
+                }));
                 this.lastCacheUpdate = now;
                 return this.memeCache;
             } else {
-                console.error('Error fetching memes from Imgflip:', data.error_message);
+                console.error('Error fetching memes from memegen.link: Unexpected response format');
                 return [];
             }
         } catch (error) {
-            console.error('Failed to fetch memes from Imgflip:', error);
+            console.error('Failed to fetch memes from memegen.link:', error);
             return [];
         }
     }
@@ -83,43 +87,33 @@ export class MemeGenerator {
     }
 
     /**
-     * Captions a meme image.
+     * Sanitizes text for memegen.link URLs.
+     */
+    private static sanitize(text: string): string {
+        if (!text) return '_';
+        return text
+            .replace(/_/g, '__')
+            .replace(/-/g, '--')
+            .replace(/\s+/g, '_')
+            .replace(/\?/g, '~q')
+            .replace(/&/g, '~a')
+            .replace(/%/g, '~p')
+            .replace(/#/g, '~h')
+            .replace(/\//g, '~s')
+            .replace(/\\/g, '~b')
+            .replace(/"/g, "''");
+    }
+
+    /**
+     * Captions a meme image using memegen.link.
      */
     static async captionImage(templateId: string, texts: string[]): Promise<string | undefined> {
-        if (!config.imgflip.username || !config.imgflip.password) {
-            throw new Error('Imgflip credentials (IMGFLIP_USERNAME/IMGFLIP_PASSWORD) not configured.');
-        }
-
-        const params = new URLSearchParams();
-        params.append('template_id', templateId);
-        params.append('username', config.imgflip.username);
-        params.append('password', config.imgflip.password);
-
-        // Map texts to boxes[i][text]
-        texts.forEach((text, index) => {
-            params.append(`boxes[${index}][text]`, text);
-        });
-
-        try {
-            const response = await fetch('https://api.imgflip.com/caption_image', {
-                method: 'POST',
-                body: params,
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-            });
-
-            const data = await response.json() as any;
-
-            if (data.success) {
-                return data.data.url;
-            } else {
-                console.error('Error captioning image via Imgflip:', data.error_message);
-                return undefined;
-            }
-        } catch (error) {
-            console.error('Failed to caption image via Imgflip:', error);
-            return undefined;
-        }
+        // Construct memegen.link URL: https://api.memegen.link/images/<id>/<line1>/<line2>.png
+        const sanitizedTexts = texts.map(t => this.sanitize(t));
+        
+        // memegen.link expects a path-based URL. If fewer lines are provided than needed, 
+        // they can be omitted, but the API is flexible.
+        const path = [templateId, ...sanitizedTexts].join('/');
+        return `https://api.memegen.link/images/${path}.png`;
     }
 }
