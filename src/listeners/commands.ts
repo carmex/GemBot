@@ -767,6 +767,9 @@ ${formatInventory(character.inventory)}
 *AI & Fun*
 • \`@<BotName> <prompt>\`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
 • \`!image <prompt>\`: Generates an image based on your text prompt using Imagen 4.
+• \`!meme list\`: Lists popular meme templates.
+• \`!meme search <term>\`: Search for meme templates.
+• \`!meme <template> <text1> [| text2 ...]\`: Generates a meme. Multi-panel memes are supported using \`|\`.
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!ud <term>\`: Get definitions from Urban Dictionary.
 • \`!gembot on\`: Enable Gembot in the current thread.

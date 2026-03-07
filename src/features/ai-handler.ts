@@ -26,6 +26,7 @@ import { ImageGenerator } from './image-generator';
 import { Summarizer } from './summarizer';
 import { registerWatchlistCommands } from '../commands/watchlist';
 import { registerFinancialCommands } from '../commands/financial';
+import { registerMemeCommands } from '../commands/meme';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import { getJson as getSerpJson } from 'serpapi';
@@ -163,6 +164,7 @@ export class AIHandler {
     private initializeListeners(): void {
         registerWatchlistCommands(this.app);
         registerFinancialCommands(this.app);
+        registerMemeCommands(this.app);
         registerEventListeners(this.app, this);
         registerCommandListeners(this.app, this);
     }
