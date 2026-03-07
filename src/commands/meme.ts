@@ -65,7 +65,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
 
     // !meme <id_or_name> <text1> [| <text2> | <text3> ... ]
     app.message(/^!meme\s+(.+)$/i, async ({ message, context, say, client }) => {
-        if (!('user' in message) || !context.matches?.[1]) return;
+        if (!('user' in message) || !context.matches?.[1] || (message as any).subtype) return;
 
         const fullInput = context.matches[1].trim();
         
@@ -109,7 +109,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
                             file: buffer,
                             filename: 'ai_meme.png',
                             channel_id: message.channel,
-                            thread_ts: message.thread_ts,
+                            thread_ts: 'thread_ts' in message ? message.thread_ts : undefined,
                             initial_comment: `_AI-generated meme for "${templateSearch}":_`
                         });
                     } else {
