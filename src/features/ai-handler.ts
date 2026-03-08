@@ -344,6 +344,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                 let iteration = 0;
                 const maxIterations = 10;
                 let totalTokens = 0;
+                const executedSideEffectTools = new Map<string, Part>();
 
                 // Initial call
                 try {
@@ -384,12 +385,44 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
 
                     // Execute calls sequentially
                     const toolResponses: Part[] = [];
+                    const seenInThisIteration = new Set<string>();
+
                     for (const tc of toolCalls) {
+                        const callKey = `${tc.name}:${JSON.stringify(tc.arguments)}`;
+                        if (seenInThisIteration.has(callKey)) {
+                            console.log(`[Tool] Skipping duplicate tool call in iteration: ${tc.name}`);
+                            continue;
+                        }
+                        seenInThisIteration.add(callKey);
+
                         try {
+                            const sideEffectTools = ['generate_image', 'update_rpg_context'];
+                            // Also include MCP tools that post feedback as side-effectful
+                            const isSideEffectful = sideEffectTools.includes(tc.name) ||
+                                tc.name.startsWith('python_interpreter') ||
+                                tc.name.startsWith('dice__') ||
+                                tc.name.startsWith('open_meteo__') ||
+                                (tc.name.includes('__') && !tc.name.startsWith('python_interpreter') && !tc.name.startsWith('dice__') && !tc.name.startsWith('open_meteo__'));
+
+                            if (isSideEffectful && executedSideEffectTools.has(callKey)) {
+                                console.log(`[Tool] Using cached result for side-effectful tool: ${tc.name}`);
+                                const cachedResp = JSON.parse(JSON.stringify(executedSideEffectTools.get(callKey)));
+                                if (tc.id && cachedResp.functionResponse) {
+                                    cachedResp.functionResponse.id = tc.id;
+                                }
+                                toolResponses.push(cachedResp);
+                                continue;
+                            }
+
                             const resp = await this.executeTool(tc.name, tc.arguments, channelId, threadTs);
                             if (tc.id && resp.functionResponse) {
                                 (resp.functionResponse as any).id = tc.id;
                             }
+
+                            if (isSideEffectful) {
+                                executedSideEffectTools.set(callKey, resp);
+                            }
+
                             toolResponses.push(resp);
                         } catch (e) {
                             console.error(`[Tool] Error executing ${tc.name}: `, e);
@@ -521,8 +554,15 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     const toolResponses: Part[] = [];
                     for (const call of detectedCalls) {
                         try {
+                            const callKey = `${call.name}:${JSON.stringify(call.args)}`;
+                            if (executedSideEffectTools.has(callKey)) {
+                                console.log(`[Tool - Fallback] Skipping already executed tool: ${call.name}`);
+                                continue;
+                            }
+
                             const resp = await this.executeTool(call.name, call.args, channelId, threadTs);
                             toolResponses.push(resp);
+                            executedSideEffectTools.set(callKey, resp);
                         } catch (e) {
                             console.error(`[Tool - Fallback] Tool execution failed: `, e);
                             toolResponses.push({ functionResponse: { name: call.name, response: { error: (e as Error).message } } });
