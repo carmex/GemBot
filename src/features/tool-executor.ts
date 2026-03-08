@@ -220,7 +220,7 @@ export async function executeTool(
                     imageGenerator.generateAndUploadImage(prompt, channelId).catch((error: unknown) => {
                         console.error(`[Tool] Image generation/upload failed in background:`, error);
                     });
-                    return { functionResponse: { name: name, response: { success: true, message: 'The image is being generated and will be posted shortly.' } } };
+                    return { functionResponse: { name: name, response: { success: true, message: 'The image generation request has been submitted and is being processed. It will be posted to the channel as soon as it is ready.' } } };
                 } catch (error) {
                     console.error(`[Tool] Error generating image for prompt "${prompt}":`, error);
                     return { functionResponse: { name: name, response: { success: false, error: (error as Error).message } } };

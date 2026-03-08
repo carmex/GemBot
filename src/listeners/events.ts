@@ -31,16 +31,16 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
     const featureRequest = new FeatureRequestHandler(app);
 
     app.event('app_mention', async ({ event, context, client, say }) => {
+        if (processedEvents.has(event.ts)) {
+            return;
+        }
+        processedEvents.add(event.ts);
 
         const health = providerHealth();
         if (!health.ok) {
             await say({ text: `AI features are not available: ${health.reason}` });
             return;
         }
-        if (processedEvents.has(event.ts)) {
-            return;
-        }
-        processedEvents.add(event.ts);
         const prompt = event.text.replace(/<@[^>]+>\s*/, '').trim();
         if (!context.botUserId || !event.user) {
             return;
@@ -199,6 +199,10 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             }
         },
         async ({ message, context, say, client }) => {
+            if (processedEvents.has(message.ts)) {
+                return;
+            }
+            processedEvents.add(message.ts);
 
             const health = providerHealth();
             if (health && !health.ok) {
@@ -254,8 +258,6 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                             ];
                             saveThreadHistory(message.ts, message.channel, finalHistory);
                         }
-                        // Mark as processed so app_mention doesn't trigger if it arrives late
-                        processedEvents.add(message.ts);
                     } catch (error) {
                         console.error('Error in fallback mention handler:', error);
                     }
@@ -263,8 +265,6 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 }
             }
 
-            // Regular non-mention message processing follows...
-            processedEvents.add(message.ts);
 
             // Check if this is a feature request workflow
             if ('thread_ts' in message && (message as any).thread_ts) {
