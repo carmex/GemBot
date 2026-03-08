@@ -88,18 +88,19 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
 
             const templateSearch = match[1] || match[2];
             const textContent = match[3] || '';
-            const texts = textContent.split('|').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
+            const texts = textContent.split('|').map((t: string) => t.trim());
 
             const template = await MemeGenerator.findMeme(templateSearch);
             if (!template) {
                 if (aiHandler) {
                     await say({ text: `Template "${templateSearch}" not found. Generating an AI version instead...`, thread_ts: threadTs });
                     
+                    const nonBlankTexts = texts.filter((t: string) => t.length > 0);
                     let descriptivePrompt = `A meme based on '${templateSearch}'`;
-                    if (texts.length >= 2) {
-                        descriptivePrompt += ` with text: '${texts[0]}' at the top and '${texts[1]}' at the bottom.`;
-                    } else if (texts.length === 1) {
-                        descriptivePrompt += ` with text: '${texts[0]}'`;
+                    if (nonBlankTexts.length >= 2) {
+                        descriptivePrompt += ` with text: '${nonBlankTexts[0]}' at the top and '${nonBlankTexts[1]}' at the bottom.`;
+                    } else if (nonBlankTexts.length === 1) {
+                        descriptivePrompt += ` with text: '${nonBlankTexts[0]}'`;
                     } else {
                         await say({ text: `Please provide text for the meme. Example: \`!meme "${templateSearch}" Top Text | Bottom Text\``, thread_ts: threadTs });
                         return;
@@ -124,7 +125,7 @@ export const registerMemeCommands = (app: App, aiHandler?: AIHandler) => {
                 return;
             }
 
-            if (texts.length === 0) {
+            if (texts.every((t: string) => t.length === 0)) {
                 await say({ text: `Please provide text for the meme. Example: \`!meme "${template.name}" Top Text | Bottom Text\``, thread_ts: threadTs });
                 return;
             }
