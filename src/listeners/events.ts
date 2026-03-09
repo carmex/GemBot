@@ -202,6 +202,15 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             if (processedEvents.has(message.ts)) {
                 return;
             }
+
+            // Guard: If it's a mention in a thread we don't know about yet,
+            // let the app_mention handler deal with it.
+            if (context.botUserId && 'thread_ts' in message && (message as any).thread_ts &&
+                'text' in message && message.text?.includes(`<@${context.botUserId}>`) &&
+                !getThreadHistory((message as any).thread_ts)) {
+                return;
+            }
+
             processedEvents.add(message.ts);
 
             const health = providerHealth();
