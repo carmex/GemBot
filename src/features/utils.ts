@@ -113,9 +113,10 @@ export async function sendMorningGreeting(app: App, channelId: string) {
         console.error('Failed to send morning greeting:', error);
     }
 } 
-export function buildUserPrompt(promptData: {channel: string, user: string, text?: string}): string {
+export function buildUserPrompt(promptData: {channel: string, user: string, userName?: string, text?: string}): string {
     // Keep internal scaffolding for logging only; provider history will strip it later.
-    return `channel_id: ${promptData.channel} | user_id: ${promptData.user} | message: ${promptData.text || ''}`;
+    const userName = promptData.userName || promptData.user;
+    return `channel_id: ${promptData.channel} | user_name: ${userName} | user_id: ${promptData.user} | message: ${promptData.text || ''}`;
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

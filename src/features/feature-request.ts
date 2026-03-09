@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as cron from 'node-cron';
 import { initFeatureRequestDb, createFeatureRequest, updateFeatureRequest, getOpenFeatureRequests } from './feature-request-db';
+import { userManager } from './user-manager';
 
 enum FeatureRequestState {
     SELECTING_REPO = 'SELECTING_REPO',
@@ -156,15 +157,7 @@ export class FeatureRequestHandler {
         const repos = Object.keys(this.repoMap);
 
         // Fetch user info for DB
-        let username = 'unknown';
-        try {
-            const userRes = await client.users.info({ user: event.user });
-            if (userRes.ok && userRes.user) {
-                username = userRes.user.name || userRes.user.real_name || 'unknown';
-            }
-        } catch (e) {
-            console.error('Error fetching user info:', e);
-        }
+        const username = await userManager.getUserName(event.user, client);
 
         this.sessions.set(threadTs, {
             state: FeatureRequestState.SELECTING_REPO,

@@ -32,6 +32,7 @@ import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlac
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, getCryptoCandles, generateChart } from '../features/stock-charts';
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
+import { userManager } from '../features/user-manager';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     app.message(/^!fetch_url\s+(.+)/i, async ({message, context, say}) => {
@@ -98,9 +99,11 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                         2
                     )}\n\n`;
 
+                    const userName = await userManager.getUserName(message.user, client);
                     const userPrompt = `${rpgPrompt}${buildUserPrompt({
                         channel: message.channel,
                         user: message.user,
+                        userName,
                         text: rollResultText,
                     })}`;
 
