@@ -175,7 +175,7 @@ export class AIHandler {
         if (!text) return '';
         let out = text;
         // Remove our internal history scaffolding if present
-        out = out.replace(/^(?:channel_id:\s*\S+\s*|\s*user_id:\s*\S+\s*|\s*message:\s*)/im, '');
+        out = out.replace(/^(?:channel_id:\s*\S+\s*|user_name:\s*[^|]+\s*|user_id:\s*\S+\s*|message:\s*)/im, '');
         // Remove tool tags and fenced json blocks or inline tool json blobs
         out = out
             .replace(/\s*\[(?:END_)?TOOL_(?:REQUEST|RESULT)\]\s*/gi, '')
@@ -317,6 +317,12 @@ export class AIHandler {
                     const raw = (h.parts?.[0]?.text) || '';
                     if (h.role === 'user') {
                         // Strictly strip scaffolding; keep only human message
+                        const match = raw.match(/^channel_id:\s*\S+\s*\|\s*user_name:\s*([^|]+)\s*\|\s*user_id:\s*\S+\s*\|\s*message:\s*(.*)/is);
+                        if (match) {
+                            const userName = match[1].trim();
+                            const message = match[2].trim();
+                            return { role: 'user', content: `${userName}: ${message}` };
+                        }
                         const cleaned = raw.replace(/^channel_id:\s*\S+\s*\|\s*user_id:\s*\S+\s*\|\s*message:\s*/, '').trim();
                         return { role: 'user', content: cleaned };
                     } else {
@@ -335,8 +341,30 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     }
                 });
 
-                // Prepare history for provider
-                const historyForProvider = history;
+                // Prepare history for provider - Clean history for Gemini as well
+                const historyForProvider = (history || []).map((h: any) => {
+                    if (h.role === 'user') {
+                        const newParts = h.parts.map((p: any) => {
+                            if (p.text) {
+                                const match = p.text.match(/^channel_id:\s*\S+\s*\|\s*user_name:\s*([^|]+)\s*\|\s*user_id:\s*\S+\s*\|\s*message:\s*(.*)/is);
+                                if (match) {
+                                    const userName = match[1].trim();
+                                    const message = match[2].trim();
+                                    return { ...p, text: `${userName}: ${message}` };
+                                }
+                                // Fallback for old scaffolding
+                                const oldMatch = p.text.match(/^channel_id:\s*\S+\s*\|\s*user_id:\s*\S+\s*\|\s*message:\s*(.*)/is);
+                                if (oldMatch) {
+                                    return { ...p, text: oldMatch[1].trim() };
+                                }
+                            }
+                            return p;
+                        });
+                        return { ...h, parts: newParts };
+                    }
+                    return h;
+                });
+
                 const finalPrompt = systemPrompt;
 
                 let currentResponse: any;

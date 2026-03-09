@@ -23,6 +23,7 @@ import { config } from '../config';
 import { ImageGenerator } from './image-generator';
 import { Summarizer } from './summarizer';
 import { buildUserPrompt } from './utils';
+import { userManager } from './user-manager';
 
 export class HistoryBuilder {
     constructor(
@@ -93,7 +94,11 @@ export class HistoryBuilder {
                 let parts: Part[] = [];
 
                 if (reply.text) {
-                    const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, text: reply.text });
+                    let userName = undefined;
+                    if (role === 'user' && reply.user) {
+                        userName = await userManager.getUserName(reply.user, client);
+                    }
+                    const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, userName, text: reply.text });
                     parts.push({ text });
                 }
 
@@ -167,7 +172,11 @@ export class HistoryBuilder {
                 let parts: Part[] = [];
 
                 if (reply.text) {
-                    const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, text: reply.text });
+                    let userName = undefined;
+                    if (role === 'user' && reply.user) {
+                        userName = await userManager.getUserName(reply.user, client);
+                    }
+                    const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, userName, text: reply.text });
                     parts.push({ text });
                 }
 
@@ -234,7 +243,8 @@ export class HistoryBuilder {
             }
             for (const reply of relevantMessages.reverse()) {
                 if (reply.user) {
-                    history.push({ role: 'user', parts: [{ text: buildUserPrompt({ channel, user: reply.user, text: reply.text }) }] });
+                    const userName = await userManager.getUserName(reply.user, client);
+                    history.push({ role: 'user', parts: [{ text: buildUserPrompt({ channel, user: reply.user, userName, text: reply.text }) }] });
                 }
             }
         } catch (error) {

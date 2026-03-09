@@ -24,6 +24,7 @@ import { getThreadHistory, saveThreadHistory } from '../features/thread-db';
 import { Content, Part } from '@google/generative-ai';
 import { buildUserPrompt } from '../features/utils';
 import { FeatureRequestHandler } from '../features/feature-request';
+import { userManager } from '../features/user-manager';
 
 const processedEvents = new Set<string>();
 
@@ -52,11 +53,14 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             return;
         }
 
+        // Resolve user name
+        const userName = await userManager.getUserName(event.user, client);
+
         // Mentioned in a thread
         if (event.thread_ts) {
             try {
                 const history = await aiHandler.historyBuilder!.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
-                const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, text: prompt });
+                const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
 
                 let question: string | Part[] = userPrompt;
                 if ((event as any).files && (event as any).files.length > 0) {
@@ -107,7 +111,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
         if (rpgMode === 'player') {
             try {
                 const history = await aiHandler.historyBuilder!.buildHistorySinceLastBotMessage(event.channel, client, context.botUserId);
-                const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, text: prompt });
+                const userName = await userManager.getUserName(event.user, client);
+                const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
 
                 let question: string | Part[] = userPrompt;
                 if ((event as any).files && (event as any).files.length > 0) {
@@ -139,7 +144,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
         } else {
             // Standard mention to start a new thread
             try {
-                const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, text: prompt });
+                const userName = await userManager.getUserName(event.user, client);
+                const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
 
                 let question: string | Part[] = userPrompt;
                 if ((event as any).files && (event as any).files.length > 0) {
@@ -256,7 +262,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         return;
                     }
                     try {
-                        const userPrompt = buildUserPrompt({ channel: message.channel, user: message.user, text: prompt });
+                        const userName = await userManager.getUserName(message.user, client);
+                        const userPrompt = buildUserPrompt({ channel: message.channel, user: message.user, userName, text: prompt });
                         const response = await aiHandler.processAIQuestion(userPrompt, [], message.channel, message.ts);
 
                         if (response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>')) {
@@ -314,9 +321,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         context.botUserId!
                     );
 
+                    const userName = await userManager.getUserName(message.user, client);
                     const userPrompt = buildUserPrompt({
                         channel: message.channel,
                         user: message.user,
+                        userName,
                         text: message.text,
                     });
 
@@ -427,9 +436,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         client,
                         context.botUserId!
                     );
+                    const userName = await userManager.getUserName(message.user, client);
                     const userPrompt = buildUserPrompt({
                         channel: message.channel,
                         user: message.user,
+                        userName,
                         text: message.text,
                     });
 
@@ -492,9 +503,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         null,
                         2
                     )}\n\n`;
+                    const userName = await userManager.getUserName(message.user, client);
                     const userPrompt = `${rpgPrompt}${buildUserPrompt({
                         channel: message.channel,
                         user: message.user,
+                        userName,
                         text: message.text,
                     })}`;
 
