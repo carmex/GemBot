@@ -242,6 +242,10 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 // If it's already in a thread, the thread logic below will handle it.
                 // If it's NOT in a thread, we handle it as a new mention here.
                 if (!('thread_ts' in message) || !(message as any).thread_ts) {
+                    if (prompt.toLowerCase().startsWith('feature request')) {
+                        await featureRequest.handleRequest(message, client, say);
+                        return;
+                    }
                     try {
                         const userPrompt = buildUserPrompt({ channel: message.channel, user: message.user, text: prompt });
                         const response = await aiHandler.processAIQuestion(userPrompt, [], message.channel, message.ts);
