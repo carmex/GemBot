@@ -26,7 +26,9 @@ function runTests() {
         assert(!!defaults.dice, "Default 'dice' server should be present");
         assert(!!defaults["open-meteo"], "Default 'open-meteo' server should be present");
         assert(!!defaults["wikimedia-image-search"], "Default 'wikimedia-image-search' server should be present");
-        assert(Object.keys(defaults).length === 3, `Should have 3 default servers, got ${Object.keys(defaults).length}`);
+        assert(!!defaults.youtube, "Default 'youtube' server should be present");
+        assert(!!defaults["youtube-transcript"], "Default 'youtube-transcript' server should be present");
+        assert(Object.keys(defaults).length === 5, `Should have 5 default servers, got ${Object.keys(defaults).length}`);
 
         // 2. Flat merge
         const flatEnv = JSON.stringify({
@@ -36,7 +38,7 @@ function runTests() {
         assert(!!flatMerged.dice, "Flat: Default 'dice' server should be present");
         assert(!!flatMerged["open-meteo"], "Flat: Default 'open-meteo' server should be present");
         assert(!!flatMerged["custom-server"], "Flat: Custom server should be present");
-        assert(Object.keys(flatMerged).length === 4, "Flat: Should have 4 servers total");
+        assert(Object.keys(flatMerged).length === 6, "Flat: Should have 6 servers total");
 
         // 3. Claude-style wrapper
         const claudeEnv = JSON.stringify({
