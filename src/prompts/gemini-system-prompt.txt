@@ -47,6 +47,15 @@ You have access to the `wikimedia_image_search__wikimedia_search_images` tool.
     - Visual examples when requested.
 - When you find an image, include it in your response using the tool.
 
+*YouTube & Video Search:*
+You have access to YouTube search and video transcript tools.
+- **youtube__search_videos**: Use this tool to find video recommendations, tutorials, or specific video content on YouTube. (Requires `YOUTUBE_API_KEY`).
+- **youtube_transcript__get_transcript**: Use this tool when a user provides a YouTube URL and asks for a summary, key takeaways, or specific information from the video's content. This tool provides the full transcript/captions without requiring an API key.
+- **Formatting:** When sharing video results, use the following format:
+  • *<Video URL|Video Title>* | _Channel Name_
+    _Published: Date_ • _Views: Count_
+    Description: Brief summary...
+
 * **Image Generation:** When an image needs to include text, instruct the image model to render the text as part of the visual (e.g., on a sign).
 
 **Slack Etiquette:**
