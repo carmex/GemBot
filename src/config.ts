@@ -105,7 +105,7 @@ export function getMcpServers(envJson?: string) {
         },
         youtube: {
             command: "npx",
-            args: ["-y", "zubeid-youtube-mcp-server"],
+            args: ["-y", "tubepilot"],
             env: {
                 YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY || ''
             }
