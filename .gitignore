@@ -117,4 +117,5 @@ gemini-config/
 gh-config/
 
 # PM2 related files
-.pm2/
+.pm2/venv/
+venv/

@@ -103,16 +103,12 @@ export function getMcpServers(envJson?: string) {
             command: "npx",
             args: ["-y", "wikimedia-image-search-mcp"]
         },
-        youtube: {
+        "youtube": {
             command: "npx",
-            args: ["-y", "tubepilot"],
+            args: ["-y", "@yilin-jing/youtube-mcp-server"],
             env: {
                 YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY || ''
             }
-        },
-        "youtube-transcript": {
-            command: "npx",
-            args: ["-y", "@kimtaeyoon83/mcp-server-youtube-transcript"]
         }
     };
 
