@@ -27,6 +27,7 @@ import { Summarizer } from './summarizer';
 import { registerWatchlistCommands } from '../commands/watchlist';
 import { registerFinancialCommands } from '../commands/financial';
 import { registerMemeCommands } from '../commands/meme';
+import { registerGisCommands } from '../commands/gis';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import { getJson as getSerpJson } from 'serpapi';
@@ -165,6 +166,7 @@ export class AIHandler {
         registerWatchlistCommands(this.app);
         registerFinancialCommands(this.app);
         registerMemeCommands(this.app, this);
+        registerGisCommands(this.app);
         registerEventListeners(this.app, this);
         registerCommandListeners(this.app, this);
     }
