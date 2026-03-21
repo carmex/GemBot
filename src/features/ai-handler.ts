@@ -715,6 +715,13 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     console.error('[MCP] Failed to post feedback message:', err);
                 }
             }
+            
+            // Intercept YouTube MCP calls and route to native implementation
+            if (name.startsWith('youtube__')) {
+                const nativeName = name.replace('__', '_');
+                console.log(`[YouTube] Routing ${name} to native implementation as ${nativeName}`);
+                return executeTool(this.app, this.imageGenerator, nativeName, args, channelId, threadTs);
+            }
 
             const toolResult = await this.mcpClientManager.executeTool(name, args);
 

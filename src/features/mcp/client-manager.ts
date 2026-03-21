@@ -175,51 +175,6 @@ export class McpClientManager {
                         }
                     });
                 }
-                // Fallback for YouTube if discovery fails
-                if (name === 'youtube') {
-                    console.log(`[MCP] Adding manual fallback tools for YouTube...`);
-                    this.tools.push({
-                        name: `youtube__videos_getVideo`,
-                        originalName: 'videos_getVideo',
-                        serverName: 'youtube',
-                        description: "Retrieve detailed information about a specific YouTube video including title, description, and statistics.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                videoId: { type: "string", description: "The YouTube video ID (e.g., dQw4w9WgXcQ)" }
-                            },
-                            required: ["videoId"]
-                        }
-                    });
-                    this.tools.push({
-                        name: `youtube__videos_searchVideos`,
-                        originalName: 'videos_searchVideos',
-                        serverName: 'youtube',
-                        description: "Search for videos on YouTube using keywords, with support for filtering and count limits.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                query: { type: "string", description: "The search query keywords" },
-                                maxResults: { type: "number", description: "Maximum number of results to return (default: 10, max: 50)" }
-                            },
-                            required: ["query"]
-                        }
-                    });
-                    this.tools.push({
-                        name: `youtube__transcripts_getTranscript`,
-                        originalName: 'transcripts_getTranscript',
-                        serverName: 'youtube',
-                        description: "Retrieve the transcript/captions for a specific YouTube video. Supports multiple languages.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                videoId: { type: "string", description: "The YouTube video ID" },
-                                language: { type: "string", description: "ISO 639-1 language code (default: 'en')" }
-                            },
-                            required: ["videoId"]
-                        }
-                    });
-                }
             } finally {
                 // DISCONNECT IMMEDIATELY
                 if (client) {
