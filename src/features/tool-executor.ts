@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
 import { Part } from '@google/generative-ai';
+import { YouTubeService } from './tools/youtube';
 
 export async function googleCustomSearch(query: string): Promise<string> {
     const apiKey = config.search.googleApiKey;
@@ -228,6 +229,29 @@ export async function executeTool(
             } else {
                 return { functionResponse: { name: name, response: { error: 'Prompt was missing from the arguments.' } } };
             }
+        } else if (name === 'youtube_videos_searchVideos') {
+            const query = args.query as string;
+            const maxResults = args.maxResults as number || 5;
+            if (!query) return { functionResponse: { name, response: { error: 'Query is required.' } } };
+
+            const results = await YouTubeService.searchVideos(query, maxResults);
+            return { functionResponse: { name, response: { results } } };
+
+        } else if (name === 'youtube_videos_getVideo') {
+            const videoId = args.videoId as string;
+            if (!videoId) return { functionResponse: { name, response: { error: 'Video ID is required.' } } };
+
+            const result = await YouTubeService.getVideo(videoId);
+            return { functionResponse: { name, response: { result } } };
+
+        } else if (name === 'youtube_transcripts_getTranscript') {
+            const videoId = args.videoId as string;
+            const language = args.language as string || 'en';
+            if (!videoId) return { functionResponse: { name, response: { error: 'Video ID is required.' } } };
+
+            const transcript = await YouTubeService.getTranscript(videoId, language);
+            return { functionResponse: { name, response: { transcript } } };
+
         }
         return { functionResponse: { name: 'unknown_tool', response: { error: 'Tool not found' } } };
     } catch (error) {

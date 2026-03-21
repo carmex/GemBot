@@ -90,7 +90,7 @@ export interface Config {
     };
 }
 
-export function getMcpServers(envJson?: string) {
+export function getMcpServers(envJson?: string): Record<string, any> {
     const defaultServers = {
         dice: {
             url: "https://mcp.dice.com/mcp"
@@ -102,13 +102,6 @@ export function getMcpServers(envJson?: string) {
         "wikimedia-image-search": {
             command: "npx",
             args: ["-y", "wikimedia-image-search-mcp"]
-        },
-        "youtube": {
-            command: "npx",
-            args: ["-y", "@yilin-jing/youtube-mcp-server"],
-            env: {
-                YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || ''
-            }
         }
     };
 
