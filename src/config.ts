@@ -107,7 +107,7 @@ export function getMcpServers(envJson?: string) {
             command: "npx",
             args: ["-y", "@yilin-jing/youtube-mcp-server"],
             env: {
-                YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY || ''
+                YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || ''
             }
         }
     };
