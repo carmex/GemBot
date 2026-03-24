@@ -19,7 +19,7 @@ export class ImageGenerator {
         const token = await this.auth.getAccessToken();
         const projectId = config.vertex.projectId;
         const location = config.vertex.location;
-        const modelId = 'imagen-4.0-generate-preview-06-06'; // imagegeneration@006';
+        const modelId = 'imagen-4.0-generate-001'; // imagegeneration@006';
         const apiEndpoint = `${location}-aiplatform.googleapis.com`;
         const url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predict`;
         const requestBody = {
