@@ -94,7 +94,10 @@ export async function sendMorningGreeting(app: App, channelId: string) {
         if (config.finnhubApiKey) {
             const articles = await fetchStockNews();
             if (articles && articles.length > 0) {
-                const formattedArticles = articles
+                const filteredArticles = articles.filter(
+                    (article: {source: string}) => article.source.toLowerCase() !== 'google news'
+                );
+                const formattedArticles = filteredArticles
                     .slice(0, 5)
                     .map((article: {url: string}) => `<${article.url}|.>`)
                     .join(' ');
