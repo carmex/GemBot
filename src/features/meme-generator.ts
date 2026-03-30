@@ -67,6 +67,19 @@ export class MemeGenerator {
     }
 
     /**
+     * Searches for multiple meme templates by name or ID.
+     */
+    static async searchMemes(query: string): Promise<MemeTemplate[]> {
+        const memes = await this.getPopularMemes();
+        const searchLower = query.toLowerCase();
+
+        return memes.filter(m => 
+            m.id.toLowerCase().includes(searchLower) || 
+            m.name.toLowerCase().includes(searchLower)
+        ).slice(0, 10);
+    }
+
+    /**
      * Searches for a meme template by name or ID.
      */
     static async findMeme(search: string): Promise<MemeTemplate | undefined> {
