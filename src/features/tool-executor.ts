@@ -8,6 +8,7 @@ import * as path from 'path';
 import { config } from '../config';
 import { Part } from '@google/generative-ai';
 import { YouTubeService } from './tools/youtube';
+import { MemeGenerator } from './meme-generator';
 
 export async function googleCustomSearch(query: string): Promise<string> {
     const apiKey = config.search.googleApiKey;
@@ -252,6 +253,39 @@ export async function executeTool(
             const transcript = await YouTubeService.getTranscript(videoId, language);
             return { functionResponse: { name, response: { transcript } } };
 
+        } else if (name === 'search_memes') {
+            const query = args.query as string;
+            if (!query) return { functionResponse: { name, response: { error: 'Query is required.' } } };
+            const results = await MemeGenerator.searchMemes(query);
+            return { functionResponse: { name, response: { results: results.map(r => ({ id: r.id, name: r.name, box_count: r.box_count })) } } };
+        } else if (name === 'generate_meme') {
+            const template_id = args.template_id as string;
+            const texts = args.texts as string[];
+            if (!template_id || !texts) return { functionResponse: { name, response: { error: 'template_id and texts are required.' } } };
+
+            const meme = await MemeGenerator.findMeme(template_id);
+            if (!meme) return { functionResponse: { name, response: { error: `Meme template "${template_id}" not found.` } } };
+
+            const imageUrl = await MemeGenerator.captionImage(meme.id, texts);
+            if (!imageUrl) return { functionResponse: { name, response: { error: 'Failed to generate meme image URL.' } } };
+
+            await app.client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                blocks: [
+                    {
+                        type: 'image',
+                        image_url: imageUrl,
+                        alt_text: meme.name,
+                        title: {
+                            type: 'plain_text',
+                            text: meme.name
+                        }
+                    }
+                ]
+            });
+
+            return { functionResponse: { name, response: { success: true, image_url: imageUrl } } };
         }
         return { functionResponse: { name: 'unknown_tool', response: { error: 'Tool not found' } } };
     } catch (error) {

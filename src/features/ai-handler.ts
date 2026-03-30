@@ -297,7 +297,42 @@ export class AIHandler {
                     },
                 };
 
-                tools.push(slackTool, webTool, imageTool);
+                const searchMemesTool: LLMTool = {
+                    name: "search_memes",
+                    description: "Search for meme templates by name or keyword. Returns a list of templates with their IDs and box counts (number of text fields required).",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: {
+                                type: "string",
+                                description: "The name or keyword to search for (e.g., 'doge', 'distracted boyfriend').",
+                            },
+                        },
+                        required: ["query"],
+                    },
+                };
+
+                const generateMemeTool: LLMTool = {
+                    name: "generate_meme",
+                    description: "Generate a meme image from a template ID and a list of text captions. The image will be posted directly to the Slack channel.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            template_id: {
+                                type: "string",
+                                description: "The unique ID of the meme template (e.g., 'doge', 'ds'). Use search_memes to find valid IDs.",
+                            },
+                            texts: {
+                                type: "array",
+                                items: { type: "string" },
+                                description: "The text captions for the meme, in order. The number of texts should match the box_count of the template.",
+                            },
+                        },
+                        required: ["template_id", "texts"],
+                    },
+                };
+
+                tools.push(slackTool, webTool, imageTool, searchMemesTool, generateMemeTool);
                 const searchProvider = config.search.provider;
                 if ((searchProvider === 'serpapi' && config.search.serpapiApiKey) || (searchProvider === 'google' && config.search.googleApiKey && config.search.googleCxId)) {
                     tools.push(searchTool);
