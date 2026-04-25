@@ -117,4 +117,23 @@ ${conversationText}`;
 
         return finalResult.text;
     }
+
+    public async summarizeFinalResponse(text: string): Promise<string> {
+        if (!text || text.length < 100) {
+            return ""; // Don't summarize very short responses
+        }
+
+        const prompt = `Please provide a one or two sentence summary of the following text. The summary should be concise and capture the main points.\n\nText to summarize:\n${text}`;
+
+        try {
+            const result = await this.provider.chat(prompt, {
+                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (1-2 sentences)."
+            });
+
+            return result.text || "";
+        } catch (error) {
+            console.error(`[Summarizer] Error generating final response summary:`, error);
+            return "";
+        }
+    }
 }
