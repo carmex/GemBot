@@ -200,6 +200,7 @@ export class AIHandler {
             try {
                 let systemPrompt = this.geminiSystemPrompt;
                 const rpgMode = this.rpgEnabledChannels.get(channelId);
+                let wasWebLookupUsed = false;
 
                 // Include thread summary in system prompt if available
                 if (threadTs) {
@@ -513,6 +514,11 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     const hasFetchUrl = calledNames.includes('fetch_url_content');
                     const hasSearch = calledNames.includes('web_search');
                     const hasSlackProfile = calledNames.includes('slack_user_profile');
+                    const hasYoutube = calledNames.some(name => name.startsWith('youtube__'));
+
+                    if (hasFetchUrl || hasSearch || hasYoutube) {
+                        wasWebLookupUsed = true;
+                    }
 
                     if (!hasFetchUrl && !hasSearch && !hasSlackProfile && (calledGenerateImage || calledUpdateRpg)) {
                         let msg: string[] = [];
@@ -657,6 +663,14 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     .replace(/^\s*Act as Game Master.*$/gim, '')
                     .replace(/^\s*Here's an overview of how to interact with me:.*$/gim, '')
                     .trim();
+
+                // Append summary if web lookup was used
+                if (wasWebLookupUsed && this.summarizer) {
+                    const summary = await this.summarizer.summarizeFinalResponse(cleanFinal);
+                    if (summary) {
+                        cleanFinal += `\n\n*Summary:* ${summary}`;
+                    }
+                }
 
                 // Apply Slack-specific formatting safety net
                 cleanFinal = markdownToSlack(cleanFinal);
