@@ -664,11 +664,11 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     .replace(/^\s*Here's an overview of how to interact with me:.*$/gim, '')
                     .trim();
 
-                // Append summary if web lookup was used
+                // Replace with summary if web lookup was used
                 if (wasWebLookupUsed && this.summarizer) {
                     const summary = await this.summarizer.summarizeFinalResponse(cleanFinal);
                     if (summary) {
-                        cleanFinal += `\n\n*Summary:* ${summary}`;
+                        cleanFinal = summary;
                     }
                 }
 
