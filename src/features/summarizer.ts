@@ -119,15 +119,15 @@ ${conversationText}`;
     }
 
     public async summarizeFinalResponse(text: string): Promise<string> {
-        if (!text || text.length < 100) {
-            return ""; // Don't summarize very short responses
+        if (!text || text.length < 10) {
+            return ""; // Don't summarize extremely short responses
         }
 
-        const prompt = `Please provide exactly one sentence summary of the following text. The summary should be concise, capture the main points, and MUST NOT exceed one sentence.\n\nText to summarize:\n${text}`;
+        const prompt = `Please provide exactly one sentence summary of the following text in English. The summary should be concise, capture the main points, MUST be in English regardless of the input language, and MUST NOT exceed one sentence.\n\nText to summarize:\n${text}`;
 
         try {
             const result = await this.provider.chat(prompt, {
-                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence)."
+                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence) in English."
             });
 
             return result.text || "";
