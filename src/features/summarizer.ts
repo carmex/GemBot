@@ -123,11 +123,11 @@ ${conversationText}`;
             return ""; // Don't summarize very short responses
         }
 
-        const prompt = `Please provide a one or two sentence summary of the following text. The summary should be concise and capture the main points.\n\nText to summarize:\n${text}`;
+        const prompt = `Please provide exactly one sentence summary of the following text. The summary should be concise, capture the main points, and MUST NOT exceed one sentence.\n\nText to summarize:\n${text}`;
 
         try {
             const result = await this.provider.chat(prompt, {
-                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (1-2 sentences)."
+                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence)."
             });
 
             return result.text || "";
