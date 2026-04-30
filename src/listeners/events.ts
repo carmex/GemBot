@@ -80,7 +80,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     }
                 }
 
-                const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts);
+                const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts, event.user);
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                     await client.reactions.add({
                         name: 'dnr',
@@ -132,7 +132,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     }
                 }
 
-                const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts);
+                const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts, event.user);
                 if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                     const responseText = response.text;
                     await say({ text: responseText });
@@ -165,7 +165,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     }
                 }
 
-                const response = await aiHandler.processAIQuestion(question, [], event.channel, event.ts);
+                const response = await aiHandler.processAIQuestion(question, [], event.channel, event.ts, event.user);
 
                 const condition = response.text && response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>');
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
@@ -264,7 +264,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     try {
                         const userName = await userManager.getUserName(message.user, client);
                         const userPrompt = buildUserPrompt({ channel: message.channel, user: message.user, userName, text: prompt });
-                        const response = await aiHandler.processAIQuestion(userPrompt, [], message.channel, message.ts);
+                        const response = await aiHandler.processAIQuestion(userPrompt, [], message.channel, message.ts, message.user);
 
                         if (response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>')) {
                             await say({
@@ -392,7 +392,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         }
                     }
 
-                    const response = await aiHandler.processAIQuestion(question, history, message.channel, threadTs);
+                    const response = await aiHandler.processAIQuestion(question, history, message.channel, threadTs, message.user);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                         console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
                         await client.reactions.add({
@@ -462,7 +462,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         }
                     }
 
-                    const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts);
+                    const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts, message.user);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                         console.log(`[DEBUG] <DO_NOT_RESPOND> received: ${response.text}`);
                         await client.reactions.add({
@@ -529,7 +529,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         }
                     }
 
-                    const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts);
+                    const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts, message.user);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
                         // No action needed
                     } else if (response.text.trim()) {

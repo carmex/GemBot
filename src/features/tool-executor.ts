@@ -9,6 +9,7 @@ import { config } from '../config';
 import { Part } from '@google/generative-ai';
 import { YouTubeService } from './tools/youtube';
 import { MemeGenerator } from './meme-generator';
+import { createReminder } from './reminder-db';
 
 export async function googleCustomSearch(query: string): Promise<string> {
     const apiKey = config.search.googleApiKey;
@@ -45,7 +46,8 @@ export async function executeTool(
     name: string,
     args: any,
     channelId: string,
-    threadTs?: string
+    threadTs?: string,
+    userId?: string
 ): Promise<Part> {
     try {
         if (name === 'slack_user_profile') {
@@ -286,6 +288,38 @@ export async function executeTool(
             });
 
             return { functionResponse: { name, response: { success: true, image_url: imageUrl } } };
+        } else if (name === 'set_reminder') {
+            const { remind_at, message } = args as any;
+            if (!remind_at || !message) {
+                return { functionResponse: { name, response: { error: 'remind_at and message are required.' } } };
+            }
+
+            if (!userId) {
+                return { functionResponse: { name, response: { error: 'User ID is required but not provided in context.' } } };
+            }
+
+            try {
+                createReminder({
+                    user_id: userId,
+                    channel_id: channelId,
+                    thread_ts: threadTs,
+                    message,
+                    remind_at
+                });
+
+                return {
+                    functionResponse: {
+                        name,
+                        response: {
+                            success: true,
+                            message: `Reminder set for ${remind_at}.`
+                        }
+                    }
+                };
+            } catch (error) {
+                console.error('[Tool] Error setting reminder:', error);
+                return { functionResponse: { name, response: { error: (error as Error).message } } };
+            }
         }
         return { functionResponse: { name: 'unknown_tool', response: { error: 'Tool not found' } } };
     } catch (error) {

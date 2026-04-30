@@ -193,12 +193,18 @@ export class AIHandler {
         return out.trim();
     }
 
-    public async processAIQuestion(question: string | Part[], history: Content[], channelId: string, threadTs?: string): Promise<AIResponse> {
+    public async processAIQuestion(question: string | Part[], history: Content[], channelId: string, threadTs?: string, userId?: string): Promise<AIResponse> {
 
         let retries = 3;
         while (retries > 0) {
             try {
                 let systemPrompt = this.geminiSystemPrompt;
+                const currentTime = new Date().toISOString();
+                const dayOfWeek = new Date().toLocaleString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+                const nycTime = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+                
+                systemPrompt = `${systemPrompt}\n\n**Current Time Context:**\n- UTC: ${currentTime}\n- New York (ET): ${nycTime} (${dayOfWeek})\nUse this to calculate relative times (e.g., "in 5 minutes", "tomorrow at 9am"). ALWAYS provide remind_at in ISO 8601 UTC format.`;
+
                 const rpgMode = this.rpgEnabledChannels.get(channelId);
                 let wasWebLookupUsed = false;
 
@@ -333,7 +339,26 @@ export class AIHandler {
                     },
                 };
 
-                tools.push(slackTool, webTool, imageTool, searchMemesTool, generateMemeTool);
+                const reminderTool: LLMTool = {
+                    name: "set_reminder",
+                    description: "Schedules a reminder to be sent to you at a specific time in the future.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            remind_at: {
+                                type: "string",
+                                description: "The ISO 8601 timestamp for the reminder (e.g., 2026-04-30T10:00:00Z).",
+                            },
+                            message: {
+                                type: "string",
+                                description: "The content of the reminder.",
+                            },
+                        },
+                        required: ["remind_at", "message"],
+                    },
+                };
+
+                tools.push(slackTool, webTool, imageTool, searchMemesTool, generateMemeTool, reminderTool);
                 const searchProvider = config.search.provider;
                 if ((searchProvider === 'serpapi' && config.search.serpapiApiKey) || (searchProvider === 'google' && config.search.googleApiKey && config.search.googleCxId)) {
                     tools.push(searchTool);
@@ -462,7 +487,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                         seenInThisIteration.add(callKey);
 
                         try {
-                            const sideEffectTools = ['generate_image', 'update_rpg_context'];
+                            const sideEffectTools = ['generate_image', 'update_rpg_context', 'set_reminder'];
                             // Also include MCP tools that post feedback as side-effectful
                             const isSideEffectful = sideEffectTools.includes(tc.name) ||
                                 tc.name.startsWith('python_interpreter') ||
@@ -480,7 +505,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                                 continue;
                             }
 
-                            const resp = await this.executeTool(tc.name, tc.arguments, channelId, threadTs);
+                            const resp = await this.executeTool(tc.name, tc.arguments, channelId, threadTs, userId);
                             if (tc.id && resp.functionResponse) {
                                 (resp.functionResponse as any).id = tc.id;
                             }
@@ -631,7 +656,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                                 continue;
                             }
 
-                            const resp = await this.executeTool(call.name, call.args, channelId, threadTs);
+                            const resp = await this.executeTool(call.name, call.args, channelId, threadTs, userId);
                             toolResponses.push(resp);
                             executedSideEffectTools.set(callKey, resp);
                         } catch (e) {
@@ -699,7 +724,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
         return { text: "I'm sorry, I encountered a persistent error while generating a response. Please try again later.", confidence: 0 };
     }
 
-    public async executeTool(name: string, args: any, channelId: string, threadTs?: string): Promise<Part> {
+    public async executeTool(name: string, args: any, channelId: string, threadTs?: string, userId?: string): Promise<Part> {
         if (name.includes('__')) {
             // Check if it's the python interpreter
             if (name.startsWith('python_interpreter')) {
@@ -769,7 +794,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
             if (name.startsWith('youtube__')) {
                 const nativeName = name.replace('__', '_');
                 console.log(`[YouTube] Routing ${name} to native implementation as ${nativeName}`);
-                return executeTool(this.app, this.imageGenerator, nativeName, args, channelId, threadTs);
+                return executeTool(this.app, this.imageGenerator, nativeName, args, channelId, threadTs, userId);
             }
 
             const toolResult = await this.mcpClientManager.executeTool(name, args);
@@ -802,7 +827,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
 
             return toolResult;
         }
-        return executeTool(this.app, this.imageGenerator, name, args, channelId, threadTs);
+        return executeTool(this.app, this.imageGenerator, name, args, channelId, threadTs, userId);
     }
 
     public loadDisabledThreads(): void {

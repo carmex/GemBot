@@ -119,3 +119,6 @@ gh-config/
 # PM2 related files
 .pm2/venv/
 venv/
+
+# SQLite Databases
+*.db
