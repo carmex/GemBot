@@ -55,7 +55,7 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
 
         try {
             await say({text: `Fetching content from \`${url}\`... The result will be logged to the console.`});
-            const toolResult = await aiHandler.executeTool('fetch_url_content', {url}, message.channel);
+            const toolResult = await aiHandler.executeTool('fetch_url_content', {url}, message.channel, undefined, message.user);
             console.log('--- !fetch_url TOOL RESULT ---');
             console.log(JSON.stringify(toolResult, null, 2));
             console.log('------------------------------');
@@ -107,7 +107,7 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                         text: rollResultText,
                     })}`;
 
-                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel, undefined);
+                    const response = await aiHandler.processAIQuestion(userPrompt, history, message.channel, undefined, message.user);
 
                     if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
                         const responseText = response.text;

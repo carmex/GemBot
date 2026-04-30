@@ -22,6 +22,8 @@ import { AIHandler } from './features/ai-handler';
 import { startApiServer } from './api';
 import * as cron from 'node-cron';
 import { sendMorningGreeting } from "./features/utils";
+import { initReminderDb } from './features/reminder-db';
+import { startReminderWorker } from './features/reminder-worker';
 
 
 // Initialize the receiver
@@ -173,6 +175,8 @@ app.error(async (error) => {
 (async () => {
     try {
         await app.start();
+        initReminderDb();
+        startReminderWorker(app);
         await startApiServer(app);
         console.log(`⚡️ Bolt app is running!`);
         console.log(`Environment: ${config.environment}`);
