@@ -129,16 +129,19 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
         await say('Usage: `!chart TICKER [RANGE] [-c COMPARE_TICKER]`\nExample: `!chart AAPL 1y -c MSFT`\nAvailable ranges: 1w, 1m, 3m, 6m, 1y, 5y, my (default is 1y)');
     });
     
-    app.message(/^!chart ([A-Z.]+)(?:\s+(1w|1m|3m|6m|1y|5y|my))?(?:\s+-c\s+([A-Z.]+))?/i, async ({message, context, say, client}) => {        if (!('user' in message) || !message.user || !context.matches?.[1]) return;
+    app.message(/^!chart ([A-Z.]+)(?:\s+(1w|1m|3m|6m|1y|5y|my))?(?:\s+-c\s+([A-Z.\s]+))?/i, async ({message, context, say, client}) => {
+        if (!('user' in message) || !message.user || !context.matches?.[1]) return;
         if (!config.alphaVantageApiKey) {
             await say({text: 'The charting feature is not configured. An API key for Alpha Vantage is required.'});
             return;
         }
         const ticker = context.matches[1].toUpperCase();
         const range = context.matches[2] || '1y';
-        const compareTicker = context.matches[3]?.toUpperCase();
+        const compareTickersStr = context.matches[3];
+        const compareTickers = compareTickersStr ? compareTickersStr.trim().toUpperCase().split(/\s+/) : [];
+
         try {
-            const comparisonText = compareTicker ? ` and *${compareTicker}*` : '';
+            const comparisonText = compareTickers.length > 0 ? ` and *${compareTickers.join(', ')}*` : '';
             const workingMessage = await say({text: `📈 Generating chart for *${ticker}*${comparisonText} over the last *${range}*...`});
             
             const candles = await getStockCandles(ticker, range);
@@ -148,23 +151,25 @@ export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
                 return;
             }
 
-            let compareCandles = undefined;
-            if (compareTicker) {
+            const comparisons: any[] = [];
+            for (const compTicker of compareTickers) {
                 await sleep(1000); // Proactive delay to avoid Alpha Vantage rate limit
-                compareCandles = await getStockCandles(compareTicker, range);
-                if (compareCandles.length === 0) {
-                    await say({text: `⚠️ No data found for comparison ticker *${compareTicker}*. Showing chart for *${ticker}* only.`});
+                const compCandles = await getStockCandles(compTicker, range);
+                if (compCandles.length > 0) {
+                    comparisons.push({ ticker: compTicker, data: compCandles });
+                } else {
+                    await say({text: `⚠️ No data found for comparison ticker *${compTicker}*. Skipping it.`});
                 }
             }
 
-            const chartImage = await generateChart(ticker, candles, compareTicker, compareCandles);
+            const chartImage = await generateChart(ticker, candles, comparisons);
             
-            const uploadTitle = compareTicker && compareCandles && compareCandles.length > 0
-                ? `${ticker} vs ${compareTicker} Chart (${range})`
+            const uploadTitle = comparisons.length > 0
+                ? `${ticker} vs ${comparisons.map(c => c.ticker).join(', ')} Chart (${range})`
                 : `${ticker} Chart (${range})`;
             
-            const initialComment = compareTicker && compareCandles && compareCandles.length > 0
-                ? `Here's the comparison chart for <@${message.user}> for *${ticker}* vs *${compareTicker}* (${range}):`
+            const initialComment = comparisons.length > 0
+                ? `Here's the comparison chart for <@${message.user}> for *${ticker}* vs *${comparisons.map(c => c.ticker).join(', ')}* (${range}):`
                 : `Here's the chart for <@${message.user}> for *${ticker}* (${range}):`;
 
             await client.files.uploadV2({
