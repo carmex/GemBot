@@ -89,31 +89,43 @@ export async function getCryptoCandles(ticker: string, range: string = '1y'): Pr
     return candles;
 }
 
+export interface ComparisonData {
+    ticker: string;
+    data: Candle[];
+}
+
 export async function generateChart(
     mainTicker: string,
     mainData: Candle[],
-    compareTicker?: string,
-    compareData?: Candle[]
+    comparisons: ComparisonData[] = []
 ): Promise<Buffer> {
     const width = 800;
     const height = 400;
     const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height, backgroundColour: '#ffffff' });
 
-    const isComparison = !!(compareTicker && compareData && compareData.length > 0);
+    const isComparison = comparisons.length > 0;
     const mainBaseline = mainData.length > 0 ? mainData[0].c : 0;
-    const compareBaseline = (isComparison && compareData && compareData.length > 0) ? compareData[0].c : 0;
 
-    const lastPrice = mainData[mainData.length - 1].c;
-    const firstPrice = mainData[0].c;
+    const lastPrice = mainData.length > 0 ? mainData[mainData.length - 1].c : 0;
+    const firstPrice = mainData.length > 0 ? mainData[0].c : 0;
     const isUp = lastPrice >= firstPrice;
     const mainColor = isUp ? 'rgb(75, 192, 192)' : 'rgb(255, 99, 132)';
-    const compareColor = 'rgb(54, 162, 235)'; // Blue
+
+    const comparisonColors = [
+        'rgb(54, 162, 235)',   // Blue
+        'rgb(255, 159, 64)',   // Orange
+        'rgb(153, 102, 255)',  // Purple
+        'rgb(255, 205, 86)',   // Yellow
+        'rgb(201, 203, 207)',  // Grey
+        'rgb(0, 163, 0)',      // Green
+        'rgb(163, 0, 0)',      // Red
+    ];
 
     // Date alignment
     const allTimestamps = new Set<number>();
     mainData.forEach(d => allTimestamps.add(d.t));
-    if (isComparison && compareData) {
-        compareData.forEach(d => allTimestamps.add(d.t));
+    for (const comp of comparisons) {
+        comp.data.forEach(d => allTimestamps.add(d.t));
     }
     const sortedTimestamps = Array.from(allTimestamps).sort((a, b) => a - b);
     const labels = sortedTimestamps.map(t => new Date(t).toLocaleDateString());
@@ -138,19 +150,23 @@ export async function generateChart(
         }
     ];
 
-    if (isComparison && compareData && compareData.length > 0) {
+    for (let i = 0; i < comparisons.length; i++) {
+        const comp = comparisons[i];
+        const color = comparisonColors[i % comparisonColors.length];
+        const baseline = comp.data.length > 0 ? comp.data[0].c : 0;
+
         datasets.push({
-            label: `${compareTicker} % Change`,
+            label: `${comp.ticker} % Change`,
             data: sortedTimestamps.map(t => {
-                const candle = compareData.find(d => d.t === t);
+                const candle = comp.data.find(d => d.t === t);
                 if (!candle) return null;
-                if (compareBaseline !== 0) {
-                    return ((candle.c - compareBaseline) / compareBaseline) * 100;
+                if (baseline !== 0) {
+                    return ((candle.c - baseline) / baseline) * 100;
                 }
                 return candle.c;
             }),
-            borderColor: compareColor,
-            backgroundColor: compareColor + '33',
+            borderColor: color,
+            backgroundColor: color + '33',
             fill: false,
             pointRadius: 0,
             tension: 0.4,
