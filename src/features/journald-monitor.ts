@@ -80,75 +80,89 @@ export function startJournaldMonitor(app: App) {
         terminal: false
     });
 
+    let messageBuffer = '';
+    let lastStreamId = '';
+
     rl.on('line', async (line) => {
-        console.log(`Debug: Raw line from journalctl: ${line.slice(0, 100)}...`);
         try {
             const entry: JournalEntry = JSON.parse(line);
             
+            // Check if this is a fragment of a larger message
+            const currentStreamId = entry._STREAM_ID || '';
+            const isFragment = entry._LINE_BREAK === 'pipe' || entry._LINE_BREAK === 'truncate' || entry.hasOwnProperty('_LINE_BREAK');
+
             let rawMessage = entry.MESSAGE;
-            
-            // Handle binary/large message arrays (common for entries with large blobs)
             if (Array.isArray(rawMessage)) {
-                console.log(`Debug: MESSAGE is a binary array of length ${rawMessage.length}`);
                 rawMessage = Buffer.from(rawMessage).toString('utf-8');
             }
 
-            if (!rawMessage) {
-                // If MESSAGE is null or missing, we can't do anything
-                return;
-            }
+            if (!rawMessage) return;
 
-            // Attempt to parse MESSAGE as JSON
-            let messageObj: any;
-            try {
-                messageObj = JSON.parse(rawMessage);
-            } catch (e) {
-                // Not a JSON message, ignore
-                return;
-            }
-
-            const log = messageObj as TierListLog;
-            console.log(`Debug: Received log event: ${log.event}, tool: ${log.tool}`);
-
-            if (log.event === 'tool_call' && log.tool === 'generate_tier_list') {
-                console.log(`Debug: Found tier list event! Checking image data...`);
-                
-                if (!log.imageData) {
-                    console.log(`Debug: No imageData field found in log.`);
-                    return;
+            // Reassembly logic
+            if (currentStreamId && currentStreamId === lastStreamId) {
+                messageBuffer += rawMessage;
+            } else {
+                // If we have a buffered message, try to process it before starting a new one
+                if (messageBuffer) {
+                    await processReassembledMessage(messageBuffer, channel, app);
                 }
-
-                const hasStart = log.imageData.includes(BASE64_START);
-                const hasEnd = log.imageData.includes(BASE64_END);
-                console.log(`Debug: imageData has start: ${hasStart}, has end: ${hasEnd}`);
-
-                if (hasStart && hasEnd) {
-                    console.log(`Processing tier list image: ${log.title}`);
-
-                    const startIndex = log.imageData.indexOf(BASE64_START) + BASE64_START.length;
-                    const endIndex = log.imageData.indexOf(BASE64_END);
-                    const base64Data = log.imageData.substring(startIndex, endIndex);
-
-                    const buffer = Buffer.from(base64Data, 'base64');
-
-                    try {
-                        await app.client.files.uploadV2({
-                            channel_id: channel,
-                            file: buffer,
-                            filename: `tier-list-${Date.now()}.png`,
-                            initial_comment: `🎨 *Generated Tier List: ${log.title}*\n📦 Items: ${log.itemCount} | 📊 Tiers: ${log.tierCount}`,
-                        });
-                        console.log(`Successfully uploaded tier list image to Slack.`);
-                    } catch (error) {
-                        console.error('Error uploading tier list image to Slack:', error);
-                    }
-                }
+                messageBuffer = rawMessage;
+                lastStreamId = currentStreamId;
             }
+
+            // If this entry doesn't have a line break indicator, it's the end of a message
+            if (!isFragment) {
+                await processReassembledMessage(messageBuffer, channel, app);
+                messageBuffer = '';
+                lastStreamId = '';
+            }
+
         } catch (error) {
-            console.error('Error parsing journal entry:', error);
+            // Ignore parse errors on raw lines
         }
     });
+}
 
+async function processReassembledMessage(rawMessage: string, channel: string, app: any) {
+    try {
+        // Attempt to parse as JSON
+        const messageObj = JSON.parse(rawMessage);
+        const log = messageObj as TierListLog;
+
+        if (log.event === 'tool_call' && log.tool === 'generate_tier_list') {
+            console.log(`Debug: Reassembled tier list event (length: ${rawMessage.length})`);
+            
+            if (!log.imageData) return;
+
+            const hasStart = log.imageData.includes(BASE64_START);
+            const hasEnd = log.imageData.includes(BASE64_END);
+
+            if (hasStart && hasEnd) {
+                console.log(`Processing reassembled tier list image: ${log.title}`);
+
+                const startIndex = log.imageData.indexOf(BASE64_START) + BASE64_START.length;
+                const endIndex = log.imageData.indexOf(BASE64_END);
+                const base64Data = log.imageData.substring(startIndex, endIndex);
+
+                const buffer = Buffer.from(base64Data, 'base64');
+
+                try {
+                    await app.client.files.uploadV2({
+                        channel_id: channel,
+                        file: buffer,
+                        filename: `tier-list-${Date.now()}.png`,
+                        initial_comment: `🎨 *Centralized Tier List Feed*\n📌 *Title:* ${log.title}\n📦 Items: ${log.itemCount} | 📊 Tiers: ${log.tierCount}`,
+                    });
+                    console.log(`Successfully uploaded centralized tier list image.`);
+                } catch (error) {
+                    console.error('Error uploading reassembled image to Slack:', error);
+                }
+            }
+        }
+    } catch (e) {
+        // Not a valid JSON or not our log, ignore
+    }
+}
     journalctl.stderr.on('data', (data: any) => {
         console.error(`journalctl stderr: ${data}`);
     });
