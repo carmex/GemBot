@@ -78,16 +78,24 @@ export function startJournaldMonitor(app: App) {
         console.log(`Debug: Raw line from journalctl: ${line.slice(0, 100)}...`);
         try {
             const entry: JournalEntry = JSON.parse(line);
-            console.log(`Debug: Parsed entry keys: ${Object.keys(entry).join(', ')}`);
-            if (!entry.MESSAGE) {
-                console.log(`Debug: Entry is missing MESSAGE field. Unit: ${entry._SYSTEMD_UNIT || 'unknown'}`);
+            
+            let rawMessage = entry.MESSAGE;
+            
+            // Handle binary/large message arrays (common for entries with large blobs)
+            if (Array.isArray(rawMessage)) {
+                console.log(`Debug: MESSAGE is a binary array of length ${rawMessage.length}`);
+                rawMessage = Buffer.from(rawMessage).toString('utf-8');
+            }
+
+            if (!rawMessage) {
+                // If MESSAGE is null or missing, we can't do anything
                 return;
             }
 
             // Attempt to parse MESSAGE as JSON
             let messageObj: any;
             try {
-                messageObj = JSON.parse(entry.MESSAGE);
+                messageObj = JSON.parse(rawMessage);
             } catch (e) {
                 // Not a JSON message, ignore
                 return;
