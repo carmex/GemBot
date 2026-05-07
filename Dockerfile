@@ -45,10 +45,10 @@ RUN npm run build
 # Expose the API port
 EXPOSE 3000
 
-# Create a non-root user with UID 1001 and join systemd-journal group (GID 101)
-RUN groupmod -g 101 systemd-journal && \
-    groupadd -g 1001 slackbot && \
-    useradd -u 1001 -g slackbot -G systemd-journal -m slackbot && \
+# Create a non-root user with UID 1001 and join the host's journal group (GID 101)
+RUN groupadd -g 1001 slackbot && \
+    if ! getent group 101; then groupadd -g 101 host-journal; fi && \
+    useradd -u 1001 -g slackbot -G $(getent group 101 | cut -d: -f1) -m slackbot && \
     chown -R slackbot:slackbot /app
 
 # Switch to the non-root user
