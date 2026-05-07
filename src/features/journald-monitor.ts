@@ -75,6 +75,7 @@ export function startJournaldMonitor(app: App) {
     });
 
     rl.on('line', async (line) => {
+        console.log(`Debug: Raw line from journalctl: ${line.slice(0, 100)}...`);
         try {
             const entry: JournalEntry = JSON.parse(line);
             if (!entry.MESSAGE) return;
