@@ -122,7 +122,7 @@ export function startJournaldMonitor(app: App) {
         }
     });
 
-    journalctl.stderr.on('data', (data) => {
+    journalctl.stderr.on('data', (data: any) => {
         console.error(`journalctl stderr: ${data}`);
     });
 
