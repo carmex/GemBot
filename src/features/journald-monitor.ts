@@ -121,6 +121,19 @@ export function startJournaldMonitor(app: App) {
             // Ignore parse errors on raw lines
         }
     });
+
+    journalctl.stderr.on('data', (data: any) => {
+        console.error(`journalctl stderr: ${data}`);
+    });
+
+    journalctl.on('exit', (code: number | null) => {
+        if (code === 0) {
+            console.log('journalctl process exited normally.');
+        } else {
+            console.warn(`journalctl process exited with code ${code}. Restarting in 10 seconds...`);
+            setTimeout(() => startJournaldMonitor(app), 10000);
+        }
+    });
 }
 
 async function processReassembledMessage(rawMessage: string, channel: string, app: any) {
@@ -162,17 +175,4 @@ async function processReassembledMessage(rawMessage: string, channel: string, ap
     } catch (e) {
         // Not a valid JSON or not our log, ignore
     }
-}
-    journalctl.stderr.on('data', (data: any) => {
-        console.error(`journalctl stderr: ${data}`);
-    });
-
-    journalctl.on('exit', (code: number | null) => {
-        if (code === 0) {
-            console.log('journalctl process exited normally.');
-        } else {
-            console.warn(`journalctl process exited with code ${code}. Restarting in 10 seconds...`);
-            setTimeout(() => startJournaldMonitor(app), 10000);
-        }
-    });
 }
