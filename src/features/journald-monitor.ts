@@ -53,7 +53,13 @@ export function startJournaldMonitor(app: App) {
 
     let journalctl: any;
     try {
-        journalctl = spawn('journalctl', ['-u', service, '-f', '-o', 'json', '-n', '0']);
+        journalctl = spawn('journalctl', [
+            '-u', service,
+            '-f',
+            '--all',
+            '-o', 'json',
+            '-n', '0'
+        ]);
     } catch (spawnError) {
         console.error('Failed to spawn journalctl process:', spawnError);
         return;
