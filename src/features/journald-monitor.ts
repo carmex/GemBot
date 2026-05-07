@@ -78,7 +78,11 @@ export function startJournaldMonitor(app: App) {
         console.log(`Debug: Raw line from journalctl: ${line.slice(0, 100)}...`);
         try {
             const entry: JournalEntry = JSON.parse(line);
-            if (!entry.MESSAGE) return;
+            console.log(`Debug: Parsed entry keys: ${Object.keys(entry).join(', ')}`);
+            if (!entry.MESSAGE) {
+                console.log(`Debug: Entry is missing MESSAGE field. Unit: ${entry._SYSTEMD_UNIT || 'unknown'}`);
+                return;
+            }
 
             // Attempt to parse MESSAGE as JSON
             let messageObj: any;
