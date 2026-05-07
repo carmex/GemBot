@@ -131,14 +131,20 @@ export class McpClientManager {
         this.loadServerConfigs();
         this.tools = [];
 
-        for (const [name, config] of this.serverConfigs.entries()) {
-            if (config.disabled) continue;
+        const discoveryPromises = Array.from(this.serverConfigs.entries()).map(async ([name, config]) => {
+            if (config.disabled) return;
 
             console.log(`[MCP] Discovering tools for ${name}...`);
             let client: Client | null = null;
 
             try {
-                const connection = await this.createClientAndConnect(name, config);
+                // Add a timeout for discovery
+                const connectionPromise = this.createClientAndConnect(name, config);
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error("Discovery timeout (15s)")), 15000)
+                );
+
+                const connection = await Promise.race([connectionPromise, timeoutPromise]) as { client: Client; transport: any };
                 client = connection.client;
 
                 // List Tools
@@ -187,8 +193,9 @@ export class McpClientManager {
                     }
                 }
             }
-        }
+        });
 
+        await Promise.allSettled(discoveryPromises);
         console.log(`[MCP] Initialization complete. Total tools: ${this.tools.length}`);
     }
 
