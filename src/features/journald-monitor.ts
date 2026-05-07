@@ -89,15 +89,25 @@ export function startJournaldMonitor(app: App) {
             }
 
             const log = messageObj as TierListLog;
+            console.log(`Debug: Received log event: ${log.event}, tool: ${log.tool}`);
 
             if (
                 log.event === 'tool_call' &&
-                log.tool === 'generate_tier_list' &&
-                log.imageData &&
-                log.imageData.includes(BASE64_START) &&
-                log.imageData.includes(BASE64_END)
+                log.tool === 'generate_tier_list'
             ) {
-                console.log(`Processing tier list image: ${log.title}`);
+                console.log(`Debug: Found tier list event! Checking image data...`);
+                
+                if (!log.imageData) {
+                    console.log(`Debug: No imageData field found in log.`);
+                    return;
+                }
+
+                const hasStart = log.imageData.includes(BASE64_START);
+                const hasEnd = log.imageData.includes(BASE64_END);
+                console.log(`Debug: imageData has start: ${hasStart}, has end: ${hasEnd}`);
+
+                if (hasStart && hasEnd) {
+                    console.log(`Processing tier list image: ${log.title}`);
 
                 const startIndex = log.imageData.indexOf(BASE64_START) + BASE64_START.length;
                 const endIndex = log.imageData.indexOf(BASE64_END);
