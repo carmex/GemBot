@@ -91,10 +91,7 @@ export function startJournaldMonitor(app: App) {
             const log = messageObj as TierListLog;
             console.log(`Debug: Received log event: ${log.event}, tool: ${log.tool}`);
 
-            if (
-                log.event === 'tool_call' &&
-                log.tool === 'generate_tier_list'
-            ) {
+            if (log.event === 'tool_call' && log.tool === 'generate_tier_list') {
                 console.log(`Debug: Found tier list event! Checking image data...`);
                 
                 if (!log.imageData) {
@@ -109,22 +106,23 @@ export function startJournaldMonitor(app: App) {
                 if (hasStart && hasEnd) {
                     console.log(`Processing tier list image: ${log.title}`);
 
-                const startIndex = log.imageData.indexOf(BASE64_START) + BASE64_START.length;
-                const endIndex = log.imageData.indexOf(BASE64_END);
-                const base64Data = log.imageData.substring(startIndex, endIndex);
+                    const startIndex = log.imageData.indexOf(BASE64_START) + BASE64_START.length;
+                    const endIndex = log.imageData.indexOf(BASE64_END);
+                    const base64Data = log.imageData.substring(startIndex, endIndex);
 
-                const buffer = Buffer.from(base64Data, 'base64');
+                    const buffer = Buffer.from(base64Data, 'base64');
 
-                try {
-                    await app.client.files.uploadV2({
-                        channel_id: channel,
-                        file: buffer,
-                        filename: `tier-list-${Date.now()}.png`,
-                        initial_comment: `🎨 *Generated Tier List: ${log.title}*\n📦 Items: ${log.itemCount} | 📊 Tiers: ${log.tierCount}`,
-                    });
-                    console.log(`Successfully uploaded tier list image to Slack.`);
-                } catch (error) {
-                    console.error('Error uploading tier list image to Slack:', error);
+                    try {
+                        await app.client.files.uploadV2({
+                            channel_id: channel,
+                            file: buffer,
+                            filename: `tier-list-${Date.now()}.png`,
+                            initial_comment: `🎨 *Generated Tier List: ${log.title}*\n📦 Items: ${log.itemCount} | 📊 Tiers: ${log.tierCount}`,
+                        });
+                        console.log(`Successfully uploaded tier list image to Slack.`);
+                    } catch (error) {
+                        console.error('Error uploading tier list image to Slack:', error);
+                    }
                 }
             }
         } catch (error) {
