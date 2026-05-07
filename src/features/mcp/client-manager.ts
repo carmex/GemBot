@@ -61,6 +61,7 @@ export class McpClientManager {
             const normalizedName = key.replace(/-/g, "_");
             this.serverConfigs.set(normalizedName, value);
         }
+        console.log(`[MCP] Loaded ${this.serverConfigs.size} server configs: ${Array.from(this.serverConfigs.keys()).join(', ')}`);
     }
 
     private async createClientAndConnect(name: string, serverConfig: any): Promise<{ client: Client; transport: any }> {
