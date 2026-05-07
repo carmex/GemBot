@@ -24,6 +24,7 @@ import * as cron from 'node-cron';
 import { sendMorningGreeting } from "./features/utils";
 import { initReminderDb } from './features/reminder-db';
 import { startReminderWorker } from './features/reminder-worker';
+import { startJournaldMonitor } from './features/journald-monitor';
 
 
 // Initialize the receiver
@@ -178,6 +179,7 @@ app.error(async (error) => {
         initReminderDb();
         startReminderWorker(app);
         await startApiServer(app);
+        startJournaldMonitor(app);
         console.log(`⚡️ Bolt app is running!`);
         console.log(`Environment: ${config.environment}`);
         console.log('Bot is ready to receive events!');

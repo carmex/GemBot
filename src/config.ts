@@ -64,6 +64,11 @@ export interface Config {
         projectId: string;
         location: string;
     };
+    journaldMonitor: {
+        enabled: boolean;
+        service: string;
+        channel: string;
+    };
     search: {
         provider: 'serpapi' | 'google';
         googleApiKey?: string;
@@ -157,6 +162,11 @@ export const config: Config = {
     vertex: {
         projectId: process.env.VERTEX_PROJECT_ID || process.env.GCLOUD_PROJECT || '',
         location: process.env.VERTEX_LOCATION || process.env.GCLOUD_LOCATION || 'us-central1',
+    },
+    journaldMonitor: {
+        enabled: process.env.JOURNALD_MONITOR_ENABLED === 'true',
+        service: process.env.JOURNALD_MONITOR_SERVICE || 'tier-mcp.service',
+        channel: process.env.JOURNALD_MONITOR_CHANNEL || 'C0B33NT8EMN',
     },
     search: {
         provider: (process.env.SEARCH_PROVIDER as 'serpapi' | 'google') || 'serpapi',
