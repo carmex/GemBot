@@ -41,14 +41,33 @@ const BASE64_END = ':BASE64_END';
 
 export function startJournaldMonitor(app: App) {
     if (!config.journaldMonitor.enabled) {
-        console.log('Journald monitor is disabled.');
+        return;
+    }
+    if (process.platform !== 'linux') {
+        console.warn(`Journald monitor is only supported on Linux. Current platform: ${process.platform}`);
         return;
     }
 
     const { service, channel } = config.journaldMonitor;
     console.log(`Starting journald monitor for service: ${service}, targeting channel: ${channel}`);
 
-    let journalctl = spawn('journalctl', ['-u', service, '-f', '-o', 'json', '-n', '0']);
+    let journalctl: any;
+    try {
+        journalctl = spawn('journalctl', ['-u', service, '-f', '-o', 'json', '-n', '0']);
+    } catch (spawnError) {
+        console.error('Failed to spawn journalctl process:', spawnError);
+        return;
+    }
+
+    // Handle spawn error (e.g. command not found)
+    journalctl.on('error', (err: any) => {
+        if (err.code === 'ENOENT') {
+            console.error('FATAL: journalctl command not found. Please ensure systemd is installed.');
+        } else {
+            console.error('Error spawning journalctl:', err);
+        }
+        // Don't restart immediately if it failed to spawn
+    });
 
     const rl = readline.createInterface({
         input: journalctl.stdout,
@@ -107,8 +126,12 @@ export function startJournaldMonitor(app: App) {
         console.error(`journalctl stderr: ${data}`);
     });
 
-    journalctl.on('exit', (code) => {
-        console.warn(`journalctl process exited with code ${code}. Restarting in 5 seconds...`);
-        setTimeout(() => startJournaldMonitor(app), 5000);
+    journalctl.on('exit', (code: number | null) => {
+        if (code === 0) {
+            console.log('journalctl process exited normally.');
+        } else {
+            console.warn(`journalctl process exited with code ${code}. Restarting in 10 seconds...`);
+            setTimeout(() => startJournaldMonitor(app), 10000);
+        }
     });
 }

@@ -20,3 +20,7 @@ services:
       - ./gh-config:/home/slackbot/.config/gh
       # Python MCP Server
       - /home/carmex/python-mcp-server:/app/python-mcp-server
+      # Journald monitoring
+      - /var/log/journal:/var/log/journal:ro
+      - /run/systemd/journal:/run/systemd/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
