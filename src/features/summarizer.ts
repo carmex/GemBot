@@ -119,18 +119,31 @@ ${conversationText}`;
     }
 
     public async summarizeFinalResponse(text: string): Promise<string> {
-        if (!text || text.length < 100) {
-            return ""; // Don't summarize very short responses
+        if (!text || text.length < 500) {
+            return ""; // Don't summarize responses shorter than 500 characters
         }
 
-        const prompt = `Please provide exactly one sentence summary of the following text. The summary should be concise, capture the main points, and MUST NOT exceed one sentence.\n\nText to summarize:\n${text}`;
+        if (text.includes("*Summary:*") || text.includes("Summary:")) {
+            return ""; // Already contains a summary
+        }
+
+        const prompt = `Please provide exactly one sentence summary of the following text. The summary should be concise, capture the main points, and MUST NOT exceed one sentence.
+
+If the text is already a short summary or is already very concise, please return exactly the token ALREADY_CONCISE.
+
+Text to summarize:
+${text}`;
 
         try {
             const result = await this.provider.chat(prompt, {
                 systemPrompt: "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence)."
             });
 
-            return result.text || "";
+            const summary = result.text || "";
+            if (summary.trim() === "ALREADY_CONCISE") {
+                return "";
+            }
+            return summary;
         } catch (error) {
             console.error(`[Summarizer] Error generating final response summary:`, error);
             return "";

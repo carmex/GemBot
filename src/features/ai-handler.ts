@@ -207,6 +207,7 @@ export class AIHandler {
 
                 const rpgMode = this.rpgEnabledChannels.get(channelId);
                 let wasWebLookupUsed = false;
+                let alreadySummarized = false;
 
                 // Include thread summary in system prompt if available
                 if (threadTs) {
@@ -571,6 +572,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
 
                         const summary = await this.summarizer!.summarizeText(fetchedContent, typeof question === 'string' ? question : 'Image analysis request');
                         finalNarrative += (summary || '').trim() + '\n\n';
+                        alreadySummarized = true;
 
                         // Break out of the loop after handling fetch_url_content to prevent infinite loops
                         console.log(`[Debug] fetch_url_content summarization completed, breaking out of tool loop`);
@@ -628,7 +630,9 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                 }
 
                 // Final response
-                let out = currentResponse?.text || finalNarrative || '';
+                const prefix = currentResponse?.text ? currentResponse.text.trim() : '';
+                const narrative = finalNarrative ? finalNarrative.trim() : '';
+                let out = (prefix && narrative) ? `${prefix}\n\n${narrative}` : (prefix || narrative || '');
 
                 if (currentResponse?.usage) {
                     //trackLlmInteraction(userId, currentResponse.usage);
@@ -690,7 +694,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                     .trim();
 
                 // Append summary if web lookup was used
-                if (wasWebLookupUsed && this.summarizer) {
+                if (wasWebLookupUsed && !alreadySummarized && this.summarizer) {
                     const summary = await this.summarizer.summarizeFinalResponse(cleanFinal);
                     if (summary) {
                         cleanFinal += `\n\n*Summary:* ${summary}`;
