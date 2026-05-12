@@ -81,6 +81,7 @@ export interface Config {
     alphaVantageApiKey: string;
     cryptoCompareApiKey: string;
     finnhubApiKey: string;
+    ambeeApiKey: string;
     serpapiApiKey: string; // for backwards compat
     apiPort: number;
     apiKey: string;
@@ -182,6 +183,7 @@ export const config: Config = {
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY || '',
     cryptoCompareApiKey: process.env.CRYPTOCOMPARE_API_KEY || '',
     finnhubApiKey: process.env.FINNHUB_API_KEY || '',
+    ambeeApiKey: process.env.AMBEE_API_KEY || '',
     serpapiApiKey: process.env.SERPAPI_API_KEY || '',
     mcp: {
         servers: getMcpServers(),

@@ -28,6 +28,7 @@ import { registerWatchlistCommands } from '../commands/watchlist';
 import { registerFinancialCommands } from '../commands/financial';
 import { registerMemeCommands } from '../commands/meme';
 import { registerGisCommands } from '../commands/gis';
+import { registerPollenCommands } from '../commands/pollen';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import { getJson as getSerpJson } from 'serpapi';

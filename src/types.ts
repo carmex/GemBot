@@ -83,4 +83,21 @@ export interface Split {
 
 }
 
+
+
+export interface PollenData {
+
+    timestamp: string;
+
+    grass_pollen: number;
+
+    tree_pollen: number;
+
+    weed_pollen: number;
+
+} 
+
+
+
+
  
