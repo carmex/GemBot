@@ -26,6 +26,7 @@ import { PollenData } from '../types';
  * @returns A promise that resolves to a Buffer containing the PNG image.
  */
 export async function generatePollenChart(zipCode: string, data: PollenData[]): Promise<Buffer> {
+    console.log(`[PollenChart] Generating chart for ${zipCode} with ${data.length} data points`);
     const width = 800;
     const height = 400;
     const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });

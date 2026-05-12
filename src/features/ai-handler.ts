@@ -168,6 +168,7 @@ export class AIHandler {
         registerFinancialCommands(this.app);
         registerMemeCommands(this.app, this);
         registerGisCommands(this.app);
+        registerPollenCommands(this.app);
         registerEventListeners(this.app, this);
         registerCommandListeners(this.app, this);
     }

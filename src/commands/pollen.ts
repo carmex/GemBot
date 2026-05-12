@@ -26,10 +26,12 @@ import { generatePollenChart } from '../features/pollen-charts';
  */
 export function registerPollenCommands(app: App): void {
     // !pollen <zip code>
-    app.message(/^!pollen\s+(\d+)/i, async ({ context, say, client }) => {
+    app.message(/^!pollen\s+(\d+)/i, async ({ message, context, say, client }) => {
         const zipCode = context.matches[1];
-        const channelId = context.channelId || '';
-        const threadTs = context.threadTs;
+        const channelId = (message as any).channel;
+        const threadTs = (message as any).thread_ts || (message as any).ts;
+
+        console.log(`[Pollen] Received command for zip: ${zipCode} in channel: ${channelId}`);
 
         try {
             await say({
@@ -39,6 +41,7 @@ export function registerPollenCommands(app: App): void {
 
             const data = await fetchPollenHistory(zipCode);
             if (!data || data.length === 0) {
+                console.log(`[Pollen] No data found for zip: ${zipCode}`);
                 await say({
                     text: `No pollen data found for zip code ${zipCode}.`,
                     thread_ts: threadTs
@@ -46,8 +49,10 @@ export function registerPollenCommands(app: App): void {
                 return;
             }
 
+            console.log(`[Pollen] Generating chart for zip: ${zipCode} with ${data.length} data points`);
             const chartBuffer = await generatePollenChart(zipCode, data);
 
+            console.log(`[Pollen] Uploading chart for zip: ${zipCode}`);
             await client.files.uploadV2({
                 file: chartBuffer,
                 filename: `pollen_history_${zipCode}.png`,
@@ -56,6 +61,7 @@ export function registerPollenCommands(app: App): void {
                 initial_comment: `Here is the 30-day pollen history for zip code ${zipCode}:`,
                 title: `Pollen History for ${zipCode}`
             });
+            console.log(`[Pollen] Successfully processed zip: ${zipCode}`);
 
         } catch (error) {
             console.error(`Error in !pollen command for zip ${zipCode}:`, error);
