@@ -45,6 +45,9 @@ export async function fetchPollenHistory(zipCode: string, days: number = 30): Pr
 
     const url = `https://api.ambeedata.com/history/pollen/by-place?place=${zipCode}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 
+    const maskedKey = config.ambeeApiKey ? `${config.ambeeApiKey.substring(0, 4)}...${config.ambeeApiKey.substring(config.ambeeApiKey.length - 4)}` : 'MISSING';
+    console.log(`[Ambee API] Fetching pollen history: ${url.replace(config.ambeeApiKey!, maskedKey)}`);
+
     const response = await fetch(url, {
         headers: {
             'x-api-key': config.ambeeApiKey,
@@ -54,14 +57,17 @@ export async function fetchPollenHistory(zipCode: string, days: number = 30): Pr
 
     if (!response.ok) {
         const errorText = await response.text();
-        console.error(`Ambee API error: ${response.status} ${response.statusText}`, errorText);
+        console.error(`[Ambee API] error: ${response.status} ${response.statusText}`, errorText);
         throw new Error(`Failed to fetch pollen data: ${response.statusText}`);
     }
 
     const json = await response.json() as any;
     if (json.message !== 'success' || !json.data) {
+        console.error(`[Ambee API] unexpected response:`, json);
         throw new Error(`Ambee API error: ${json.message || 'Unknown error'}`);
     }
+
+    console.log(`[Ambee API] Successfully fetched ${json.data.length} data points for zip: ${zipCode}`);
 
     return json.data.map((item: any) => ({
         timestamp: item.updatedAt,
