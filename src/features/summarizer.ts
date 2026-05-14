@@ -119,31 +119,40 @@ ${conversationText}`;
     }
 
     public async summarizeFinalResponse(text: string): Promise<string> {
-        if (!text || text.length < 500) {
-            return ""; // Don't summarize responses shorter than 500 characters
+        const THRESHOLD = 1000;
+        if (!text || text.length < THRESHOLD) {
+            return ""; // Don't summarize responses shorter than the threshold
         }
 
-        if (text.includes("*Summary:*") || text.includes("Summary:")) {
+        // Case-insensitive check for existing summaries using various markers
+        const summaryRegex = /(?:\*+)?(?:Summary|TL;DR|Conclusion|In summary|To recap|In short)(?:\*+)?[:\-]/i;
+        if (summaryRegex.test(text)) {
             return ""; // Already contains a summary
         }
 
-        const prompt = `Please provide exactly one sentence summary of the following text. The summary should be concise, capture the main points, and MUST NOT exceed one sentence.
+        const prompt = `Please provide exactly one sentence summary of the following text. 
 
-If the text is already a short summary or is already very concise, please return exactly the token ALREADY_CONCISE.
+The summary should:
+1. Be exactly one sentence long.
+2. Capture the main points concisely.
+3. NOT include any prefix like "Summary:" or "TL;DR:".
+4. NOT be provided if the text already ends with a summary-like statement.
+
+If the text is already a short summary, is very concise, or already ends with a conclusion, please return exactly the token ALREADY_CONCISE.
 
 Text to summarize:
 ${text}`;
 
         try {
             const result = await this.provider.chat(prompt, {
-                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence)."
+                systemPrompt: "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence) without any prefixes."
             });
 
             const summary = result.text || "";
-            if (summary.trim() === "ALREADY_CONCISE") {
+            if (summary.trim().toUpperCase().includes("ALREADY_CONCISE")) {
                 return "";
             }
-            return summary;
+            return summary.trim();
         } catch (error) {
             console.error(`[Summarizer] Error generating final response summary:`, error);
             return "";
