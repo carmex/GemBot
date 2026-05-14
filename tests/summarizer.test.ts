@@ -20,27 +20,28 @@ async function testSummarizeFinalResponse() {
 
     const summarizer = new Summarizer(mockProvider, {}, "dummy.json", "System prompt");
 
-    const longText = "This is a very long text that needs to be summarized. It has multiple sentences and is definitely longer than one hundred characters so that the summarizer doesn't return an empty string immediately. We want to make sure the prompt is correct.";
+    // Use a text longer than the 1000 character threshold
+    const longText = "A".repeat(1001);
     
     await summarizer.summarizeFinalResponse(longText);
 
     // Verify prompt
     const expectedPromptPart = "Please provide exactly one sentence summary";
-    const expectedStrictConstraint = "MUST NOT exceed one sentence";
+    const expectedSentenceConstraint = "Be exactly one sentence long.";
     
     if (!capturedPrompt.includes(expectedPromptPart)) {
         console.error("FAILED: Prompt does not include 'exactly one sentence summary'");
-        console.error(`Actual prompt: ${capturedPrompt}`);
+        console.error(`Actual prompt length: ${capturedPrompt.length}`);
         process.exit(1);
     }
 
-    if (!capturedPrompt.includes(expectedStrictConstraint)) {
-        console.error("FAILED: Prompt does not include strict constraint");
+    if (!capturedPrompt.includes(expectedSentenceConstraint)) {
+        console.error("FAILED: Prompt does not include sentence constraint");
         process.exit(1);
     }
 
     // Verify system prompt
-    const expectedSystemPrompt = "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence).";
+    const expectedSystemPrompt = "You are a helpful assistant that provides extremely brief summaries (exactly 1 sentence) without any prefixes.";
     if (capturedOptions.systemPrompt !== expectedSystemPrompt) {
         console.error("FAILED: System prompt is incorrect");
         console.error(`  Expected: ${expectedSystemPrompt}`);
