@@ -149,3 +149,23 @@ export function markdownToSlack(text: string): string {
 
     return out;
 }
+
+/**
+ * Detects if a question is a binary (Yes/No) question.
+ * @param text The question text, potentially containing Slack scaffolding.
+ */
+export function isBinaryQuestion(text: string): boolean {
+    if (!text) return false;
+
+    // 1. Strip Slack scaffolding: channel_id: ... | message: ...
+    const messageMatch = text.match(/\| message: (.*)$/);
+    const cleanedText = messageMatch ? messageMatch[1].trim() : text.trim();
+
+    if (!cleanedText) return false;
+
+    // 2. Check if the first word matches the list from the system prompt
+    const firstWord = cleanedText.split(/\s+/)[0].replace(/[^a-zA-Z]/g, '').toLowerCase();
+    const binaryIndicators = ['is', 'are', 'do', 'does', 'can', 'will', 'should', 'would', 'has', 'have', 'am'];
+
+    return binaryIndicators.includes(firstWord);
+}
