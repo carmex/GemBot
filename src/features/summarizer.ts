@@ -82,7 +82,7 @@ ${conversationText}`;
         }
     }
 
-    public async summarizeText(text: string, originalQuestion: string): Promise<string> {
+    public async summarizeText(text: string, originalQuestion: string, systemPrompt?: string): Promise<string> {
         // Simple character-based chunking with a safety margin.
         const chunkSize = Math.floor(this.config.openai.maxContextSize * 2.5); // 2.5 chars/token is a safer estimate
         const chunks: string[] = [];
@@ -112,7 +112,7 @@ ${conversationText}`;
         const finalPrompt = `Based on the following summaries of a document, please provide a final answer to the user's original question.\n\nOriginal question: ${originalQuestion}\n\nSummaries:\n---\n${combinedSummaries}\n---`;
 
         const finalResult = await this.provider.chat(finalPrompt, {
-            systemPrompt: "You are a helpful assistant that synthesizes information."
+            systemPrompt: systemPrompt || "You are a helpful assistant that synthesizes information."
         });
 
         return finalResult.text;

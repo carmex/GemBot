@@ -45,7 +45,7 @@ import { config } from '../config';
 import { createProvider } from './llm/provider-factory';
 import { HistoryBuilder } from './history-builder';
 import { executeTool } from './tool-executor';
-import { markdownToSlack } from './utils';
+import { markdownToSlack, isBinaryQuestion } from './utils';
 import { Content, Part } from '@google/generative-ai';
 import { LLMMessage, LLMTool, LLMToolCall } from './llm/providers/types';
 import { registerEventListeners } from '../listeners/events';
@@ -553,9 +553,15 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                         if (calledUpdateRpg) msg.push('game state updated');
                         if (calledGenerateImage) msg.push('image request submitted');
                         const narrative = (currentResponse.text || '').trim();
+
+                        // Check if it's a binary question
+                        const currentQuestionText = typeof question === 'string' ? question : '';
+                        const isBinary = isBinaryQuestion(currentQuestionText);
+                        const binaryPrefix = isBinary ? 'Yes. ' : '';
+
                         const confirmation = narrative
-                            ? `Acknowledged: ${msg.join(' and ')}.\n\n${narrative} `
-                            : `Acknowledged: ${msg.join(' and ')}.`;
+                            ? `${binaryPrefix}Acknowledged: ${msg.join(' and ')}.\n\n${narrative} `
+                            : `${binaryPrefix}Acknowledged: ${msg.join(' and ')}.`;
                         return { text: confirmation, confidence: 1.0, totalTokens: totalTokens };
                     }
 
@@ -572,7 +578,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
                             break;
                         }
 
-                        const summary = await this.summarizer!.summarizeText(fetchedContent, typeof question === 'string' ? question : 'Image analysis request');
+                        const summary = await this.summarizer!.summarizeText(fetchedContent, typeof question === 'string' ? question : 'Image analysis request', finalPrompt);
                         finalNarrative += (summary || '').trim() + '\n\n';
                         alreadySummarized = true;
 
