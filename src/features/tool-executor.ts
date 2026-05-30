@@ -10,6 +10,7 @@ import { Part } from '@google/generative-ai';
 import { YouTubeService } from './tools/youtube';
 import { MemeGenerator } from './meme-generator';
 import { createReminder } from './reminder-db';
+import { isRestrictedLink } from './utils';
 
 export async function googleCustomSearch(query: string): Promise<string> {
     const apiKey = config.search.googleApiKey;
@@ -32,8 +33,15 @@ export async function googleCustomSearch(query: string): Promise<string> {
         summarizedContent += `Did you mean: ${data.spelling.correctedQuery}\n\n`;
     }
 
+    const filteredItems = data.items.filter((item: any) => !isRestrictedLink(item.link));
+    
+    if (filteredItems.length === 0) {
+        summarizedContent += "No search results found after filtering.";
+        return summarizedContent;
+    }
+
     summarizedContent += 'Search Results:\n';
-    data.items.slice(0, 5).forEach((item: any, index: number) => {
+    filteredItems.slice(0, 5).forEach((item: any, index: number) => {
         summarizedContent += `[${index + 1}] ${item.title}\nSnippet: ${item.snippet}\nSource: ${item.link}\n\n`;
     });
 
@@ -118,10 +126,16 @@ export async function executeTool(
                         summarizedContent += `Answer Box: ${serpResponse.answer_box.title}\n${serpResponse.answer_box.snippet}\n\n`;
                     }
                     if (serpResponse.organic_results && serpResponse.organic_results.length > 0) {
-                        summarizedContent += 'Search Results:\n';
-                        serpResponse.organic_results.slice(0, 5).forEach((result: any, index: number) => {
-                            summarizedContent += `[${index + 1}] ${result.title}\nSnippet: ${result.snippet}\nSource: ${result.link}\n\n`;
-                        });
+                        const filteredResults = serpResponse.organic_results.filter((result: any) => !isRestrictedLink(result.link));
+                        
+                        if (filteredResults.length > 0) {
+                            summarizedContent += 'Search Results:\n';
+                            filteredResults.slice(0, 5).forEach((result: any, index: number) => {
+                                summarizedContent += `[${index + 1}] ${result.title}\nSnippet: ${result.snippet}\nSource: ${result.link}\n\n`;
+                            });
+                        } else if (!serpResponse.answer_box) {
+                             return { functionResponse: { name: name, response: { content: 'No search results found after filtering.' } } };
+                        }
                     }
 
                     if (!summarizedContent) {
@@ -135,6 +149,11 @@ export async function executeTool(
             }
         } else if (name === 'fetch_url_content') {
             const url = (args as any).url as string;
+
+            if (isRestrictedLink(url)) {
+                return { functionResponse: { name: name, response: { error: 'Fetching content from Reddit is not supported.' } } };
+            }
+
             await app.client.chat.postMessage({
                 channel: channelId,
                 thread_ts: threadTs,

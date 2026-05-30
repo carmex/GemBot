@@ -149,3 +149,22 @@ export function markdownToSlack(text: string): string {
 
     return out;
 }
+
+/**
+ * Checks if a link is restricted (e.g., Reddit).
+ */
+export function isRestrictedLink(link: string): boolean {
+    try {
+        const url = new URL(link);
+        const hostname = url.hostname.toLowerCase();
+        return (
+            hostname === 'reddit.com' ||
+            hostname.endsWith('.reddit.com') ||
+            hostname === 'redd.it' ||
+            hostname.endsWith('.redd.it')
+        );
+    } catch (e) {
+        // If the URL is malformed, consider it not restricted but log it or handle as needed
+        return false;
+    }
+}
