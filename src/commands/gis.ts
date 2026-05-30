@@ -24,7 +24,7 @@ export type Mod = 'g' | 't' | 'i' | 'a' | 'm' | 'l' | undefined;
 const re = /^gis([gtiaml])?(\d+)? (.+)/i;
 
 const BadDomains =
-    /(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
+    /(reddit\.com)|(redd\.it)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
 
 interface GoogleImageResult {
     link: string;
