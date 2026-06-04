@@ -47,6 +47,15 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             return;
         }
 
+        if (prompt.startsWith('#')) {
+            await client.reactions.add({
+                name: 'dnr',
+                channel: event.channel,
+                timestamp: event.ts
+            });
+            return;
+        }
+
         // Check for feature request trigger
         if (prompt.toLowerCase().startsWith('feature request')) {
             await featureRequest.handleRequest(event, client, say);
@@ -218,6 +227,24 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             }
 
             processedEvents.add(message.ts);
+
+            if ('text' in message && message.text) {
+                const text = message.text.replace(/<@[^>]+>\s*/, '').trim();
+                if (text.startsWith('#')) {
+                    const isThread = 'thread_ts' in message && (message as any).thread_ts;
+                    const isEnabledChannel = aiHandler.enabledChannels.has(message.channel);
+                    const isRpgChannel = aiHandler.rpgEnabledChannels.has(message.channel);
+
+                    if (isThread || isEnabledChannel || isRpgChannel) {
+                        await client.reactions.add({
+                            name: 'dnr',
+                            channel: message.channel,
+                            timestamp: message.ts
+                        });
+                        return;
+                    }
+                }
+            }
 
             const health = providerHealth();
             if (health && !health.ok) {
