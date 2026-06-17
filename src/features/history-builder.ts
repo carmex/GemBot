@@ -22,7 +22,7 @@ import { Content, Part } from '@google/generative-ai';
 import { config } from '../config';
 import { ImageGenerator } from './image-generator';
 import { Summarizer } from './summarizer';
-import { buildUserPrompt } from './utils';
+import { buildUserPrompt, isCommentedMessage } from './utils';
 import { userManager } from './user-manager';
 
 export class HistoryBuilder {
@@ -77,6 +77,10 @@ export class HistoryBuilder {
             for (let i = startIndex; i < recentMessages.length; i++) {
                 const reply = recentMessages[i];
                 if (reply.ts === trigger_ts) continue;
+
+                if (reply.text && isCommentedMessage(reply.text)) {
+                    continue; // Skip this message as it is a comment
+                }
 
                 if (!reply.user && !reply.bot_id) {
                     continue; // Skip messages without user or bot
@@ -155,6 +159,10 @@ export class HistoryBuilder {
             const messages = result.messages.reverse();
             for (const reply of messages) {
                 if (reply.ts === trigger_ts) continue;
+
+                if (reply.text && isCommentedMessage(reply.text)) {
+                    continue; // Skip this message as it is a comment
+                }
 
                 if (!reply.user && !reply.bot_id) {
                     continue; // Skip messages without user or bot
@@ -242,6 +250,10 @@ export class HistoryBuilder {
                 }
             }
             for (const reply of relevantMessages.reverse()) {
+                if (reply.text && isCommentedMessage(reply.text)) {
+                    continue; // Skip this message as it is a comment
+                }
+
                 if (reply.user) {
                     const userName = await userManager.getUserName(reply.user, client);
                     history.push({ role: 'user', parts: [{ text: buildUserPrompt({ channel, user: reply.user, userName, text: reply.text }) }] });

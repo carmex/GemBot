@@ -125,6 +125,15 @@ export function buildUserPrompt(promptData: {channel: string, user: string, user
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Checks if a message starts with '#' (after stripping bot mentions).
+ */
+export function isCommentedMessage(text: string): boolean {
+    if (!text) return false;
+    const stripped = text.replace(/<@[^>]+>\s*/, '').trim();
+    return stripped.startsWith('#');
+}
+
+/**
  * Converts standard Markdown to Slack-compatible mrkdwn.
  */
 export function markdownToSlack(text: string): string {
