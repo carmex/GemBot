@@ -14,7 +14,8 @@
         "pm2:restart": "pm2 restart slack-ai-bot",
         "pm2:delete": "pm2 delete slack-ai-bot",
         "pm2:logs": "pm2 logs slack-ai-bot",
-        "pm2:status": "pm2 status"
+        "pm2:status": "pm2 status",
+        "test:summary": "npx ts-node tests/summarizer.test.ts && npx ts-node tests/summarizer_fix.test.ts && npx ts-node tests/summary-regression.test.ts"
     },
     "keywords": [
         "slack",

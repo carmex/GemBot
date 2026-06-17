@@ -57,6 +57,10 @@ export class Summarizer {
             return "No conversation history to summarize.";
         }
 
+        // Load existing summary if it exists
+        const previousSummaryData = this.loadThreadSummary(threadId);
+        const previousSummary = previousSummaryData?.summary || null;
+
         // Convert messages to text format for summarization
         const conversationText = messages.map(msg => {
             const role = msg.role === 'model' ? 'Assistant' : 'User';
@@ -64,8 +68,12 @@ export class Summarizer {
             return `${role}: ${content}`;
         }).join('\n\n');
 
-        const summaryPrompt = `${this.summarizationSystemPrompt}
-${conversationText}`;
+        let summaryPrompt = this.summarizationSystemPrompt;
+        if (previousSummary) {
+            summaryPrompt += `\n\nPrevious Summary:\n${previousSummary}\n\nNew Conversation History to incorporate into the summary:\n${conversationText}`;
+        } else {
+            summaryPrompt += `\n\nConversation History:\n${conversationText}`;
+        }
 
         try {
             const result = await this.provider.chat(summaryPrompt, {

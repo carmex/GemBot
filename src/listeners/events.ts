@@ -22,7 +22,7 @@ import { config } from '../config';
 import { providerHealth } from '../features/llm/provider-factory';
 import { getThreadHistory, saveThreadHistory } from '../features/thread-db';
 import { Content, Part } from '@google/generative-ai';
-import { buildUserPrompt } from '../features/utils';
+import { buildUserPrompt, isCommentedMessage } from '../features/utils';
 import { FeatureRequestHandler } from '../features/feature-request';
 import { userManager } from '../features/user-manager';
 
@@ -47,12 +47,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             return;
         }
 
-        if (prompt.startsWith('#')) {
-            await client.reactions.add({
-                name: 'dnr',
-                channel: event.channel,
-                timestamp: event.ts
-            });
+        if (isCommentedMessage(event.text)) {
             return;
         }
 
@@ -229,20 +224,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
             processedEvents.add(message.ts);
 
             if ('text' in message && message.text) {
-                const text = message.text.replace(/<@[^>]+>\s*/, '').trim();
-                if (text.startsWith('#')) {
-                    const isThread = 'thread_ts' in message && (message as any).thread_ts;
-                    const isEnabledChannel = aiHandler.enabledChannels.has(message.channel);
-                    const isRpgChannel = aiHandler.rpgEnabledChannels.has(message.channel);
-
-                    if (isThread || isEnabledChannel || isRpgChannel) {
-                        await client.reactions.add({
-                            name: 'dnr',
-                            channel: message.channel,
-                            timestamp: message.ts
-                        });
-                        return;
-                    }
+                if (isCommentedMessage(message.text)) {
+                    return;
                 }
             }
 
