@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
     systemd \
+    ca-certificates \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
