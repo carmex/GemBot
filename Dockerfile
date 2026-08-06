@@ -33,8 +33,7 @@ COPY package.json package-lock.json ./
 # Install dependencies
 RUN npm ci
 
-# Install Gemini CLI
-RUN npm install -g @google/gemini-cli
+# Antigravity CLI (agy) is mounted into /usr/local/bin/agy from host via docker-compose.yml
 
 # Copy source code
 COPY . .
