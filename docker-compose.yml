@@ -20,6 +20,8 @@ services:
       - ./gh-config:/home/slackbot/.config/gh
       # Python MCP Server
       - /home/carmex/python-mcp-server:/app/python-mcp-server
+      # Mount agy CLI binary from host
+      - /home/carmex/.local/bin/agy:/usr/local/bin/agy:ro
       # Journald monitoring
       - /var/log/journal:/var/log/journal:ro
       - /run/systemd/journal:/run/systemd/journal:ro
