@@ -9,10 +9,10 @@ import { userManager } from './user-manager';
 enum FeatureRequestState {
     SELECTING_REPO = 'SELECTING_REPO',
     AWAITING_REQUEST = 'AWAITING_REQUEST',
-    IMPLEMENTING = 'IMPLEMENTING', // Running first gemini command
+    IMPLEMENTING = 'IMPLEMENTING', // Running first agy command
     REVISING = 'REVISING',         // Revising the plan based on feedback
     AWAITING_APPROVAL = 'AWAITING_APPROVAL',
-    FINALIZING = 'FINALIZING',     // Running second gemini command
+    FINALIZING = 'FINALIZING',     // Running second agy command
     MONITORING_PR = 'MONITORING_PR',
     COMPLETED = 'COMPLETED',
     ABORTED = 'ABORTED',
@@ -282,10 +282,10 @@ export class FeatureRequestHandler {
             thread_ts: threadTs
         });
 
-        // Spawn gemini command
-        const command = 'gemini';
+        // Spawn agy command
+        const command = 'agy';
         const args = [
-            '-y',
+            '--dangerously-skip-permissions',
             '-p',
             `create an implementation plan for modifying this codebase with the feature request below. start by making sure you have the lastest code from master (or main, whichever applicable) branch (fetch and pull). The plan should be detailed enough to be used by a coding agent to implement the feature. State what files will be modified, added, or deleted. State the dependencies of the feature. When you have finished your investigation and are ready to present the plan, print the exact string <<<FINAL_PLAN>>> on a new line, followed by the plan formatted in Slack mrkdwn format. don't change any code! feature: ${text}`
         ];
@@ -343,10 +343,10 @@ export class FeatureRequestHandler {
                 thread_ts: threadTs
             });
 
-            const command = 'gemini';
+            const command = 'agy';
             const planText = session.planText || "No previous output captured.";
             const args = [
-                '-y',
+                '--dangerously-skip-permissions',
                 '-p',
                 `Please implement the plan below on the codebase in this current directory.
 
@@ -437,9 +437,9 @@ ${planText}`
                 thread_ts: threadTs
             });
 
-            const command = 'gemini';
+            const command = 'agy';
             const args = [
-                '-y',
+                '--dangerously-skip-permissions',
                 '-p',
                 `You are an expert software architect. Below is an initial feature request, a proposed implementation plan, and user feedback on that plan.
 
@@ -499,8 +499,8 @@ Follow the same format as before: perform any necessary investigation without ch
 
     private runShellCommand(command: string, args: string[], cwd: string, threadTs: string, say: SayFn, onComplete: (output: string) => void) {
         // Sanitize input to avoid shell syntax errors if shell=true, but better to use shell=false if possible.
-        // On Windows, 'gemini' might be a batch file, so shell=true is often needed unless we call 'gemini.cmd'.
-        // Assuming 'gemini' is in PATH.
+        // On Windows, 'agy' might be a batch file, so shell=true is often needed unless we call 'agy.cmd'.
+        // Assuming 'agy' is in PATH.
 
         const isWindows = process.platform === 'win32';
         const shell = true; // defaulting to true for PATH resolution convenience, but we MUST sanitize args.
@@ -516,10 +516,10 @@ Follow the same format as before: perform any necessary investigation without ch
         // Escape check: replace " with \"
         // But for /bin/sh, simple arguments in spawn with shell:false are BEST.
         // Let's force shell: false which is standard for node apps avoiding this exact issue.
-        // Only downside: might not find 'gemini' if it's a script/alias. 
+        // Only downside: might not find 'agy' if it's a script/alias. 
         // If command fails with ENOENT, we can try with shell: true as fallback? No, let's fix the command name.
 
-        const commandName = (isWindows && command === 'gemini') ? 'gemini.cmd' : command;
+        const commandName = (isWindows && (command === 'gemini' || command === 'agy')) ? `${command}.cmd` : command;
 
         console.log(`[FeatureRequest] Spawning ${commandName} in ${cwd}`);
 
