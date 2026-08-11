@@ -90,8 +90,8 @@ export function createFeatureRequest(data: FeatureRequestData): void {
     try {
         const stmt = db.prepare(`
             INSERT INTO feature_requests (
-                formatted_timestamp, slack_msg_ts, channel_id, username, user_id, repo_name, request_text, state, last_updated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                formatted_timestamp, slack_msg_ts, channel_id, username, user_id, repo_name, repo_path, request_text, state, last_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         `);
         stmt.run(
             new Date().toISOString(),
@@ -100,6 +100,7 @@ export function createFeatureRequest(data: FeatureRequestData): void {
             data.username,
             data.user_id || null,
             data.repo_name,
+            data.repo_path || null,
             data.request_text || null,
             data.state || null
         );
