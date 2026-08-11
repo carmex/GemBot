@@ -6,31 +6,38 @@ import { GoogleGenerativeAI, Content, HarmCategory, HarmBlockThreshold, Function
 import { config } from '../../../config';
 import { LLMChatOptions, LLMMessage, LLMProvider, LLMResult, LLMTool } from './types';
 
-function toGeminiHistory(history: LLMMessage[] | Content[] | undefined): Content[] {
+export function toGeminiHistory(history: LLMMessage[] | Content[] | undefined): Content[] {
     if (!history || history.length === 0) return [];
+    let contentHistory: Content[];
     if (history[0] && 'parts' in history[0]) {
         // Already Content[], return as is
-        const contentHistory = history as Content[];
+        contentHistory = [...(history as Content[])];
         const totalImageParts = contentHistory.reduce((acc, h) => acc + (h.parts?.filter(p => !!p.inlineData)?.length || 0), 0);
         console.log(`[Debug-Gemini] toGeminiHistory: Already Content[] with ${contentHistory.length} entries, total image parts: ${totalImageParts}`);
-        return contentHistory;
-    }
-    // Map LLMMessage to Content
-    return (history as LLMMessage[]).map((m) => {
-        if (m.role === 'user') {
+    } else {
+        // Map LLMMessage to Content
+        contentHistory = (history as LLMMessage[]).map((m) => {
+            if (m.role === 'user') {
+                return { role: 'user', parts: [{ text: m.content }] };
+            } else if (m.role === 'assistant') {
+                return { role: 'model', parts: [{ text: m.content }] };
+            } else if (m.role === 'system') {
+                // System prompt already passed separately; include as model content to keep chronology if provided
+                return { role: 'model', parts: [{ text: m.content }] };
+            } else if (m.role === 'tool') {
+                // Provider orchestration typically injects tool results back as tool messages;
+                // Gemini expects functionResponse parts in a follow-up send, but we can include as model text contextually.
+                return { role: 'model', parts: [{ text: m.content }] };
+            }
             return { role: 'user', parts: [{ text: m.content }] };
-        } else if (m.role === 'assistant') {
-            return { role: 'model', parts: [{ text: m.content }] };
-        } else if (m.role === 'system') {
-            // System prompt already passed separately; include as model content to keep chronology if provided
-            return { role: 'model', parts: [{ text: m.content }] };
-        } else if (m.role === 'tool') {
-            // Provider orchestration typically injects tool results back as tool messages;
-            // Gemini expects functionResponse parts in a follow-up send, but we can include as model text contextually.
-            return { role: 'model', parts: [{ text: m.content }] };
-        }
-        return { role: 'user', parts: [{ text: m.content }] };
-    });
+        });
+    }
+
+    if (contentHistory.length > 0 && contentHistory[0].role === 'model') {
+        contentHistory.unshift({ role: 'user', parts: [{ text: '[User request]' }] });
+    }
+
+    return contentHistory;
 }
 
 /**
