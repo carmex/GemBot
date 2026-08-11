@@ -9,6 +9,8 @@ import { config } from '../config';
 import { Part } from '@google/generative-ai';
 import { YouTubeService } from './tools/youtube';
 import { MemeGenerator } from './meme-generator';
+import { GoogleAuth } from 'google-auth-library';
+import { SynthIdChecker } from './synthid-checker';
 import { createReminder } from './reminder-db';
 import { isRestrictedLink } from './utils';
 
@@ -55,7 +57,8 @@ export async function executeTool(
     args: any,
     channelId: string,
     threadTs?: string,
-    userId?: string
+    userId?: string,
+    synthIdChecker?: SynthIdChecker
 ): Promise<Part> {
     try {
         if (name === 'slack_user_profile') {
@@ -339,6 +342,75 @@ export async function executeTool(
                 console.error('[Tool] Error setting reminder:', error);
                 return { functionResponse: { name, response: { error: (error as Error).message } } };
             }
+        } else if (name === 'check_synthid_watermark') {
+            const synthIdCheckerInstance = synthIdChecker || new SynthIdChecker(
+                new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' })
+            );
+
+            let imageUrl = (args as any)?.image_url as string | undefined;
+
+            if (!imageUrl) {
+                try {
+                    let messages: any[] = [];
+                    if (threadTs) {
+                        const replies = await app.client.conversations.replies({
+                            channel: channelId,
+                            ts: threadTs,
+                            inclusive: true
+                        });
+                        messages = replies.messages || [];
+                    } else {
+                        const history = await app.client.conversations.history({
+                            channel: channelId,
+                            limit: 20
+                        });
+                        messages = history.messages || [];
+                    }
+
+                    for (let i = messages.length - 1; i >= 0; i--) {
+                        const msg = messages[i];
+                        if (msg.files && msg.files.length > 0) {
+                            const imgFile = msg.files.find((f: any) =>
+                                f.mimetype?.startsWith('image/') && (f.url_private || f.url_private_download)
+                            );
+                            if (imgFile) {
+                                imageUrl = imgFile.url_private || imgFile.url_private_download;
+                                break;
+                            }
+                        }
+                    }
+                } catch (slackError) {
+                    console.error('[Tool] Error fetching messages to find image URL:', slackError);
+                }
+            }
+
+            if (!imageUrl) {
+                return {
+                    functionResponse: {
+                        name,
+                        response: {
+                            isWatermarked: false,
+                            decision: 'UNKNOWN',
+                            error: 'No image URL provided and no attached image found in thread/channel context.'
+                        }
+                    }
+                };
+            }
+
+            await app.client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: '_checking image for SynthID digital watermark..._'
+            });
+
+            const result = await synthIdCheckerInstance.checkWatermark(imageUrl);
+
+            return {
+                functionResponse: {
+                    name,
+                    response: result
+                }
+            };
         }
         return { functionResponse: { name: 'unknown_tool', response: { error: 'Tool not found' } } };
     } catch (error) {
