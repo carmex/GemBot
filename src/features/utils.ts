@@ -20,6 +20,7 @@ import {config} from '../config';
 import {fetchCompanyProfile, fetchQuote} from './finnhub-api';
 import {App} from '@slack/bolt';
 import {fetchStockNews} from './finnhub-api';
+import fetch from 'node-fetch';
 
 export const getColoredTileEmoji = (percentChange: number): string => {
     if (percentChange >= 10) return ':_charles_green5:';
@@ -176,4 +177,85 @@ export function isRestrictedLink(link: string): boolean {
         // If the URL is malformed, consider it not restricted but log it or handle as needed
         return false;
     }
+}
+
+/**
+ * Extracts URLs from message text, handling both Slack formatted links (<url|label> or <url>)
+ * and plain HTTP/HTTPS URLs. De-duplicates and returns an array of URLs.
+ */
+export function extractUrls(text: string): string[] {
+    if (!text) return [];
+
+    const urls: string[] = [];
+
+    // Slack formatted links: <https://url|label> or <https://url>
+    const slackRegex = /<(https?:\/\/[^>|]+)(?:\|[^>]+)?>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = slackRegex.exec(text)) !== null) {
+        if (match[1]) {
+            urls.push(match[1]);
+        }
+    }
+
+    // Strip Slack formatted links to avoid duplicate matches with plain URL regex
+    const cleanText = text.replace(slackRegex, ' ');
+    const plainRegex = /(https?:\/\/[^\s<>]+)/g;
+
+    while ((match = plainRegex.exec(cleanText)) !== null) {
+        if (match[1]) {
+            let url = match[1].replace(/[.,;)]+$/, '');
+            urls.push(url);
+        }
+    }
+
+    return Array.from(new Set(urls));
+}
+
+/**
+ * Checks whether a given URL points to an image.
+ * First checks path extensions (.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg).
+ * If ambiguous or no extension match, performs a HEAD request with 3s timeout to check Content-Type header.
+ */
+export async function isImageUrl(url: string): Promise<boolean> {
+    if (!url) return false;
+
+    // 1. Check path extension
+    try {
+        const parsed = new URL(url);
+        const pathname = parsed.pathname;
+        if (/\.(jpeg|jpg|gif|png|webp|bmp|svg)$/i.test(pathname)) {
+            return true;
+        }
+    } catch {
+        const cleanUrl = url.split('?')[0].split('#')[0];
+        if (/\.(jpeg|jpg|gif|png|webp|bmp|svg)$/i.test(cleanUrl)) {
+            return true;
+        }
+    }
+
+    // 2. Fallback to HEAD request with 3-second timeout
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(url, {
+            method: 'HEAD',
+            signal: controller.signal,
+            headers: {
+                'User-Agent': 'GemBot/1.0',
+            },
+        });
+        clearTimeout(timeout);
+
+        if (response.ok) {
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.toLowerCase().startsWith('image/')) {
+                return true;
+            }
+        }
+    } catch {
+        // Return false if HEAD request fails or times out
+    }
+
+    return false;
 }

@@ -22,7 +22,7 @@ import { Content, Part } from '@google/generative-ai';
 import { config } from '../config';
 import { ImageGenerator } from './image-generator';
 import { Summarizer } from './summarizer';
-import { buildUserPrompt, isCommentedMessage } from './utils';
+import { buildUserPrompt, isCommentedMessage, extractUrls, isImageUrl } from './utils';
 import { userManager } from './user-manager';
 
 export class HistoryBuilder {
@@ -104,6 +104,22 @@ export class HistoryBuilder {
                     }
                     const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, userName, text: reply.text });
                     parts.push({ text });
+
+                    if (role === 'user') {
+                        const urls = extractUrls(reply.text);
+                        for (const url of urls) {
+                            try {
+                                if (await isImageUrl(url)) {
+                                    console.log(`[Debug-Image] Processing image URL from message ${reply.ts}: ${url}`);
+                                    const imagePart = await this.imageGenerator.processImageFromUrl(url);
+                                    parts.push(imagePart);
+                                    console.log(`[Debug-Image] Successfully added image part from URL for message ${reply.ts}`);
+                                }
+                            } catch (e) {
+                                console.error(`[Debug-Image] Failed to process image URL ${url} from message ${reply.ts}:`, e);
+                            }
+                        }
+                    }
                 }
 
                 console.log(`[Debug-Image] Message ${reply.ts} has ${(reply.files || []).length} files`);
@@ -204,6 +220,20 @@ export class HistoryBuilder {
                     }
                     const text = role === 'model' ? reply.text : buildUserPrompt({ channel, user: reply.user!, userName, text: reply.text });
                     parts.push({ text });
+
+                    if (role === 'user') {
+                        const urls = extractUrls(reply.text);
+                        for (const url of urls) {
+                            try {
+                                if (await isImageUrl(url)) {
+                                    const imagePart = await this.imageGenerator.processImageFromUrl(url);
+                                    parts.push(imagePart);
+                                }
+                            } catch (e) {
+                                console.error(`Failed to process image URL ${url} from message ${reply.ts}:`, e);
+                            }
+                        }
+                    }
                 }
 
                 if (reply.files && reply.files.length > 0) {
@@ -274,7 +304,21 @@ export class HistoryBuilder {
 
                 if (reply.user) {
                     const userName = await userManager.getUserName(reply.user, client);
-                    history.push({ role: 'user', parts: [{ text: buildUserPrompt({ channel, user: reply.user, userName, text: reply.text }) }] });
+                    const parts: Part[] = [{ text: buildUserPrompt({ channel, user: reply.user, userName, text: reply.text }) }];
+                    if (reply.text) {
+                        const urls = extractUrls(reply.text);
+                        for (const url of urls) {
+                            try {
+                                if (await isImageUrl(url)) {
+                                    const imagePart = await this.imageGenerator.processImageFromUrl(url);
+                                    parts.push(imagePart);
+                                }
+                            } catch (e) {
+                                console.error(`Failed to process image URL ${url} in buildHistorySinceLastBotMessage:`, e);
+                            }
+                        }
+                    }
+                    history.push({ role: 'user', parts });
                 }
             }
         } catch (error) {
