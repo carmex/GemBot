@@ -32,6 +32,7 @@ import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlac
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, getCryptoCandles, generateChart } from '../features/stock-charts';
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
+import { fetchDictionaryEntry } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
@@ -768,6 +769,58 @@ ${formatInventory(character.inventory)}
         }
     });
 
+    app.message(/^!(dict|dictionary)\s+(.+)/i, async ({message, context, client}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+        const searchTerm = context.matches[2].trim();
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+
+        try {
+            const entry = await fetchDictionaryEntry(searchTerm);
+
+            if (!entry) {
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: `No definition found for *${searchTerm}*.`,
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            let responseText = `*Dictionary: ${entry.word}*\n\n`;
+
+            const pronStr = entry.pronunciation && entry.pronunciation !== 'N/A'
+                ? `/${entry.pronunciation}/`
+                : 'N/A';
+
+            responseText += `*Pronunciation:* ${pronStr}\n`;
+            responseText += `*Etymology:* ${entry.etymology}\n`;
+            responseText += `*Demonym:* ${entry.demonym}\n\n`;
+            responseText += `*Definitions:*\n`;
+
+            for (const def of entry.definitions) {
+                responseText += `• *(${def.partOfSpeech})* ${def.definition}\n`;
+                if (def.example) {
+                    responseText += `  _Example: "${def.example}"_\n`;
+                }
+            }
+
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: responseText.trim(),
+                thread_ts: threadTs,
+            });
+        } catch (error) {
+            console.error(`Error in !dict handler for "${searchTerm}":`, error);
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: `Sorry, I couldn't fetch the definition for "${searchTerm}".`,
+                thread_ts: threadTs,
+            });
+        }
+    });
+
     app.message(/^!gembot help$/i, async ({message, say}) => {
         const helpText = `
 *Available Commands*
@@ -780,6 +833,7 @@ ${formatInventory(character.inventory)}
 • \`!meme <template> <text1> [| text2 ...]\`: Generates a meme. Multi-panel memes are supported using \`|\`.
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!ud <term>\`: Get definitions from Urban Dictionary.
+• \`!dict <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
 
