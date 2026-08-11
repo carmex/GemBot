@@ -821,6 +821,121 @@ ${formatInventory(character.inventory)}
         }
     });
 
+    app.message(/^!dp\s+(.+)/i, async ({message, context, client}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+        const searchTerm = context.matches[1].trim();
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+
+        try {
+            const entry = await fetchDictionaryEntry(searchTerm);
+
+            if (!entry) {
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: `No definition found for *${searchTerm}*.`,
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            let responseText = `*Dictionary: ${entry.word}*\n\n`;
+
+            const pronStr = entry.pronunciation && entry.pronunciation !== 'N/A'
+                ? `/${entry.pronunciation}/`
+                : 'N/A';
+
+            responseText += `*Pronunciation:* ${pronStr}\n`;
+            responseText += `*Etymology:* ${entry.etymology}\n`;
+            responseText += `*Demonym:* ${entry.demonym}\n\n`;
+            responseText += `*Definitions:*\n`;
+
+            for (const def of entry.definitions) {
+                responseText += `• *(${def.partOfSpeech})* ${def.definition}\n`;
+                if (def.example) {
+                    responseText += `  _Example: "${def.example}"_\n`;
+                }
+            }
+
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: responseText.trim(),
+                thread_ts: threadTs,
+            });
+
+            if (!config.vertex.projectId) {
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: 'The image generation feature is not configured. A Google Cloud Project ID is required for Vertex AI.',
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            const workingMessage = await client.chat.postMessage({
+                channel: message.channel,
+                text: `Generating an image for *${entry.word}*...`,
+                thread_ts: threadTs,
+            });
+
+            try {
+                const result = await aiHandler.generateImage(entry.word);
+                if (workingMessage.ts) {
+                    await client.chat.delete({
+                        channel: message.channel,
+                        ts: workingMessage.ts,
+                    });
+                }
+                if (result.imageBase64) {
+                    await client.files.uploadV2({
+                        channel_id: message.channel,
+                        initial_comment: `Here is an image related to *${entry.word}*:`,
+                        file: Buffer.from(result.imageBase64, 'base64'),
+                        filename: `${entry.word}.png`,
+                        thread_ts: threadTs,
+                    });
+                    trackImageInvocation(message.user);
+                } else if (result.filteredReason) {
+                    await client.chat.postMessage({
+                        channel: message.channel,
+                        text: `Sorry, I can't generate that image. It was blocked for the following reason: *${result.filteredReason}*`,
+                        thread_ts: threadTs,
+                    });
+                } else {
+                    await client.chat.postMessage({
+                        channel: message.channel,
+                        text: `Sorry, I couldn't generate an image for an unknown reason.`,
+                        thread_ts: threadTs,
+                    });
+                }
+            } catch (imageError) {
+                console.error(`Error generating image for !dp command "${entry.word}":`, imageError);
+                if (workingMessage.ts) {
+                    try {
+                        await client.chat.delete({
+                            channel: message.channel,
+                            ts: workingMessage.ts,
+                        });
+                    } catch {}
+                }
+                const errorMessage = (imageError as any)?.apiError?.message || (imageError as Error).message;
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: `An error occurred while generating the image: ${errorMessage}`,
+                    thread_ts: threadTs,
+                });
+            }
+        } catch (error) {
+            console.error(`Error in !dp handler for "${searchTerm}":`, error);
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: `Sorry, I couldn't fetch the definition for "${searchTerm}".`,
+                thread_ts: threadTs,
+            });
+        }
+    });
+
     app.message(/^!gembot help$/i, async ({message, say}) => {
         const helpText = `
 *Available Commands*
@@ -834,6 +949,7 @@ ${formatInventory(character.inventory)}
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!ud <term>\`: Get definitions from Urban Dictionary.
 • \`!dict <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
+• \`!dp <word>\`: Look up definition, pronunciation, etymology, and demonym for a word, and generate a related image.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
 

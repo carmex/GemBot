@@ -24,6 +24,22 @@ async function runTests() {
         console.error(`FAILED: Regex failed for '${test2}'`);
         process.exit(1);
     }
+
+    const dpRegex = /^!dp\s+(.+)/i;
+
+    const testDp1 = "!dp hello";
+    const matchDp1 = testDp1.match(dpRegex);
+    if (!matchDp1 || matchDp1[1] !== "hello") {
+        console.error(`FAILED: Regex failed for '${testDp1}'`);
+        process.exit(1);
+    }
+
+    const testDp2 = "!dp complex word";
+    const matchDp2 = testDp2.match(dpRegex);
+    if (!matchDp2 || matchDp2[1] !== "complex word") {
+        console.error(`FAILED: Regex failed for '${testDp2}'`);
+        process.exit(1);
+    }
     console.log("PASSED: Regex pattern matching tests\n");
 
     // 2. Fetch Dictionary Entry for standard words
