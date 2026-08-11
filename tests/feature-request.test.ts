@@ -1,6 +1,63 @@
 import child_process from 'child_process';
 import { FeatureRequestHandler } from '../src/features/feature-request';
 
+async function testHandleRequestAutoSelectGembot() {
+    console.log("Running FeatureRequest handleRequest auto-select test...");
+
+    const mockApp: any = { client: { chat: { postMessage: async () => {} } } };
+    const handler = new FeatureRequestHandler(mockApp);
+
+    let sayMessage = "";
+    const sayMock: any = async (msg: any) => {
+        sayMessage = typeof msg === 'string' ? msg : msg.text;
+    };
+
+    const mockEvent = {
+        ts: "999999.111",
+        channel: "C99999",
+        user: "U99999"
+    };
+
+    const mockClient = {
+        users: {
+            info: async () => ({ ok: true, user: { name: 'testuser' } })
+        }
+    };
+
+    await handler.handleRequest(mockEvent, mockClient, sayMock);
+
+    // Verify session state in handler
+    const sessions = (handler as any).sessions;
+    const session = sessions.get("999999.111");
+
+    if (!session) {
+        console.error("FAILED: Session was not created for thread 999999.111");
+        process.exit(1);
+    }
+
+    if (session.state !== 'AWAITING_REQUEST') {
+        console.error(`FAILED: Expected session state 'AWAITING_REQUEST', got '${session.state}'`);
+        process.exit(1);
+    }
+
+    if (session.repoName !== 'gembot') {
+        console.error(`FAILED: Expected repoName 'gembot', got '${session.repoName}'`);
+        process.exit(1);
+    }
+
+    if (sayMessage.includes("Please select a repository")) {
+        console.error("FAILED: Say message still contains repository selection prompt!");
+        process.exit(1);
+    }
+
+    if (!sayMessage.includes("Auto-selected repository: `gembot`")) {
+        console.error(`FAILED: Expected say message to contain 'Auto-selected repository: \`gembot\`', got '${sayMessage}'`);
+        process.exit(1);
+    }
+
+    console.log("PASSED: handleRequest auto-selects 'gembot' and enters AWAITING_REQUEST state.");
+}
+
 async function testFeatureRequestAgyIntegration() {
     console.log("Running FeatureRequest agy integration test...");
 
@@ -65,13 +122,18 @@ async function testFeatureRequestAgyIntegration() {
         }
 
         console.log("PASSED: FeatureRequest handler correctly calls 'agy --print-timeout 20m --dangerously-skip-permissions -p'");
-        process.exit(0);
     } finally {
         (child_process as any).spawn = originalSpawn;
     }
 }
 
-testFeatureRequestAgyIntegration().catch(err => {
+async function runAllTests() {
+    await testHandleRequestAutoSelectGembot();
+    await testFeatureRequestAgyIntegration();
+    process.exit(0);
+}
+
+runAllTests().catch(err => {
     console.error(err);
     process.exit(1);
 });

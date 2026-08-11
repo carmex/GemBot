@@ -7,7 +7,6 @@ import { initFeatureRequestDb, createFeatureRequest, updateFeatureRequest, getOp
 import { userManager } from './user-manager';
 
 enum FeatureRequestState {
-    SELECTING_REPO = 'SELECTING_REPO',
     AWAITING_REQUEST = 'AWAITING_REQUEST',
     IMPLEMENTING = 'IMPLEMENTING', // Running first agy command
     REVISING = 'REVISING',         // Revising the plan based on feedback
@@ -33,7 +32,6 @@ interface FeatureRequestSession {
 export class FeatureRequestHandler {
     // Hardcoded repo mapping as requested
     private repoMap: Record<string, string> = {
-        'gisbot': '/app/mnt/repos/gisbot',
         'gembot': '/app/mnt/repos/GemBot',
     };
 
@@ -50,10 +48,17 @@ export class FeatureRequestHandler {
         try {
             const openRequests = getOpenFeatureRequests();
             for (const req of openRequests) {
+                let state = (req.state as FeatureRequestState) || FeatureRequestState.AWAITING_REQUEST;
+                if ((req.state as any) === 'SELECTING_REPO') {
+                    state = FeatureRequestState.AWAITING_REQUEST;
+                }
+                const repoName = (req.repo_name === 'selecting...' || !req.repo_name) ? 'gembot' : req.repo_name;
+                const repoPath = req.repo_path || this.repoMap[repoName] || '/app/mnt/repos/GemBot';
+
                 this.sessions.set(req.slack_msg_ts, {
-                    state: (req.state as FeatureRequestState) || FeatureRequestState.AWAITING_REQUEST,
-                    repoName: req.repo_name,
-                    repoPath: req.repo_path,
+                    state: state,
+                    repoName: repoName,
+                    repoPath: repoPath,
                     requestText: req.request_text,
                     planText: req.final_plan,
                     userId: req.user_id,
@@ -61,7 +66,7 @@ export class FeatureRequestHandler {
                     channelId: req.channel_id,
                     prUrl: req.pr_url
                 });
-                console.log(`[FeatureRequest] Loaded session ${req.slack_msg_ts} in state ${req.state}`);
+                console.log(`[FeatureRequest] Loaded session ${req.slack_msg_ts} in state ${state}`);
             }
             console.log(`[FeatureRequest] Loaded ${openRequests.length} active sessions from DB`);
         } catch (error) {
@@ -144,23 +149,25 @@ export class FeatureRequestHandler {
     }
 
     public async handleRequest(event: any, client: any, say: SayFn) {
-        // Start a new flow
-        // If message is in a thread, use that thread. If not, the reply starts a new thread.
         const threadTs = event.thread_ts || event.ts;
         const channelId = event.channel;
 
-        // If existing session, maybe reset or ignore? 
-        // User requirements say "any further requests to this thread should respond with a message to start a new feature request"
-        // But if they explicitly say "@Gembot feature request", maybe we should reset?
-        // let's assume valid start triggers a new flow or resets if explicitly called.
-
-        const repos = Object.keys(this.repoMap);
-
-        // Fetch user info for DB
         const username = await userManager.getUserName(event.user, client);
+        const repoName = 'gembot';
+        const repoPath = this.repoMap[repoName] || '/app/mnt/repos/GemBot';
+
+        if (!fs.existsSync(repoPath)) {
+            await say({
+                text: `Error: The configured path for \`${repoName}\` does not exist on the server: \`${repoPath}\`. Please contact the administrator.`,
+                thread_ts: event.ts,
+            });
+            return;
+        }
 
         this.sessions.set(threadTs, {
-            state: FeatureRequestState.SELECTING_REPO,
+            state: FeatureRequestState.AWAITING_REQUEST,
+            repoName: repoName,
+            repoPath: repoPath,
             userId: event.user,
             username: username,
             channelId: channelId
@@ -172,13 +179,14 @@ export class FeatureRequestHandler {
             channel_id: channelId,
             username: username,
             user_id: event.user,
-            repo_name: 'selecting...',
-            state: FeatureRequestState.SELECTING_REPO
+            repo_name: repoName,
+            repo_path: repoPath,
+            state: FeatureRequestState.AWAITING_REQUEST
         });
 
         await say({
-            text: `Sure, I can help with that. Please select a repository from the following list:\n${repos.map(r => `• ${r}`).join('\n')}`,
-            thread_ts: event.ts, // Always reply to the initial message content or thread
+            text: "Sure, I can help with that. Auto-selected repository: `gembot`. What is your feature request?",
+            thread_ts: event.ts,
         });
     }
 
@@ -201,9 +209,6 @@ export class FeatureRequestHandler {
         const text = event.text.trim();
 
         switch (session.state) {
-            case FeatureRequestState.SELECTING_REPO:
-                this.handleRepoSelection(session, text, threadTs, say);
-                break;
             case FeatureRequestState.AWAITING_REQUEST:
                 this.handleFeatureRequestText(session, text, threadTs, say);
                 break;
@@ -225,45 +230,6 @@ export class FeatureRequestHandler {
                 // Workflow ended
                 await say({ text: "This feature request workflow is complete. Please start a new one request.", thread_ts: threadTs });
                 break;
-        }
-    }
-
-    private async handleRepoSelection(session: FeatureRequestSession, text: string, threadTs: string, say: SayFn) {
-        const repoName = text.toLowerCase(); // simplified matching
-        if (this.repoMap[repoName]) {
-            session.repoName = repoName;
-            session.repoPath = this.repoMap[repoName];
-
-            // Verify path exists
-            if (!fs.existsSync(session.repoPath)) {
-                await say({
-                    text: `Error: The configured path for \`${repoName}\` does not exist on the server: \`${session.repoPath}\`. Please contact the administrator.`,
-                    thread_ts: threadTs
-                });
-                this.sessions.delete(threadTs);
-                updateFeatureRequest(threadTs, { state: FeatureRequestState.ABORTED });
-                return;
-            }
-
-            session.state = FeatureRequestState.AWAITING_REQUEST;
-            
-            // Persist repo path and state update
-            updateFeatureRequest(threadTs, { 
-                repo_name: repoName,
-                repo_path: session.repoPath,
-                state: FeatureRequestState.AWAITING_REQUEST
-            });
-
-            await say({
-                text: `Selected repository: \`${repoName}\`. What is your feature request?`,
-                thread_ts: threadTs
-            });
-        } else {
-            const repos = Object.keys(this.repoMap);
-            await say({
-                text: `I don't recognize that repository. Please select one of the following:\n${repos.map(r => `• ${r}`).join('\n')}`,
-                thread_ts: threadTs
-            });
         }
     }
 
