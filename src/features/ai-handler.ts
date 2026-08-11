@@ -147,8 +147,12 @@ export class AIHandler {
         return this.imageGenerator!.generateImage(prompt);
     }
 
-    public async processImage(fileUrl: string, mimeType: string): Promise<Part> {
+    public async processImage(fileUrl: string, mimeType?: string): Promise<Part> {
         return this.imageGenerator!.processImagePublic(fileUrl, mimeType);
+    }
+
+    public async processImageFromUrl(url: string): Promise<Part> {
+        return this.imageGenerator!.processImageFromUrl(url);
     }
 
     public loadThreadSummary(threadId: string): any {

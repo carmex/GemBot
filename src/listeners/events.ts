@@ -22,11 +22,44 @@ import { config } from '../config';
 import { providerHealth } from '../features/llm/provider-factory';
 import { getThreadHistory, saveThreadHistory } from '../features/thread-db';
 import { Content, Part } from '@google/generative-ai';
-import { buildUserPrompt, isCommentedMessage } from '../features/utils';
+import { buildUserPrompt, isCommentedMessage, extractUrls, isImageUrl } from '../features/utils';
 import { FeatureRequestHandler } from '../features/feature-request';
 import { userManager } from '../features/user-manager';
 
 const processedEvents = new Set<string>();
+
+async function collectImageParts(text: string | undefined, files: any[] | undefined, aiHandler: AIHandler): Promise<Part[]> {
+    const imageParts: Part[] = [];
+
+    if (files && files.length > 0) {
+        for (const file of files) {
+            if (file.mimetype && file.mimetype.startsWith('image/') && file.url_private) {
+                try {
+                    const imagePart = await aiHandler.processImage(file.url_private, file.mimetype);
+                    imageParts.push(imagePart);
+                } catch (error) {
+                    console.error('Error processing Slack image attachment:', error);
+                }
+            }
+        }
+    }
+
+    if (text) {
+        const urls = extractUrls(text);
+        for (const url of urls) {
+            try {
+                if (await isImageUrl(url)) {
+                    const imagePart = await aiHandler.processImageFromUrl(url);
+                    imageParts.push(imagePart);
+                }
+            } catch (error) {
+                console.error(`Error processing image URL ${url}:`, error);
+            }
+        }
+    }
+
+    return imageParts;
+}
 
 export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
     const featureRequest = new FeatureRequestHandler(app);
@@ -66,23 +99,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 const history = await aiHandler.historyBuilder!.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
                 const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
 
-                let question: string | Part[] = userPrompt;
-                if ((event as any).files && (event as any).files.length > 0) {
-                    const imageFile = (event as any).files.find((f: any) => f.mimetype.startsWith('image/'));
-                    if (imageFile && imageFile.url_private) {
-                        try {
-                            const imagePart = await aiHandler.processImage(imageFile.url_private, imageFile.mimetype);
-                            question = [
-                                { text: userPrompt },
-                                imagePart
-                            ];
-                        } catch (error) {
-                            console.error('Error processing image:', error);
-                            await say({ text: `I found an image but couldn't process it: ${(error as Error).message}`, thread_ts: event.thread_ts });
-                            return;
-                        }
-                    }
-                }
+                const imageParts = await collectImageParts(prompt, (event as any).files, aiHandler);
+                const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
 
                 const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts, event.user);
                 if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
@@ -118,23 +136,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 const userName = await userManager.getUserName(event.user, client);
                 const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
 
-                let question: string | Part[] = userPrompt;
-                if ((event as any).files && (event as any).files.length > 0) {
-                    const imageFile = (event as any).files.find((f: any) => f.mimetype.startsWith('image/'));
-                    if (imageFile && imageFile.url_private) {
-                        try {
-                            const imagePart = await aiHandler.processImage(imageFile.url_private, imageFile.mimetype);
-                            question = [
-                                { text: userPrompt },
-                                imagePart
-                            ];
-                        } catch (error) {
-                            console.error('Error processing image:', error);
-                            await say({ text: `I found an image but couldn't process it: ${(error as Error).message}` });
-                            return;
-                        }
-                    }
-                }
+                const imageParts = await collectImageParts(prompt, (event as any).files, aiHandler);
+                const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
 
                 const response = await aiHandler.processAIQuestion(question, history, event.channel, event.thread_ts, event.user);
                 if (response.text.trim() && response.text.trim() !== '<DO_NOT_RESPOND>') {
@@ -151,23 +154,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                 const userName = await userManager.getUserName(event.user, client);
                 const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
 
-                let question: string | Part[] = userPrompt;
-                if ((event as any).files && (event as any).files.length > 0) {
-                    const imageFile = (event as any).files.find((f: any) => f.mimetype.startsWith('image/'));
-                    if (imageFile && imageFile.url_private) {
-                        try {
-                            const imagePart = await aiHandler.processImage(imageFile.url_private, imageFile.mimetype);
-                            question = [
-                                { text: userPrompt },
-                                imagePart
-                            ];
-                        } catch (error) {
-                            console.error('Error processing image:', error);
-                            await say({ text: `I found an image but couldn't process it: ${(error as Error).message}`, thread_ts: event.ts });
-                            return;
-                        }
-                    }
-                }
+                const imageParts = await collectImageParts(prompt, (event as any).files, aiHandler);
+                const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
 
                 const response = await aiHandler.processAIQuestion(question, [], event.channel, event.ts, event.user);
 
@@ -274,7 +262,9 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                     try {
                         const userName = await userManager.getUserName(message.user, client);
                         const userPrompt = buildUserPrompt({ channel: message.channel, user: message.user, userName, text: prompt });
-                        const response = await aiHandler.processAIQuestion(userPrompt, [], message.channel, message.ts, message.user);
+                        const imageParts = await collectImageParts(prompt, (message as any).files, aiHandler);
+                        const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
+                        const response = await aiHandler.processAIQuestion(question, [], message.channel, message.ts, message.user);
 
                         if (response.text.trim() && !response.text.trim().includes('<DO_NOT_RESPOND>')) {
                             await say({
@@ -283,7 +273,7 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                             });
 
                             const finalHistory: Content[] = [
-                                { role: 'user', parts: [{ text: userPrompt }] },
+                                typeof question === 'string' ? { role: 'user', parts: [{ text: question }] } : { role: 'user', parts: question },
                                 { role: 'assistant', parts: [{ text: response.text }] },
                             ];
                             saveThreadHistory(message.ts, message.channel, finalHistory);
@@ -384,23 +374,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         }
                     }
 
-                    let question: string | Part[] = userPrompt;
-                    if ((message as any).files && (message as any).files.length > 0) {
-                        const imageFile = (message as any).files.find((f: any) => f.mimetype.startsWith('image/'));
-                        if (imageFile && imageFile.url_private) {
-                            try {
-                                const imagePart = await aiHandler.processImage(imageFile.url_private, imageFile.mimetype);
-                                question = [
-                                    { text: userPrompt },
-                                    imagePart
-                                ];
-                            } catch (error) {
-                                console.error('Error processing image:', error);
-                                await say({ text: `I found an image but couldn't process it: ${(error as Error).message}`, thread_ts: threadTs });
-                                return;
-                            }
-                        }
-                    }
+                    const imageParts = await collectImageParts(message.text, (message as any).files, aiHandler);
+                    const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
 
                     const response = await aiHandler.processAIQuestion(question, history, message.channel, threadTs, message.user);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
@@ -454,23 +429,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         text: message.text,
                     });
 
-                    let question: string | Part[] = userPrompt;
-                    if ((message as any).files && (message as any).files.length > 0) {
-                        const imageFile = (message as any).files.find((f: any) => f.mimetype.startsWith('image/'));
-                        if (imageFile && imageFile.url_private) {
-                            try {
-                                const imagePart = await aiHandler.processImage(imageFile.url_private, imageFile.mimetype);
-                                question = [
-                                    { text: userPrompt },
-                                    imagePart
-                                ];
-                            } catch (error) {
-                                console.error('Error processing image:', error);
-                                await say({ text: `I found an image but couldn't process it: ${(error as Error).message}` });
-                                return;
-                            }
-                        }
-                    }
+                    const imageParts = await collectImageParts(message.text, (message as any).files, aiHandler);
+                    const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
 
                     const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts, message.user);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {
@@ -521,23 +481,8 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
                         text: message.text,
                     })}`;
 
-                    let question: string | Part[] = userPrompt;
-                    if ((message as any).files && (message as any).files.length > 0) {
-                        const imageFile = (message as any).files.find((f: any) => f.mimetype.startsWith('image/'));
-                        if (imageFile && imageFile.url_private) {
-                            try {
-                                const imagePart = await aiHandler.processImage(imageFile.url_private, imageFile.mimetype);
-                                question = [
-                                    { text: userPrompt },
-                                    imagePart
-                                ];
-                            } catch (error) {
-                                console.error('Error processing image:', error);
-                                await say({ text: `I found an image but couldn't process it: ${(error as Error).message}` });
-                                return;
-                            }
-                        }
-                    }
+                    const imageParts = await collectImageParts(message.text, (message as any).files, aiHandler);
+                    const question: string | Part[] = imageParts.length > 0 ? [{ text: userPrompt }, ...imageParts] : userPrompt;
 
                     const response = await aiHandler.processAIQuestion(question, history, message.channel, message.ts, message.user);
                     if (response.text.trim().includes('<DO_NOT_RESPOND>')) {

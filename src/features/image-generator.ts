@@ -90,33 +90,55 @@ export class ImageGenerator {
         }
     }
 
-    private async processImage(fileUrl: string, mimeType: string): Promise<Part> {
-        const response = await fetch(fileUrl, {
-            headers: {
-                'Authorization': `Bearer ${config.slack.botToken}`
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to fetch image: ${response.statusText}`);
+    public async processImageFromUrl(url: string): Promise<Part> {
+        const isSlackUrl = url.includes('files.slack.com') || url.includes('.slack.com/files');
+        const headers: Record<string, string> = {
+            'User-Agent': 'GemBot/1.0',
+        };
+        if (isSlackUrl && config.slack.botToken) {
+            headers['Authorization'] = `Bearer ${config.slack.botToken}`;
         }
 
-        const buffer = await response.arrayBuffer();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
 
-        const processedBuffer = await sharp(Buffer.from(buffer))
-            .resize(320, 240, {
-                fit: 'inside',
-                withoutEnlargement: true
-            })
-            .jpeg({ quality: 80 })
-            .toBuffer();
+        try {
+            const response = await fetch(url, {
+                headers,
+                signal: controller.signal,
+            });
 
-        const base64 = processedBuffer.toString('base64');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch image: ${response.statusText || response.status}`);
+            }
 
-        return { inlineData: { mimeType: 'image/jpeg', data: base64 } };
+            const contentLength = response.headers.get('content-length');
+            if (contentLength && parseInt(contentLength, 10) > 10 * 1024 * 1024) {
+                throw new Error(`Image size exceeds max download limit of 10MB (${contentLength} bytes)`);
+            }
+
+            const arrayBuffer = await response.arrayBuffer();
+            if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+                throw new Error(`Image buffer size exceeds max download limit of 10MB (${arrayBuffer.byteLength} bytes)`);
+            }
+
+            const processedBuffer = await sharp(Buffer.from(arrayBuffer))
+                .resize(320, 240, {
+                    fit: 'inside',
+                    withoutEnlargement: true,
+                })
+                .jpeg({ quality: 80 })
+                .toBuffer();
+
+            const base64 = processedBuffer.toString('base64');
+
+            return { inlineData: { mimeType: 'image/jpeg', data: base64 } };
+        } finally {
+            clearTimeout(timeout);
+        }
     }
 
-    public async processImagePublic(fileUrl: string, mimeType: string): Promise<Part> {
-        return this.processImage(fileUrl, mimeType);
+    public async processImagePublic(fileUrl: string, mimeType?: string): Promise<Part> {
+        return this.processImageFromUrl(fileUrl);
     }
 }
