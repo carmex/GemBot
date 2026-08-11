@@ -285,6 +285,8 @@ export class FeatureRequestHandler {
         // Spawn agy command
         const command = 'agy';
         const args = [
+            '--print-timeout',
+            '20m',
             '--dangerously-skip-permissions',
             '-p',
             `create an implementation plan for modifying this codebase with the feature request below. start by making sure you have the lastest code from master (or main, whichever applicable) branch (fetch and pull). The plan should be detailed enough to be used by a coding agent to implement the feature. State what files will be modified, added, or deleted. State the dependencies of the feature. When you have finished your investigation and are ready to present the plan, print the exact string <<<FINAL_PLAN>>> on a new line, followed by the plan formatted in Slack mrkdwn format. don't change any code! feature: ${text}`
@@ -346,6 +348,8 @@ export class FeatureRequestHandler {
             const command = 'agy';
             const planText = session.planText || "No previous output captured.";
             const args = [
+                '--print-timeout',
+                '60m',
                 '--dangerously-skip-permissions',
                 '-p',
                 `Please implement the plan below on the codebase in this current directory.
@@ -439,6 +443,8 @@ ${planText}`
 
             const command = 'agy';
             const args = [
+                '--print-timeout',
+                '20m',
                 '--dangerously-skip-permissions',
                 '-p',
                 `You are an expert software architect. Below is an initial feature request, a proposed implementation plan, and user feedback on that plan.

@@ -59,7 +59,12 @@ async function testFeatureRequestAgyIntegration() {
             process.exit(1);
         }
 
-        console.log("PASSED: FeatureRequest handler correctly calls 'agy --dangerously-skip-permissions -p'");
+        if (!spawnedArgs.includes('--print-timeout')) {
+            console.error(`FAILED: Expected args to include '--print-timeout', got`, spawnedArgs);
+            process.exit(1);
+        }
+
+        console.log("PASSED: FeatureRequest handler correctly calls 'agy --print-timeout 20m --dangerously-skip-permissions -p'");
         process.exit(0);
     } finally {
         (child_process as any).spawn = originalSpawn;
