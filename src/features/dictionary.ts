@@ -177,3 +177,48 @@ Return ONLY valid JSON matching this structure:
 
     return null;
 }
+
+/**
+ * Generates an image prompt depicting a visual scene based on a dictionary entry.
+ * Uses LLM prompt engineering to focus on living scenes and exclude text/books/letters.
+ */
+export async function generateDictionaryImagePrompt(entry: DictionaryEntry): Promise<string> {
+    const primaryDefinition = entry.definitions?.[0]?.definition || entry.word || 'concept';
+    const fallbackPrompt = `A vivid visual scene portraying: ${primaryDefinition}, artistic style, dynamic environment, no text, no books, no signs`;
+
+    try {
+        const provider = createProvider();
+        const definitionsStr = entry.definitions && entry.definitions.length > 0
+            ? entry.definitions.map(d => `(${d.partOfSpeech}) ${d.definition}`).join('; ')
+            : 'No definition provided';
+
+        const prompt = `You are an expert prompt engineer for AI image generation.
+Generate a detailed image prompt depicting a living visual scene that demonstrates the meaning of the word "${entry.word}".
+
+Word details:
+- Word: ${entry.word}
+- Definitions: ${definitionsStr}
+${entry.etymology && entry.etymology !== 'N/A' ? `- Etymology: ${entry.etymology}\n` : ''}
+
+Strict Prompting Rules:
+1. NEGATIVE CONSTRAINTS: ABSOLUTELY NO text, letters, words, signs, books, scrolls, dictionary pages, or written definitions in the image description.
+2. POSITIVE CONSTRAINTS: Focus entirely on an action, environment, or characters actively demonstrating the concept in a living, dynamic scene.
+3. ARTISTIC FREEDOM: Feel free to use artistic license (cinematic, surrealism, painterly, fantasy, vibrant digital art, abstract, or realistic).
+4. OUTPUT FORMAT: Output ONLY the raw image prompt text. Do not include quotes, intro/outro text, labels, or markdown formatting.`;
+
+        const res = await provider.chat(prompt, { temperature: 0.7 });
+        if (res && res.text) {
+            let cleaned = res.text.trim();
+            cleaned = cleaned.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+            cleaned = cleaned.replace(/^["']|["']$/g, '').trim();
+            if (cleaned.length > 0) {
+                return cleaned;
+            }
+        }
+    } catch (err) {
+        console.warn(`Failed to generate LLM dictionary image prompt for "${entry.word}":`, (err as Error).message);
+    }
+
+    return fallbackPrompt;
+}
+

@@ -32,7 +32,7 @@ import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlac
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, getCryptoCandles, generateChart } from '../features/stock-charts';
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
-import { fetchDictionaryEntry } from '../features/dictionary';
+import { fetchDictionaryEntry, generateDictionaryImagePrompt } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
@@ -880,7 +880,8 @@ ${formatInventory(character.inventory)}
             });
 
             try {
-                const result = await aiHandler.generateImage(entry.word);
+                const imagePrompt = await generateDictionaryImagePrompt(entry);
+                const result = await aiHandler.generateImage(imagePrompt);
                 if (workingMessage.ts) {
                     await client.chat.delete({
                         channel: message.channel,
