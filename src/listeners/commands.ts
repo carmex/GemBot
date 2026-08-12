@@ -948,7 +948,7 @@ ${formatInventory(character.inventory)}
 
         if (!rawN || isNaN(n) || !Number.isInteger(n) || n < 1 || n > 5) {
             await say({
-                text: '⚠️ Invalid number of tidbits. n must be a positive integer between 1 and 5 (e.g., !tidbit subscribe 3).',
+                text: '⚠️ Invalid number of tidbits. n must be an integer between 1 and 5, inclusive (e.g., !tidbit subscribe 3).',
                 thread_ts: message.ts,
             });
             return;
