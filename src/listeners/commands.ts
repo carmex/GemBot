@@ -34,7 +34,10 @@ import { getStockCandles, getCryptoCandles, generateChart } from '../features/st
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
 import { fetchDictionaryEntry, generateDictionaryImagePrompt } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
-import { upsertSubscription, removeSubscription } from '../features/tidbit-db';
+import { upsertSubscription, removeSubscription, updateLastSentDate } from '../features/tidbit-db';
+import { generateTidbits } from '../features/tidbit-generator';
+import { getUserLocalDateTime } from '../features/tidbit-worker';
+
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     app.message(/^!fetch_url\s+(.+)/i, async ({message, context, say}) => {
@@ -970,6 +973,18 @@ ${formatInventory(character.inventory)}
                 text: `✅ You have subscribed to *Gembo's tidbits of the day*! You will receive ${n} tidbit(s) daily at 8:00 AM (${timezone}).`,
                 thread_ts: message.ts,
             });
+
+            try {
+                const tidbitText = await generateTidbits(n);
+                await client.chat.postMessage({
+                    channel: message.user,
+                    text: tidbitText,
+                });
+                const { localDateString } = getUserLocalDateTime(timezone);
+                updateLastSentDate(message.user, localDateString);
+            } catch (deliveryError) {
+                console.error(`Error sending immediate tidbits to user ${message.user}:`, deliveryError);
+            }
         } catch (error) {
             console.error('Error subscribing user to tidbits:', error);
             await say({

@@ -161,6 +161,37 @@ async function runTidbitsTests() {
         const shouldNotSendDuplicate = (nyTime.localHour === 8 && '2026-08-12' !== nyTime.localDateString);
         assert(shouldNotSendDuplicate === false, "Delivery skipped when last_sent_date equals today");
 
+
+        // --- 6. Immediate Delivery on Subscription Tests ---
+        console.log("\n6. Testing Immediate Tidbit Delivery on Subscription...");
+
+        const subUser = 'U88888_IMMEDIATE';
+        const subChannel = 'C88888_IMMEDIATE';
+        const subTz = 'America/New_York';
+        const subN = 2;
+
+        removeSubscription(subUser);
+        upsertSubscription(subUser, subChannel, subN, subTz);
+
+        // Simulate immediate delivery flow
+        const immediateTidbits = await generateTidbits(subN);
+        assert(typeof immediateTidbits === 'string' && immediateTidbits.includes("*Gembo's Tidbits of the Day* ☀️"), "Immediate delivery tidbit generation returns formatted string");
+        const bulletMatches = immediateTidbits.match(/• /g);
+        assert(bulletMatches !== null && bulletMatches.length === subN, `Immediate delivery generated exactly ${subN} tidbits`);
+
+        const { localDateString: immediateLocalDate } = getUserLocalDateTime(subTz);
+        updateLastSentDate(subUser, immediateLocalDate);
+
+        const updatedSub = getSubscription(subUser);
+        assert(updatedSub?.last_sent_date === immediateLocalDate, `last_sent_date updated to today's local date (${immediateLocalDate}) upon subscription`);
+
+        // Verify the worker skip condition (last_sent_date === localDateString) prevents duplicate daily delivery
+        const { localDateString: workerCheckDate } = getUserLocalDateTime(subTz);
+        const shouldSkipWorkerDelivery = (updatedSub?.last_sent_date === workerCheckDate);
+        assert(shouldSkipWorkerDelivery === true, "Worker skip condition prevents duplicate daily delivery after immediate subscription");
+
+        removeSubscription(subUser);
+
         console.log(`\n===================================`);
         console.log(`Test Execution Summary: ${passed} passed, ${failed} failed.`);
         console.log(`===================================`);
