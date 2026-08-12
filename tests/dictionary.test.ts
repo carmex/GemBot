@@ -2,7 +2,7 @@
  * GemBot: An intelligent Slack assistant with AI capabilities.
  */
 
-import { fetchDictionaryEntry } from '../src/features/dictionary';
+import { fetchDictionaryEntry, generateDictionaryImagePrompt, DictionaryEntry } from '../src/features/dictionary';
 
 async function runTests() {
     console.log("Running Dictionary Tests...\n");
@@ -101,6 +101,33 @@ async function runTests() {
     const entryInvalid = await fetchDictionaryEntry(invalidWord);
     console.log(`Result for invalid word: ${entryInvalid ? JSON.stringify(entryInvalid) : 'null'}`);
     console.log("PASSED: Invalid word handling verification\n");
+
+    // 5. Test generateDictionaryImagePrompt with standard entry
+    console.log("5. Testing generateDictionaryImagePrompt(entryDict)...");
+    const promptResult = await generateDictionaryImagePrompt(entryDict);
+    console.log(`Generated prompt: "${promptResult}"`);
+    if (typeof promptResult !== 'string' || promptResult.trim().length === 0) {
+        console.error("FAILED: generateDictionaryImagePrompt returned empty string");
+        process.exit(1);
+    }
+    console.log("PASSED: generateDictionaryImagePrompt with standard entry\n");
+
+    // 6. Test generateDictionaryImagePrompt with sparse/fallback entry (missing definitions)
+    console.log("6. Testing generateDictionaryImagePrompt with sparse entry...");
+    const sparseEntry: DictionaryEntry = {
+        word: "serendipity",
+        pronunciation: "N/A",
+        etymology: "N/A",
+        demonym: "N/A",
+        definitions: []
+    };
+    const sparsePrompt = await generateDictionaryImagePrompt(sparseEntry);
+    console.log(`Generated prompt for sparse entry: "${sparsePrompt}"`);
+    if (typeof sparsePrompt !== 'string' || sparsePrompt.trim().length === 0) {
+        console.error("FAILED: generateDictionaryImagePrompt failed for sparse entry");
+        process.exit(1);
+    }
+    console.log("PASSED: generateDictionaryImagePrompt with sparse entry\n");
 
     console.log("ALL DICTIONARY TESTS PASSED SUCCESSFULLY!");
 }
