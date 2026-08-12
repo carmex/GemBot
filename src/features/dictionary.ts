@@ -180,11 +180,11 @@ Return ONLY valid JSON matching this structure:
 
 /**
  * Generates an image prompt depicting a visual scene based on a dictionary entry.
- * Uses LLM prompt engineering to focus on living scenes and exclude text/books/letters.
+ * Uses LLM prompt engineering to focus on living scenes and prevent depicting the target word itself or printing the literal definition.
  */
 export async function generateDictionaryImagePrompt(entry: DictionaryEntry): Promise<string> {
     const primaryDefinition = entry.definitions?.[0]?.definition || entry.word || 'concept';
-    const fallbackPrompt = `A vivid visual scene portraying: ${primaryDefinition}, artistic style, dynamic environment, no text, no books, no signs`;
+    const fallbackPrompt = `A vivid visual scene portraying: ${primaryDefinition}, artistic style, dynamic environment, do not include the word itself or print the literal definition in the image`;
 
     try {
         const provider = createProvider();
@@ -201,7 +201,7 @@ Word details:
 ${entry.etymology && entry.etymology !== 'N/A' ? `- Etymology: ${entry.etymology}\n` : ''}
 
 Strict Prompting Rules:
-1. NEGATIVE CONSTRAINTS: ABSOLUTELY NO text, letters, words, signs, books, scrolls, dictionary pages, or written definitions in the image description.
+1. NEGATIVE CONSTRAINTS: ABSOLUTELY NO including the target word itself, written text of the word, or printing the literal definition in the image description.
 2. POSITIVE CONSTRAINTS: Focus entirely on an action, environment, or characters actively demonstrating the concept in a living, dynamic scene.
 3. ARTISTIC FREEDOM: Feel free to use artistic license (cinematic, surrealism, painterly, fantasy, vibrant digital art, abstract, or realistic).
 4. OUTPUT FORMAT: Output ONLY the raw image prompt text. Do not include quotes, intro/outro text, labels, or markdown formatting.`;
