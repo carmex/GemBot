@@ -129,6 +129,34 @@ async function runTests() {
     }
     console.log("PASSED: generateDictionaryImagePrompt with sparse entry\n");
 
+    // 7. Testing Prompt Negative Constraints
+    console.log("7. Testing Prompt Negative Constraints...");
+    const fs = require('fs');
+    const path = require('path');
+    const dictionarySource = fs.readFileSync(path.join(__dirname, '../src/features/dictionary.ts'), 'utf-8');
+
+    // Verify blanket restrictions are removed
+    if (dictionarySource.includes('no text, no books, no signs')) {
+        console.error("FAILED: Blanket constraint 'no text, no books, no signs' still present in src/features/dictionary.ts");
+        process.exit(1);
+    }
+    if (dictionarySource.includes('ABSOLUTELY NO text, letters, words, signs, books, scrolls, dictionary pages, or written definitions')) {
+        console.error("FAILED: Blanket constraint 'ABSOLUTELY NO text, letters, words, signs...' still present in src/features/dictionary.ts");
+        process.exit(1);
+    }
+
+    // Verify updated focused negative constraints are present
+    if (!dictionarySource.includes('do not include the word itself or print the literal definition in the image')) {
+        console.error("FAILED: Focused fallback negative constraint missing in src/features/dictionary.ts");
+        process.exit(1);
+    }
+    if (!dictionarySource.includes('ABSOLUTELY NO including the target word itself, written text of the word, or printing the literal definition in the image description.')) {
+        console.error("FAILED: Focused LLM Rule 1 negative constraint missing in src/features/dictionary.ts");
+        process.exit(1);
+    }
+
+    console.log("PASSED: Prompt negative constraints verification\n");
+
     console.log("ALL DICTIONARY TESTS PASSED SUCCESSFULLY!");
 }
 
