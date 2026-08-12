@@ -34,6 +34,7 @@ import { getStockCandles, getCryptoCandles, generateChart } from '../features/st
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
 import { fetchDictionaryEntry, generateDictionaryImagePrompt } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
+import { upsertSubscription, removeSubscription } from '../features/tidbit-db';
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
     app.message(/^!fetch_url\s+(.+)/i, async ({message, context, say}) => {
@@ -937,6 +938,88 @@ ${formatInventory(character.inventory)}
         }
     });
 
+    app.message(/^!tidbit\s+subscribe(?:\s+(.+))?/i, async ({message, context, say, client}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+
+        const rawN = context.matches?.[1]?.trim();
+        const n = rawN ? Number(rawN) : NaN;
+
+        if (!rawN || isNaN(n) || !Number.isInteger(n) || n < 1 || n > 5) {
+            await say({
+                text: '⚠️ Invalid number of tidbits. n must be a positive integer between 1 and 5 (e.g., !tidbit subscribe 3).',
+                thread_ts: message.ts,
+            });
+            return;
+        }
+
+        let timezone = 'UTC';
+        try {
+            const userInfo = await client.users.info({ user: message.user });
+            if (userInfo.user?.tz) {
+                timezone = userInfo.user.tz;
+            }
+        } catch (error) {
+            console.error(`Error fetching timezone for user ${message.user}:`, error);
+        }
+
+        try {
+            upsertSubscription(message.user, message.channel, n, timezone);
+            await say({
+                text: `✅ You have subscribed to *Gembo's tidbits of the day*! You will receive ${n} tidbit(s) daily at 8:00 AM (${timezone}).`,
+                thread_ts: message.ts,
+            });
+        } catch (error) {
+            console.error('Error subscribing user to tidbits:', error);
+            await say({
+                text: 'Sorry, there was an error updating your subscription.',
+                thread_ts: message.ts,
+            });
+        }
+    });
+
+    app.message(/^!tidbit\s+unsubscribe/i, async ({message, say}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+
+        try {
+            const removed = removeSubscription(message.user);
+            if (removed) {
+                await say({
+                    text: `✅ You have been unsubscribed from *Gembo's tidbits of the day*.`,
+                    thread_ts: message.ts,
+                });
+            } else {
+                await say({
+                    text: `You are not currently subscribed to *Gembo's tidbits of the day*.`,
+                    thread_ts: message.ts,
+                });
+            }
+        } catch (error) {
+            console.error('Error unsubscribing user from tidbits:', error);
+            await say({
+                text: 'Sorry, there was an error removing your subscription.',
+                thread_ts: message.ts,
+            });
+        }
+    });
+
+    app.message(/^!tidbit(?:\s+(.+))?$/i, async ({message, context, say}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+        const sub = context.matches?.[1]?.trim();
+        if (sub && (/^subscribe/i.test(sub) || /^unsubscribe/i.test(sub))) {
+            return; // Handled by specific command listeners above
+        }
+        await say({
+            text: 'Usage: `!tidbit subscribe <n>` (where 1 <= n <= 5) or `!tidbit unsubscribe`',
+            thread_ts: message.ts,
+        });
+    });
+
     app.message(/^!gembot help$/i, async ({message, say}) => {
         const helpText = `
 *Available Commands*
@@ -977,6 +1060,10 @@ ${formatInventory(character.inventory)}
 • \`!watchlist\`: View your current stock watchlist with P/L.
 • \`!watch <TICKER> [date] [price] [shares]\`: Add a stock to your watchlist.
 • \`!unwatch <TICKER>\`: Remove a stock from your watchlist.
+
+*Tidbits of the Day*
+• \`!tidbit subscribe <n>\`: Subscribes you to receive \`n\` tidbits daily at 8:00 AM in your local time zone (1 <= n <= 5).
+• \`!tidbit unsubscribe\`: Unsubscribes you from daily tidbits.
 
 *Usage Tracking*
 The bot tracks usage of the LLM and image generation features. You can check your usage with the following commands. The costs shown are estimates only and should not be used for billing purposes.

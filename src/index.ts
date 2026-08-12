@@ -24,6 +24,8 @@ import * as cron from 'node-cron';
 import { sendMorningGreeting } from "./features/utils";
 import { initReminderDb } from './features/reminder-db';
 import { startReminderWorker } from './features/reminder-worker';
+import { initTidbitDb } from './features/tidbit-db';
+import { startTidbitWorker } from './features/tidbit-worker';
 import { startJournaldMonitor } from './features/journald-monitor';
 
 
@@ -178,6 +180,8 @@ app.error(async (error) => {
         await app.start();
         initReminderDb();
         startReminderWorker(app);
+        initTidbitDb();
+        startTidbitWorker(app);
         await startApiServer(app);
         startJournaldMonitor(app);
         console.log(`⚡️ Bolt app is running!`);
