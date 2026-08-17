@@ -1035,22 +1035,29 @@ ${formatInventory(character.inventory)}
         });
     });
 
-    app.message(/^!gembot help$/i, async ({message, say}) => {
+    app.message(/^!(?:gembot\s+)?help$/i, async ({message, say}) => {
         const helpText = `
 *Available Commands*
 
 *AI & Fun*
 • \`@<BotName> <prompt>\`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
+• \`@<BotName> feature request\`: Start an interactive automated feature request workflow to plan, code, test, and submit a PR.
 • \`!image <prompt>\`: Generates an image based on your text prompt using Imagen 4.
 • \`!meme list\`: Lists popular meme templates.
 • \`!meme search <term>\`: Search for meme templates.
 • \`!meme <template> <text1> [| text2 ...]\`: Generates a meme. Multi-panel memes are supported using \`|\`.
+• \`gis [flags][#] <term>\`: Search Google Images (flags: \`g\`, \`t\`, \`i\`, \`a\` (gif), \`m\`, \`l\`; e.g., \`gis dogs\`, \`gisa 2 cats\`).
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
-• \`!ud <term>\`: Get definitions from Urban Dictionary.
-• \`!dict <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
+• \`!ud <term>\` or \`!urban <term>\`: Get definitions from Urban Dictionary.
+• \`!dict <word>\` or \`!dictionary <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
 • \`!dp <word>\`: Look up definition, pronunciation, etymology, and demonym for a word, and generate a related image.
+• \`!pollen <zip_code>\`: Fetches 30-day pollen history and generates a chart.
+• \`!tidbit subscribe <n>\`: Subscribes you to receive \`n\` tidbits daily at 8:00 AM in your local time zone (1 <= n <= 5).
+• \`!tidbit unsubscribe\`: Unsubscribes you from daily tidbits.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
+• \`!gembot channel on\`: Enable Gembot for all messages in this channel.
+• \`!gembot channel off\`: Disable Gembot for all messages in this channel.
 
 *RPG Mode*
 • \`!gembot rpg <gm|player|off|status>\`: Manage RPG mode for this channel.
@@ -1059,6 +1066,7 @@ ${formatInventory(character.inventory)}
   • \`off\`: Disables RPG mode in the channel.
   • \`status\`: Checks the current RPG mode status for the channel.
 • \`!roll <dice>\`: Rolls dice using standard dice notation (e.g., \`1d20\`, \`2d6+3\`).
+• \`!rpgstats [character_name]\`: Displays the character sheet for yourself or a specific character in the current game.
 
 *Stocks & Crypto*
 • \`!q <TICKER...>\`: Get a real-time stock quote.
@@ -1068,17 +1076,12 @@ ${formatInventory(character.inventory)}
 • \`!stats <TICKER...>\`: Get key statistics for a stock (Market Cap, 52-week high/low).
 • \`!cstats <TICKER...>\`: Get key statistics for a crypto (Current Price, 52-week high/low).
 • \`!earnings <TICKER>\`: Get upcoming earnings dates.
-• \`!stocknews\`: Fetches the latest general stock market news.
-• \`!cryptonews\`: Fetches the latest cryptocurrency news.
+• \`!news [general|crypto]\`: Fetches the latest general stock or cryptocurrency news headlines.
 
 *Watchlist*
 • \`!watchlist\`: View your current stock watchlist with P/L.
 • \`!watch <TICKER> [date] [price] [shares]\`: Add a stock to your watchlist.
 • \`!unwatch <TICKER>\`: Remove a stock from your watchlist.
-
-*Tidbits of the Day*
-• \`!tidbit subscribe <n>\`: Subscribes you to receive \`n\` tidbits daily at 8:00 AM in your local time zone (1 <= n <= 5).
-• \`!tidbit unsubscribe\`: Unsubscribes you from daily tidbits.
 
 *Usage Tracking*
 The bot tracks usage of the LLM and image generation features. You can check your usage with the following commands. The costs shown are estimates only and should not be used for billing purposes.
