@@ -5,6 +5,8 @@
  * Unit and integration tests for "Gembo's tidbits of the day" subscription service.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import {
     initTidbitDb,
     upsertSubscription,
@@ -191,6 +193,35 @@ async function runTidbitsTests() {
         assert(shouldSkipWorkerDelivery === true, "Worker skip condition prevents duplicate daily delivery after immediate subscription");
 
         removeSubscription(subUser);
+
+
+        // --- 7. Help Documentation Categorization Tests ---
+        console.log("\n7. Testing Help Documentation Categorization...");
+
+        const commandsFilePath = path.join(__dirname, '../src/listeners/commands.ts');
+        const commandsContent = fs.readFileSync(commandsFilePath, 'utf8');
+
+        // Extract helpText from commands.ts
+        const helpTextMatch = commandsContent.match(/app\.message\(\/\^!gembot help\$\/i,[\s\S]*?const helpText = `([\s\S]*?)`;/);
+        assert(helpTextMatch !== null, "Found helpText in src/listeners/commands.ts");
+
+        if (helpTextMatch) {
+            const helpText = helpTextMatch[1];
+
+            // Extract AI & Fun section
+            const aiFunSectionMatch = helpText.match(/\*AI & Fun\*([\s\S]*?)(?=\n\n\*[A-Z]|\n\*)/);
+            assert(aiFunSectionMatch !== null, "Found *AI & Fun* section in helpText");
+
+            if (aiFunSectionMatch) {
+                const aiFunSection = aiFunSectionMatch[1];
+                assert(aiFunSection.includes('!tidbit subscribe <n>'), "*AI & Fun* contains '!tidbit subscribe <n>'");
+                assert(aiFunSection.includes('!tidbit unsubscribe'), "*AI & Fun* contains '!tidbit unsubscribe'");
+                assert(aiFunSection.includes('feature request'), "*AI & Fun* contains 'feature request'");
+            }
+
+            // Assert *Tidbits of the Day* does not exist as a standalone category heading
+            assert(!helpText.includes('*Tidbits of the Day*'), "helpText does not contain standalone '*Tidbits of the Day*' heading");
+        }
 
         console.log(`\n===================================`);
         console.log(`Test Execution Summary: ${passed} passed, ${failed} failed.`);

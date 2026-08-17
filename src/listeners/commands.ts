@@ -1041,6 +1041,7 @@ ${formatInventory(character.inventory)}
 
 *AI & Fun*
 • \`@<BotName> <prompt>\`: Mention the bot in a channel to start a new threaded conversation, or in an existing thread to have it join with context.
+• \`@<BotName> feature request\`: Start an interactive AI workflow to propose, plan, and implement feature requests.
 • \`!image <prompt>\`: Generates an image based on your text prompt using Imagen 4.
 • \`!meme list\`: Lists popular meme templates.
 • \`!meme search <term>\`: Search for meme templates.
@@ -1049,6 +1050,8 @@ ${formatInventory(character.inventory)}
 • \`!ud <term>\`: Get definitions from Urban Dictionary.
 • \`!dict <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
 • \`!dp <word>\`: Look up definition, pronunciation, etymology, and demonym for a word, and generate a related image.
+• \`!tidbit subscribe <n>\`: Subscribes you to receive \`n\` tidbits daily at 8:00 AM in your local time zone (1 <= n <= 5).
+• \`!tidbit unsubscribe\`: Unsubscribes you from daily tidbits.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
 
@@ -1075,10 +1078,6 @@ ${formatInventory(character.inventory)}
 • \`!watchlist\`: View your current stock watchlist with P/L.
 • \`!watch <TICKER> [date] [price] [shares]\`: Add a stock to your watchlist.
 • \`!unwatch <TICKER>\`: Remove a stock from your watchlist.
-
-*Tidbits of the Day*
-• \`!tidbit subscribe <n>\`: Subscribes you to receive \`n\` tidbits daily at 8:00 AM in your local time zone (1 <= n <= 5).
-• \`!tidbit unsubscribe\`: Unsubscribes you from daily tidbits.
 
 *Usage Tracking*
 The bot tracks usage of the LLM and image generation features. You can check your usage with the following commands. The costs shown are estimates only and should not be used for billing purposes.
