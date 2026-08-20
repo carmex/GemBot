@@ -19,14 +19,18 @@ export class ImageGenerator {
         const token = await this.auth.getAccessToken();
         const projectId = config.vertex.projectId;
         const location = config.vertex.location;
-        const modelId = 'imagen-4.0-generate-001'; // imagegeneration@006';
+        const modelId = 'gemini-3.1-flash-image';
         const apiEndpoint = `${location}-aiplatform.googleapis.com`;
-        const url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predict`;
+        const url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:generateContent`;
         const requestBody = {
-            instances: [{ prompt }],
-            parameters: {
-                sampleCount: 1,
-                includeRaiReason: true,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [{ text: prompt }],
+                },
+            ],
+            generationConfig: {
+                responseModalities: ['IMAGE'],
             },
         };
         const response = await fetch(url, {
@@ -39,26 +43,49 @@ export class ImageGenerator {
         });
         if (!response.ok) {
             const errorBody = (await response.json()) as { error: { message: string } };
-            console.error('Imagen API response error:', response.status, JSON.stringify(errorBody, null, 2));
-            const apiError = new Error(`Imagen API request failed with status ${response.status}`);
+            console.error('Gemini Image API response error:', response.status, JSON.stringify(errorBody, null, 2));
+            const apiError = new Error(`Gemini Image API request failed with status ${response.status}`);
             (apiError as any).apiError = errorBody.error;
             throw apiError;
         }
         const data = (await response.json()) as {
-            predictions: [
-                {
-                    bytesBase64Encoded?: string;
-                    raiFilteredReason?: string;
-                }
-            ];
+            candidates?: Array<{
+                content?: {
+                    parts?: Array<{
+                        text?: string;
+                        inlineData?: {
+                            mimeType?: string;
+                            data?: string;
+                        };
+                    }>;
+                };
+                finishReason?: string;
+                finishMessage?: string;
+            }>;
+            promptFeedback?: {
+                blockReason?: string;
+            };
         };
-        if (data.predictions?.[0]?.raiFilteredReason) {
-            return { filteredReason: data.predictions[0].raiFilteredReason };
+
+        if (data.promptFeedback?.blockReason) {
+            return { filteredReason: `Prompt blocked: ${data.promptFeedback.blockReason}` };
         }
-        if (data.predictions?.[0]?.bytesBase64Encoded) {
-            return { imageBase64: data.predictions[0].bytesBase64Encoded };
+
+        const candidate = data.candidates?.[0];
+        if (candidate?.finishReason && !['STOP', 'MAX_TOKENS'].includes(candidate.finishReason)) {
+            return { filteredReason: candidate.finishMessage || `Generation stopped due to ${candidate.finishReason}` };
         }
-        throw new Error('Invalid response structure from Imagen API.');
+
+        const imagePart = candidate?.content?.parts?.find(p => p.inlineData?.data);
+        if (imagePart?.inlineData?.data) {
+            return { imageBase64: imagePart.inlineData.data };
+        }
+
+        if (candidate?.finishMessage) {
+            return { filteredReason: candidate.finishMessage };
+        }
+
+        throw new Error('Invalid response structure from Gemini Image API.');
     }
 
     public async generateAndUploadImage(prompt: string, channelId: string) {
