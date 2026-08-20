@@ -16,12 +16,7 @@ export class ImageGenerator {
     }
 
     public async generateImage(prompt: string): Promise<{ imageBase64?: string; filteredReason?: string }> {
-        const token = await this.auth.getAccessToken();
-        const projectId = config.vertex.projectId;
-        const location = config.vertex.location;
-        const modelId = 'gemini-3.1-flash-image';
-        const apiEndpoint = `${location}-aiplatform.googleapis.com`;
-        const url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:generateContent`;
+        const modelId = process.env.IMAGE_GEN_MODEL || 'gemini-3.1-flash-image';
         const requestBody = {
             contents: [
                 {
@@ -33,19 +28,67 @@ export class ImageGenerator {
                 responseModalities: ['IMAGE'],
             },
         };
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
+
+        let url: string;
+        let headers: Record<string, string>;
+
+        // If Gemini API key is configured, use Google AI Studio endpoint
+        if (config.gemini.apiKey) {
+            url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${config.gemini.apiKey}`;
+            headers = {
+                'Content-Type': 'application/json',
+            };
+        } else {
+            // Vertex AI Endpoint (Gemini image models are deployed under the 'global' location)
+            const token = await this.auth.getAccessToken();
+            const projectId = config.vertex.projectId || (await this.auth.getProjectId().catch(() => ''));
+            const location = process.env.VERTEX_IMAGE_LOCATION || (config.vertex.location === 'us-central1' ? 'global' : config.vertex.location) || 'global';
+            const apiEndpoint = location === 'global' ? 'aiplatform.googleapis.com' : `${location}-aiplatform.googleapis.com`;
+            url = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:generateContent`;
+            headers = {
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
-            },
+            };
+        }
+
+        let response = await fetch(url, {
+            method: 'POST',
+            headers,
             body: JSON.stringify(requestBody),
         });
+
+        // If AI Studio call failed and Vertex credentials exist, attempt Vertex AI fallback
+        if (!response.ok && config.gemini.apiKey && this.auth) {
+            try {
+                const token = await this.auth.getAccessToken();
+                const projectId = config.vertex.projectId || (await this.auth.getProjectId().catch(() => ''));
+                if (token && projectId) {
+                    const location = process.env.VERTEX_IMAGE_LOCATION || 'global';
+                    const apiEndpoint = location === 'global' ? 'aiplatform.googleapis.com' : `${location}-aiplatform.googleapis.com`;
+                    const vertexUrl = `https://${apiEndpoint}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:generateContent`;
+                    const vertexResponse = await fetch(vertexUrl, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(requestBody),
+                    });
+                    if (vertexResponse.ok) {
+                        response = vertexResponse;
+                    }
+                }
+            } catch (fallbackErr) {
+                console.warn('Fallback to Vertex AI image generation failed:', fallbackErr);
+            }
+        }
+
         if (!response.ok) {
-            const errorBody = (await response.json()) as { error: { message: string } };
+            const errorBody = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
             console.error('Gemini Image API response error:', response.status, JSON.stringify(errorBody, null, 2));
-            const apiError = new Error(`Gemini Image API request failed with status ${response.status}`);
-            (apiError as any).apiError = errorBody.error;
+            const message = errorBody?.error?.message || `Gemini Image API request failed with status ${response.status}`;
+            const apiError = new Error(message);
+            (apiError as any).apiError = errorBody?.error;
             throw apiError;
         }
         const data = (await response.json()) as {
