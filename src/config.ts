@@ -31,12 +31,14 @@ export interface Config {
         signingSecret: string;
         appToken: string;
         morningGreetingChannelId: string;
+        tidbitChannelId: string;
     };
     server: {
         port: number;
     };
     environment: string;
     morningGreetingSchedule: string;
+    tidbitSchedule: string;
     channelHistoryLimit: number;
     ai: {
         provider: 'gemini' | 'openai';
@@ -139,12 +141,14 @@ export const config: Config = {
         signingSecret: process.env.SLACK_SIGNING_SECRET || '',
         appToken: process.env.SLACK_APP_TOKEN || '',
         morningGreetingChannelId: process.env.SLACK_MORNING_GREETING_CHANNEL_ID || '',
+        tidbitChannelId: process.env.SLACK_TIDBIT_CHANNEL_ID || 'C0BT3T88PME',
     },
     server: {
         port: parseInt(process.env.PORT || '3000', 10),
     },
     environment: process.env.NODE_ENV || 'development',
     morningGreetingSchedule: process.env.MORNING_GREETING_SCHEDULE || '30 9 * * *',
+    tidbitSchedule: process.env.TIDBIT_SCHEDULE || '0 8 * * *',
     channelHistoryLimit: parseInt(process.env.CHANNEL_HISTORY_LIMIT || '20', 10),
     ai: {
         provider: (process.env.AI_PROVIDER as 'gemini' | 'openai') ||

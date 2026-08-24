@@ -13,6 +13,8 @@ import {
     removeSubscription,
     updateLastSentDate
 } from '../src/features/tidbit-db';
+import * as cron from 'node-cron';
+import { config } from '../src/config';
 import {
     generateTidbits,
     getTopNews,
@@ -22,7 +24,7 @@ import {
     getInspirationalQuote,
     FAMOUS_QUOTES
 } from '../src/features/tidbit-generator';
-import { getUserLocalDateTime } from '../src/features/tidbit-worker';
+import { getUserLocalDateTime, sendChannelTidbits } from '../src/features/tidbit-worker';
 
 async function runTidbitsTests() {
     console.log("=== Running Tidbits Feature Tests ===");
@@ -191,6 +193,61 @@ async function runTidbitsTests() {
         assert(shouldSkipWorkerDelivery === true, "Worker skip condition prevents duplicate daily delivery after immediate subscription");
 
         removeSubscription(subUser);
+
+
+        // --- 7. Testing Daily Channel Delivery to <#C0BT3T88PME> ---
+        console.log("\n7. Testing Daily Channel Delivery to <#C0BT3T88PME>...");
+
+        const postedMessages: { channel: string; text: string }[] = [];
+        const mockApp: any = {
+            client: {
+                chat: {
+                    postMessage: async ({ channel, text }: { channel: string; text: string }) => {
+                        postedMessages.push({ channel, text });
+                        return { ok: true };
+                    }
+                }
+            }
+        };
+
+        // Test explicit channel delivery
+        await sendChannelTidbits(mockApp, 'C0BT3T88PME', 5);
+        assert(postedMessages.length === 1, "sendChannelTidbits posts 1 message");
+        assert(postedMessages[0]?.channel === 'C0BT3T88PME', "Target channel is 'C0BT3T88PME'");
+        assert(postedMessages[0]?.text.includes("*Gembo's Tidbits of the Day* ☀️"), "Message contains '*Gembo's Tidbits of the Day* ☀️' header");
+        const channelBulletMatches = postedMessages[0]?.text.match(/• /g);
+        assert(channelBulletMatches !== null && channelBulletMatches.length === 5, "Message contains exactly 5 bullet points");
+
+        // Test fallback to default config.slack.tidbitChannelId
+        postedMessages.length = 0;
+        await sendChannelTidbits(mockApp);
+        assert(postedMessages.length === 1, "sendChannelTidbits with default params posts 1 message");
+        assert(postedMessages[0]?.channel === (config.slack.tidbitChannelId || 'C0BT3T88PME'), "Default channel fallback resolves to config.slack.tidbitChannelId");
+        const defaultBulletMatches = postedMessages[0]?.text.match(/• /g);
+        assert(defaultBulletMatches !== null && defaultBulletMatches.length === 5, "Default delivery contains exactly 5 bullet points");
+
+        // Test graceful error handling when Slack API rejects postMessage
+        const errorMockApp: any = {
+            client: {
+                chat: {
+                    postMessage: async () => {
+                        throw new Error("Slack API channel_not_found error");
+                    }
+                }
+            }
+        };
+        let threwError = false;
+        try {
+            await sendChannelTidbits(errorMockApp, 'INVALID_CHANNEL', 5);
+        } catch (e) {
+            threwError = true;
+        }
+        assert(!threwError, "sendChannelTidbits gracefully handles Slack API error without throwing unhandled rejection");
+
+        // Validate cron schedule expression format
+        assert(cron.validate(config.tidbitSchedule), `Cron schedule expression "${config.tidbitSchedule}" is valid according to node-cron`);
+        assert(cron.validate('0 8 * * *'), "Default '0 8 * * *' cron expression is valid");
+
 
         console.log(`\n===================================`);
         console.log(`Test Execution Summary: ${passed} passed, ${failed} failed.`);
