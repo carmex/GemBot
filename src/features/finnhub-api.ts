@@ -18,6 +18,7 @@
 
 import {config} from '../config';
 import fetch from 'node-fetch';
+import {StockQuote} from '../types';
 
 const FINNHUB_API_KEY = config.finnhubApiKey;
 const BASE_URL = 'https://finnhub.io/api/v1';
@@ -35,17 +36,37 @@ async function apiFetch(endpoint: string) {
     return response.json();
 }
 
-export async function fetchQuote(ticker: string): Promise<{price: number; change: number; percentChange: number} | null> {
+export async function fetchQuote(ticker: string): Promise<StockQuote | null> {
     try {
-        const data = (await apiFetch(`quote?symbol=${ticker}`)) as {c: number; d: number; dp: number};
+        const data = (await apiFetch(`quote?symbol=${ticker}`)) as {
+            c: number;
+            d: number;
+            dp: number;
+            preMarketPrice?: number;
+            preMarketChange?: number;
+            preMarketPercentChange?: number;
+            postMarketPrice?: number;
+            postMarketChange?: number;
+            postMarketPercentChange?: number;
+            totalPercentChange?: number;
+            [key: string]: any;
+        };
         if (!data || typeof data.c === 'undefined') {
             return null;
         }
-        return {
+        const quote: StockQuote = {
             price: data.c,
             change: data.d,
             percentChange: data.dp,
         };
+        if (data.preMarketPrice !== undefined) quote.preMarketPrice = data.preMarketPrice;
+        if (data.preMarketChange !== undefined) quote.preMarketChange = data.preMarketChange;
+        if (data.preMarketPercentChange !== undefined) quote.preMarketPercentChange = data.preMarketPercentChange;
+        if (data.postMarketPrice !== undefined) quote.postMarketPrice = data.postMarketPrice;
+        if (data.postMarketChange !== undefined) quote.postMarketChange = data.postMarketChange;
+        if (data.postMarketPercentChange !== undefined) quote.postMarketPercentChange = data.postMarketPercentChange;
+        if (data.totalPercentChange !== undefined) quote.totalPercentChange = data.totalPercentChange;
+        return quote;
     } catch (error) {
         console.error(`Error fetching quote for ${ticker}:`, error);
         return null;

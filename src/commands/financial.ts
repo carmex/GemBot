@@ -19,7 +19,7 @@
 import {App} from '@slack/bolt';
 import {config} from '../config';
 import {fetchQuote, fetchCompanyProfile, fetchStockMetrics, fetchStockNews, fetchCryptoNews, fetchEarningsCalendar} from '../features/finnhub-api';
-import {getColoredTileEmoji, formatMarketCap, formatQuote} from '../features/utils';
+import {getColoredTileEmoji, formatMarketCap, formatQuote, formatQuoteWithDetails} from '../features/utils';
 import {getCryptoCandles} from '../features/stock-charts';
 
 export const registerFinancialCommands = (app: App) => {
@@ -142,9 +142,18 @@ export const registerFinancialCommands = (app: App) => {
 
         try {
             const results = await Promise.all(
-                tickers.map((ticker: string) => formatQuote(ticker))
+                tickers.map((ticker: string) => formatQuoteWithDetails(ticker))
             );
-            const reply = results.join('\n');
+
+            if (tickers.length > 1) {
+                results.sort((a, b) => {
+                    const aVal = (typeof a.sortPercentChange === 'number' && !isNaN(a.sortPercentChange)) ? a.sortPercentChange : -Infinity;
+                    const bVal = (typeof b.sortPercentChange === 'number' && !isNaN(b.sortPercentChange)) ? b.sortPercentChange : -Infinity;
+                    return bVal - aVal;
+                });
+            }
+
+            const reply = results.map(r => r.text).join('\n');
             await say({text: reply});
         } catch (error) {
             console.error('Finnhub API error:', error);
