@@ -18,6 +18,7 @@
 
 import { App } from '@slack/bolt';
 import * as cron from 'node-cron';
+import { config } from '../config';
 import { getAllSubscriptions, updateLastSentDate } from './tidbit-db';
 import { generateTidbits } from './tidbit-generator';
 
@@ -59,11 +60,43 @@ export function getUserLocalDateTime(timezoneStr: string, dateObj: Date = new Da
 }
 
 /**
+ * Sends n daily tidbits to a Slack channel.
+ */
+export async function sendChannelTidbits(
+    app: App,
+    channelId: string = config.slack.tidbitChannelId || 'C0BT3T88PME',
+    n: number = 5
+): Promise<void> {
+    try {
+        console.log(`[TidbitWorker] Generating ${n} tidbits for channel ${channelId}...`);
+        const tidbitText = await generateTidbits(n);
+        await app.client.chat.postMessage({
+            channel: channelId,
+            text: tidbitText,
+        });
+        console.log(`[TidbitWorker] Successfully sent daily tidbits to channel ${channelId}`);
+    } catch (error) {
+        console.error(`[TidbitWorker] Error sending tidbits to channel ${channelId}:`, error);
+    }
+}
+
+/**
  * Starts the background worker for Gembo's tidbits of the day.
- * Evaluates active subscriptions every minute for local 8:00 AM delivery.
+ * Evaluates active subscriptions every minute for local 8:00 AM delivery,
+ * and schedules the daily 8:00 AM channel broadcast.
  */
 export function startTidbitWorker(app: App): void {
     console.log('[TidbitWorker] Starting tidbit delivery worker...');
+
+    const channelId = config.slack.tidbitChannelId || 'C0BT3T88PME';
+    const schedule = config.tidbitSchedule || '0 8 * * *';
+    console.log(`[TidbitWorker] Scheduling daily tidbits for channel ${channelId} with schedule "${schedule}" (America/New_York)...`);
+
+    cron.schedule(schedule, async () => {
+        await sendChannelTidbits(app, channelId, 5);
+    }, {
+        timezone: 'America/New_York',
+    });
 
     cron.schedule('* * * * *', async () => {
         try {
