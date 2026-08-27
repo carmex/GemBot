@@ -95,9 +95,26 @@ export interface PollenData {
 
     weed_pollen: number;
 
-} 
+}
 
+export interface StockQuote {
+    price: number;
+    change: number;
+    percentChange: number;
+    preMarketPrice?: number;
+    preMarketChange?: number;
+    preMarketPercentChange?: number;
+    postMarketPrice?: number;
+    postMarketChange?: number;
+    postMarketPercentChange?: number;
+    totalPercentChange?: number;
+}
 
-
-
- 
+export interface FormattedQuoteResult {
+    ticker: string;
+    text: string;
+    percentChange?: number;
+    totalPercentChange?: number;
+    sortPercentChange?: number;
+    isError?: boolean;
+}

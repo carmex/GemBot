@@ -21,6 +21,7 @@ import {fetchCompanyProfile, fetchQuote} from './finnhub-api';
 import {App} from '@slack/bolt';
 import {fetchStockNews} from './finnhub-api';
 import fetch from 'node-fetch';
+import {FormattedQuoteResult} from '../types';
 
 export const getColoredTileEmoji = (percentChange: number): string => {
     if (percentChange >= 10) return ':_charles_green5:';
@@ -50,11 +51,15 @@ export const formatMarketCap = (marketCap: number): string => {
     }
 };
 
-export async function formatQuote(ticker: string, displayName?: string): Promise<string> {
+export async function formatQuoteWithDetails(ticker: string, displayName?: string): Promise<FormattedQuoteResult> {
     const displayTicker = displayName || ticker;
 
     if (!config.finnhubApiKey) {
-        return `*${displayTicker}*: No data found (API key not configured)`;
+        return {
+            ticker: displayTicker,
+            text: `*${displayTicker}*: No data found (API key not configured)`,
+            isError: true,
+        };
     }
 
     try {
@@ -62,12 +67,33 @@ export async function formatQuote(ticker: string, displayName?: string): Promise
         const quote = await fetchQuote(ticker);
 
         if (!quote) {
-            return `*${displayTicker}*: No price data found`;
+            return {
+                ticker: displayTicker,
+                text: `*${displayTicker}*: No price data found`,
+                isError: true,
+            };
         }
 
         const {price, change, percentChange} = quote;
-        const sign = change >= 0 ? '+' : '';
-        const emoji = getColoredTileEmoji(percentChange);
+        let totalPercentChange = quote.totalPercentChange;
+
+        if (totalPercentChange === undefined) {
+            const prevClose = price - change;
+            if (prevClose !== 0) {
+                if (quote.postMarketPrice !== undefined) {
+                    totalPercentChange = ((quote.postMarketPrice - prevClose) / prevClose) * 100;
+                } else if (quote.preMarketPrice !== undefined) {
+                    totalPercentChange = ((quote.preMarketPrice - prevClose) / prevClose) * 100;
+                }
+            }
+        }
+
+        let sortPercentChange: number;
+        if (totalPercentChange !== undefined && !isNaN(totalPercentChange)) {
+            sortPercentChange = totalPercentChange;
+        } else {
+            sortPercentChange = percentChange;
+        }
 
         let namePart: string;
         // If displayName is provided, it's a crypto quote. Just use the ticker.
@@ -80,11 +106,44 @@ export async function formatQuote(ticker: string, displayName?: string): Promise
             namePart = `*${displayTicker}* (${companyName})`;
         }
 
-        return `${emoji} ${namePart}: $${price.toFixed(2)} (${sign}${change.toFixed(2)}, ${sign}${percentChange.toFixed(2)}%)`;
+        const sign = change >= 0 ? '+' : '';
+        const emoji = getColoredTileEmoji(percentChange);
+        let formattedText = `${emoji} ${namePart}: $${price.toFixed(2)} (${sign}${change.toFixed(2)}, ${sign}${percentChange.toFixed(2)}%)`;
+
+        if (quote.postMarketPrice !== undefined) {
+            const postSign = (quote.postMarketChange !== undefined && quote.postMarketChange >= 0) ? '+' : '';
+            const postChangeStr = quote.postMarketChange !== undefined ? `${postSign}${quote.postMarketChange.toFixed(2)}, ` : '';
+            const totalSign = (totalPercentChange !== undefined && totalPercentChange >= 0) ? '+' : '';
+            const totalStr = totalPercentChange !== undefined ? `${totalSign}${totalPercentChange.toFixed(2)}% Total` : '';
+            formattedText += ` | Post-Market: $${quote.postMarketPrice.toFixed(2)} (${postChangeStr}${totalStr})`;
+        } else if (quote.preMarketPrice !== undefined) {
+            const preSign = (quote.preMarketChange !== undefined && quote.preMarketChange >= 0) ? '+' : '';
+            const preChangeStr = quote.preMarketChange !== undefined ? `${preSign}${quote.preMarketChange.toFixed(2)}, ` : '';
+            const totalSign = (totalPercentChange !== undefined && totalPercentChange >= 0) ? '+' : '';
+            const totalStr = totalPercentChange !== undefined ? `${totalSign}${totalPercentChange.toFixed(2)}% Total` : '';
+            formattedText += ` | Pre-Market: $${quote.preMarketPrice.toFixed(2)} (${preChangeStr}${totalStr})`;
+        }
+
+        return {
+            ticker: displayTicker,
+            text: formattedText,
+            percentChange,
+            totalPercentChange,
+            sortPercentChange,
+        };
     } catch (error) {
         console.error(`Error fetching quote for ${ticker}:`, error);
-        return `*${displayTicker}*: Error fetching data`;
+        return {
+            ticker: displayTicker,
+            text: `*${displayTicker}*: Error fetching data`,
+            isError: true,
+        };
     }
+}
+
+export async function formatQuote(ticker: string, displayName?: string): Promise<string> {
+    const result = await formatQuoteWithDetails(ticker, displayName);
+    return result.text;
 }
 
 // Function to send the morning greeting
