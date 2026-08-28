@@ -24,7 +24,7 @@ import {
     getInspirationalQuote,
     FAMOUS_QUOTES
 } from '../src/features/tidbit-generator';
-import { getUserLocalDateTime, sendChannelTidbits } from '../src/features/tidbit-worker';
+import { getUserLocalDateTime, sendChannelTidbits, cleanChannelId } from '../src/features/tidbit-worker';
 
 async function runTidbitsTests() {
     console.log("=== Running Tidbits Feature Tests ===");
@@ -195,26 +195,52 @@ async function runTidbitsTests() {
         removeSubscription(subUser);
 
 
-        // --- 7. Testing Daily Channel Delivery to <#C0BT3T88PME> ---
-        console.log("\n7. Testing Daily Channel Delivery to <#C0BT3T88PME>...");
+        // --- 7. Testing Channel ID Sanitization & Daily Channel Delivery ---
+        console.log("\n7. Testing Channel ID Sanitization & Daily Channel Delivery...");
 
-        const postedMessages: { channel: string; text: string }[] = [];
+        // Channel ID Sanitization Unit Tests
+        assert(cleanChannelId('C0BT3T88PME') === 'C0BT3T88PME', "cleanChannelId('C0BT3T88PME') returns 'C0BT3T88PME'");
+        assert(cleanChannelId('<#C0BT3T88PME>') === 'C0BT3T88PME', "cleanChannelId('<#C0BT3T88PME>') returns 'C0BT3T88PME'");
+        assert(cleanChannelId('<#C0BT3T88PME|general>') === 'C0BT3T88PME', "cleanChannelId('<#C0BT3T88PME|general>') returns 'C0BT3T88PME'");
+        assert(cleanChannelId('#C0BT3T88PME') === 'C0BT3T88PME', "cleanChannelId('#C0BT3T88PME') returns 'C0BT3T88PME'");
+        assert(cleanChannelId('') === '', "cleanChannelId('') returns ''");
+        assert(cleanChannelId(undefined) === '', "cleanChannelId(undefined) returns ''");
+
+        const postedMessages: { token?: string; channel: string; text: string }[] = [];
         const mockApp: any = {
             client: {
                 chat: {
-                    postMessage: async ({ channel, text }: { channel: string; text: string }) => {
-                        postedMessages.push({ channel, text });
+                    postMessage: async ({ token, channel, text }: { token?: string; channel: string; text: string }) => {
+                        postedMessages.push({ token, channel, text });
                         return { ok: true };
                     }
                 }
             }
         };
 
-        // Test explicit channel delivery
+        // Test explicit formatted channel delivery (<#C0BT3T88PME|general>)
+        await sendChannelTidbits(mockApp, '<#C0BT3T88PME|general>', 5);
+        assert(postedMessages.length === 1, "sendChannelTidbits with formatted channel posts 1 message");
+        assert(postedMessages[0]?.channel === 'C0BT3T88PME', "Target channel '<#C0BT3T88PME|general>' is sanitized to 'C0BT3T88PME'");
+        assert(postedMessages[0]?.token === config.slack.botToken, "sendChannelTidbits explicitly includes bot token");
+        assert(postedMessages[0]?.text.includes("*Gembo's Tidbits of the Day* ☀️"), "Message contains '*Gembo's Tidbits of the Day* ☀️' header");
+        const formattedBulletMatches = postedMessages[0]?.text.match(/• /g);
+        assert(formattedBulletMatches !== null && formattedBulletMatches.length === 5, "Message contains exactly 5 bullet points");
+
+        // Test formatted channel delivery with angle brackets only (<#C0BT3T88PME>)
+        postedMessages.length = 0;
+        await sendChannelTidbits(mockApp, '<#C0BT3T88PME>', 5);
+        assert(postedMessages.length === 1, "sendChannelTidbits with <#C0BT3T88PME> posts 1 message");
+        assert(postedMessages[0]?.channel === 'C0BT3T88PME', "Target channel '<#C0BT3T88PME>' is sanitized to 'C0BT3T88PME'");
+        assert(postedMessages[0]?.token === config.slack.botToken, "Message includes bot token");
+
+        // Test explicit raw channel delivery
+        postedMessages.length = 0;
         await sendChannelTidbits(mockApp, 'C0BT3T88PME', 5);
         assert(postedMessages.length === 1, "sendChannelTidbits posts 1 message");
         assert(postedMessages[0]?.channel === 'C0BT3T88PME', "Target channel is 'C0BT3T88PME'");
-        assert(postedMessages[0]?.text.includes("*Gembo's Tidbits of the Day* ☀️"), "Message contains '*Gembo's Tidbits of the Day* ☀️' header");
+        assert(postedMessages[0]?.token === config.slack.botToken, "Explicit channel delivery includes bot token");
+        assert(postedMessages[0]?.text.includes("*Gembo's Tidbits of the Day* ☀️"), "Message contains header");
         const channelBulletMatches = postedMessages[0]?.text.match(/• /g);
         assert(channelBulletMatches !== null && channelBulletMatches.length === 5, "Message contains exactly 5 bullet points");
 
@@ -222,7 +248,8 @@ async function runTidbitsTests() {
         postedMessages.length = 0;
         await sendChannelTidbits(mockApp);
         assert(postedMessages.length === 1, "sendChannelTidbits with default params posts 1 message");
-        assert(postedMessages[0]?.channel === (config.slack.tidbitChannelId || 'C0BT3T88PME'), "Default channel fallback resolves to config.slack.tidbitChannelId");
+        assert(postedMessages[0]?.channel === (cleanChannelId(config.slack.tidbitChannelId) || 'C0BT3T88PME'), "Default channel fallback resolves to sanitized config.slack.tidbitChannelId");
+        assert(postedMessages[0]?.token === config.slack.botToken, "Default channel fallback includes bot token");
         const defaultBulletMatches = postedMessages[0]?.text.match(/• /g);
         assert(defaultBulletMatches !== null && defaultBulletMatches.length === 5, "Default delivery contains exactly 5 bullet points");
 
@@ -243,6 +270,38 @@ async function runTidbitsTests() {
             threwError = true;
         }
         assert(!threwError, "sendChannelTidbits gracefully handles Slack API error without throwing unhandled rejection");
+
+        // --- 8. Testing !test-tidbits Command Handler & Regex Matching ---
+        console.log("\n8. Testing !test-tidbits Command Execution & Regex Matching...");
+
+        const testTidbitRegex = /^!test-tidbit(?:s)?$/i;
+        assert(testTidbitRegex.test('!test-tidbits'), "'!test-tidbits' matches regex");
+        assert(testTidbitRegex.test('!test-tidbit'), "'!test-tidbit' matches regex");
+        assert(testTidbitRegex.test('!TEST-TIDBITS'), "'!TEST-TIDBITS' case-insensitively matches regex");
+        assert(testTidbitRegex.test('!TEST-TIDBIT'), "'!TEST-TIDBIT' case-insensitively matches regex");
+        assert(!testTidbitRegex.test('!test-tidbits-more'), "'!test-tidbits-more' does not match regex");
+        assert(!testTidbitRegex.test('test-tidbits'), "'test-tidbits' without prefix does not match regex");
+
+        // Simulate !test-tidbits invocation
+        postedMessages.length = 0;
+        const saidReplies: { text: string; thread_ts?: string }[] = [];
+        const mockSay = async (args: { text: string; thread_ts?: string }) => {
+            saidReplies.push(args);
+        };
+        const mockMessage = { user: 'U12345', ts: '1700000000.000100' };
+
+        const testTargetChannel = cleanChannelId(config.slack.tidbitChannelId) || 'C0BT3T88PME';
+        await sendChannelTidbits(mockApp, testTargetChannel, 5);
+        await mockSay({
+            text: `✅ Daily tidbits test completed! Sent to <#${testTargetChannel}>.`,
+            thread_ts: mockMessage.ts,
+        });
+
+        assert(postedMessages.length === 1, "!test-tidbits flow sends 1 tidbit broadcast to target channel");
+        assert(postedMessages[0]?.channel === testTargetChannel, `!test-tidbits broadcast sent to channel '${testTargetChannel}'`);
+        assert(saidReplies.length === 1, "!test-tidbits replies with 1 status confirmation");
+        assert(saidReplies[0]?.text === `✅ Daily tidbits test completed! Sent to <#${testTargetChannel}>.`, "Status confirmation text matches expected format");
+        assert(saidReplies[0]?.thread_ts === mockMessage.ts, "Status confirmation replied in thread");
 
         // Validate cron schedule expression format
         assert(cron.validate(config.tidbitSchedule), `Cron schedule expression "${config.tidbitSchedule}" is valid according to node-cron`);

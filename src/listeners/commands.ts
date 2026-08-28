@@ -36,7 +36,7 @@ import { fetchDictionaryEntry, generateDictionaryImagePrompt } from '../features
 import { userManager } from '../features/user-manager';
 import { upsertSubscription, removeSubscription, updateLastSentDate } from '../features/tidbit-db';
 import { generateTidbits } from '../features/tidbit-generator';
-import { getUserLocalDateTime } from '../features/tidbit-worker';
+import { getUserLocalDateTime, sendChannelTidbits, cleanChannelId } from '../features/tidbit-worker';
 
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
@@ -551,6 +551,27 @@ _Costs are estimates only and should not be used for billing purposes._`;
         }
     });
 
+    app.message(/^!test-tidbit(?:s)?$/i, async ({message, say}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+
+        try {
+            const targetChannel = cleanChannelId(config.slack.tidbitChannelId) || 'C0BT3T88PME';
+            await sendChannelTidbits(app, targetChannel, 5);
+            await say({
+                text: `✅ Daily tidbits test completed! Sent to <#${targetChannel}>.`,
+                thread_ts: message.ts,
+            });
+        } catch (error) {
+            console.error('Error in test tidbits:', error);
+            await say({
+                text: `❌ Error testing daily tidbits: ${(error as Error).message}`,
+                thread_ts: message.ts,
+            });
+        }
+    });
+
     app.message(/^!gembot on$/i, async ({message, say}) => {
         if (!('user' in message) || !message.user || !('thread_ts' in message) || !message.thread_ts) {
             await say({text: 'This command only works in threads.'});
@@ -1054,6 +1075,7 @@ ${formatInventory(character.inventory)}
 • \`!pollen <zip_code>\`: Fetches 30-day pollen history and generates a chart.
 • \`!tidbit subscribe <n>\`: Subscribes you to receive \`n\` tidbits daily at 8:00 AM in your local time zone (1 <= n <= 5).
 • \`!tidbit unsubscribe\`: Unsubscribes you from daily tidbits.
+• \`!test-tidbits\`: Manually trigger and test the daily tidbits broadcast to <#C0BT3T88PME>.
 • \`!gembot on\`: Enable Gembot in the current thread.
 • \`!gembot off\`: Disable Gembot in the current thread.
 • \`!gembot channel on\`: Enable Gembot for all messages in this channel.
