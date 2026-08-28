@@ -60,23 +60,34 @@ export function getUserLocalDateTime(timezoneStr: string, dateObj: Date = new Da
 }
 
 /**
+ * Sanitizes a Slack channel ID or formatted channel reference (<#C0BT3T88PME>, <#C0BT3T88PME|general>, #channel)
+ * to a clean channel ID.
+ */
+export function cleanChannelId(channelId?: string): string {
+    if (!channelId) return '';
+    return channelId.replace(/^[<#]+/, '').replace(/[|>].*$/, '').trim();
+}
+
+/**
  * Sends n daily tidbits to a Slack channel.
  */
 export async function sendChannelTidbits(
     app: App,
-    channelId: string = config.slack.tidbitChannelId || 'C0BT3T88PME',
+    channelId?: string,
     n: number = 5
 ): Promise<void> {
+    const targetChannel = cleanChannelId(channelId) || cleanChannelId(config.slack.tidbitChannelId) || 'C0BT3T88PME';
     try {
-        console.log(`[TidbitWorker] Generating ${n} tidbits for channel ${channelId}...`);
+        console.log(`[TidbitWorker] Generating ${n} tidbits for channel ${targetChannel}...`);
         const tidbitText = await generateTidbits(n);
         await app.client.chat.postMessage({
-            channel: channelId,
+            token: config.slack.botToken,
+            channel: targetChannel,
             text: tidbitText,
         });
-        console.log(`[TidbitWorker] Successfully sent daily tidbits to channel ${channelId}`);
+        console.log(`[TidbitWorker] Successfully sent daily tidbits to channel ${targetChannel}`);
     } catch (error) {
-        console.error(`[TidbitWorker] Error sending tidbits to channel ${channelId}:`, error);
+        console.error(`[TidbitWorker] Error sending tidbits to channel ${targetChannel}:`, error);
     }
 }
 
@@ -88,7 +99,7 @@ export async function sendChannelTidbits(
 export function startTidbitWorker(app: App): void {
     console.log('[TidbitWorker] Starting tidbit delivery worker...');
 
-    const channelId = config.slack.tidbitChannelId || 'C0BT3T88PME';
+    const channelId = cleanChannelId(config.slack.tidbitChannelId) || 'C0BT3T88PME';
     const schedule = config.tidbitSchedule || '0 8 * * *';
     console.log(`[TidbitWorker] Scheduling daily tidbits for channel ${channelId} with schedule "${schedule}" (America/New_York)...`);
 
@@ -115,6 +126,7 @@ export function startTidbitWorker(app: App): void {
                         const tidbitText = await generateTidbits(sub.n);
 
                         await app.client.chat.postMessage({
+                            token: config.slack.botToken,
                             channel: sub.user_id,
                             text: tidbitText,
                         });

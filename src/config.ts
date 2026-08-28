@@ -135,13 +135,18 @@ export function getMcpServers(envJson?: string): Record<string, any> {
     return defaultServers;
 }
 
+export function cleanChannelId(channelId?: string): string {
+    if (!channelId) return '';
+    return channelId.replace(/^[<#]+/, '').replace(/[|>].*$/, '').trim();
+}
+
 export const config: Config = {
     slack: {
         botToken: process.env.SLACK_BOT_TOKEN || '',
         signingSecret: process.env.SLACK_SIGNING_SECRET || '',
         appToken: process.env.SLACK_APP_TOKEN || '',
         morningGreetingChannelId: process.env.SLACK_MORNING_GREETING_CHANNEL_ID || '',
-        tidbitChannelId: process.env.SLACK_TIDBIT_CHANNEL_ID || 'C0BT3T88PME',
+        tidbitChannelId: cleanChannelId(process.env.SLACK_TIDBIT_CHANNEL_ID) || 'C0BT3T88PME',
     },
     server: {
         port: parseInt(process.env.PORT || '3000', 10),
