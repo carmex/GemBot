@@ -257,6 +257,24 @@ export class HistoryBuilder {
                     history.push({ role, parts });
                 }
             }
+
+            if (history.length > 0 && history[0].role === 'model') {
+                const parentMsg = messages[0];
+                const initialUser = (parentMsg && parentMsg.user && parentMsg.user !== botUserId && !parentMsg.bot_id)
+                    ? parentMsg.user
+                    : 'system';
+                let initialUserName: string | undefined = undefined;
+                if (initialUser !== 'system') {
+                    initialUserName = await userManager.getUserName(initialUser, client);
+                }
+                const userPrompt = buildUserPrompt({
+                    channel,
+                    user: initialUser,
+                    userName: initialUserName,
+                    text: '[User requested image or action]',
+                });
+                history.unshift({ role: 'user', parts: [{ text: userPrompt }] });
+            }
         } catch (error) {
             console.error("Error building history from channel:", error);
         }

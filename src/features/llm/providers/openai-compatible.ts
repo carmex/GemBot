@@ -27,7 +27,68 @@ type OpenAIMessage =
     // Some servers support array of content parts; we use simple string
     ;
 
-function toOpenAIMessages(question: string | Part[], options: LLMChatOptions): OpenAIMessage[] {
+export function normalizeOpenAIMessages(msgs: OpenAIMessage[]): OpenAIMessage[] {
+    const filtered: OpenAIMessage[] = [];
+
+    for (const msg of msgs) {
+        if (!msg) continue;
+        if (msg.role === 'tool') {
+            if (typeof msg.content === 'string' && msg.content.trim().length > 0) {
+                filtered.push(msg);
+            }
+            continue;
+        }
+
+        if (typeof msg.content === 'string') {
+            if (msg.content.trim().length > 0) {
+                filtered.push(msg);
+            }
+        } else if (Array.isArray(msg.content)) {
+            const validParts = msg.content.filter(part => {
+                if (part.type === 'text') return !!part.text && part.text.trim().length > 0;
+                if (part.type === 'image_url') return !!part.image_url && !!part.image_url.url;
+                return false;
+            });
+            if (validParts.length > 0) {
+                filtered.push({ ...msg, content: validParts });
+            }
+        }
+    }
+
+    const merged: OpenAIMessage[] = [];
+    for (const msg of filtered) {
+        if (merged.length === 0) {
+            merged.push(msg);
+            continue;
+        }
+
+        const prev = merged[merged.length - 1];
+        if (
+            (prev.role === 'user' && msg.role === 'user') ||
+            (prev.role === 'assistant' && msg.role === 'assistant')
+        ) {
+            // Merge content
+            if (typeof prev.content === 'string' && typeof msg.content === 'string') {
+                prev.content = `${prev.content}\n\n${msg.content}`;
+            } else {
+                // At least one is multimodal array
+                const prevParts: MultimodalContent[] = typeof prev.content === 'string'
+                    ? [{ type: 'text', text: prev.content }]
+                    : prev.content;
+                const currParts: MultimodalContent[] = typeof msg.content === 'string'
+                    ? [{ type: 'text', text: msg.content }]
+                    : msg.content;
+                prev.content = [...prevParts, ...currParts];
+            }
+        } else {
+            merged.push(msg);
+        }
+    }
+
+    return merged;
+}
+
+export function toOpenAIMessages(question: string | Part[], options: LLMChatOptions): OpenAIMessage[] {
     const msgs: OpenAIMessage[] = [];
 
     if (options.systemPrompt) {
@@ -137,7 +198,7 @@ function toOpenAIMessages(question: string | Part[], options: LLMChatOptions): O
         }
     }
 
-    return msgs;
+    return normalizeOpenAIMessages(msgs);
 }
 
 // Map generic tools to OpenAI "tools" format if supported

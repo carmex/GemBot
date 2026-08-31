@@ -6,38 +6,78 @@ import { GoogleGenerativeAI, Content, HarmCategory, HarmBlockThreshold, Function
 import { config } from '../../../config';
 import { LLMChatOptions, LLMMessage, LLMProvider, LLMResult, LLMTool } from './types';
 
+function isValidPart(part: Part): boolean {
+    if (!part) return false;
+    if ('text' in part) {
+        return typeof part.text === 'string' && part.text.trim().length > 0;
+    }
+    if ('inlineData' in part) {
+        return !!part.inlineData && !!part.inlineData.data;
+    }
+    if ('functionCall' in part) {
+        return !!part.functionCall;
+    }
+    if ('functionResponse' in part) {
+        return !!part.functionResponse;
+    }
+    if ('fileData' in part) {
+        return !!part.fileData;
+    }
+    return true;
+}
+
 export function toGeminiHistory(history: LLMMessage[] | Content[] | undefined): Content[] {
     if (!history || history.length === 0) return [];
-    let contentHistory: Content[];
-    if (history[0] && 'parts' in history[0]) {
-        // Already Content[], return as is
-        contentHistory = [...(history as Content[])];
-        const totalImageParts = contentHistory.reduce((acc, h) => acc + (h.parts?.filter(p => !!p.inlineData)?.length || 0), 0);
-        console.log(`[Debug-Gemini] toGeminiHistory: Already Content[] with ${contentHistory.length} entries, total image parts: ${totalImageParts}`);
-    } else {
-        // Map LLMMessage to Content
-        contentHistory = (history as LLMMessage[]).map((m) => {
-            if (m.role === 'user') {
-                return { role: 'user', parts: [{ text: m.content }] };
-            } else if (m.role === 'assistant') {
-                return { role: 'model', parts: [{ text: m.content }] };
-            } else if (m.role === 'system') {
-                // System prompt already passed separately; include as model content to keep chronology if provided
-                return { role: 'model', parts: [{ text: m.content }] };
-            } else if (m.role === 'tool') {
-                // Provider orchestration typically injects tool results back as tool messages;
-                // Gemini expects functionResponse parts in a follow-up send, but we can include as model text contextually.
-                return { role: 'model', parts: [{ text: m.content }] };
+
+    // 1. Standardize into a list of turns { role: 'user' | 'model', parts: Part[] }
+    const rawTurns: Content[] = [];
+    for (const item of history) {
+        if ('parts' in item) {
+            const role = item.role === 'model' ? 'model' : 'user';
+            const parts = Array.isArray(item.parts) ? item.parts.filter(isValidPart) : [];
+            if (parts.length > 0) {
+                rawTurns.push({ role, parts });
             }
-            return { role: 'user', parts: [{ text: m.content }] };
-        });
+        } else {
+            const msg = item as LLMMessage;
+            let role: 'user' | 'model' = 'user';
+            if (msg.role === 'assistant' || msg.role === 'system' || msg.role === 'tool') {
+                role = 'model';
+            }
+            if (typeof msg.content === 'string' && msg.content.trim().length > 0) {
+                rawTurns.push({ role, parts: [{ text: msg.content }] });
+            }
+        }
     }
 
-    if (contentHistory.length > 0 && contentHistory[0].role === 'model') {
-        contentHistory.unshift({ role: 'user', parts: [{ text: '[User request]' }] });
+    if (rawTurns.length === 0) return [];
+
+    // 2. Merge adjacent turns with identical roles
+    const mergedTurns: Content[] = [];
+    for (const turn of rawTurns) {
+        if (mergedTurns.length > 0 && mergedTurns[mergedTurns.length - 1].role === turn.role) {
+            mergedTurns[mergedTurns.length - 1].parts.push(...turn.parts);
+        } else {
+            mergedTurns.push({ role: turn.role, parts: [...turn.parts] });
+        }
     }
 
-    return contentHistory;
+    if (mergedTurns.length === 0) return [];
+
+    // 3. Enforce leading user role
+    if (mergedTurns[0].role === 'model') {
+        mergedTurns.unshift({ role: 'user', parts: [{ text: '[User request]' }] });
+    }
+
+    // 4. Enforce trailing model role
+    if (mergedTurns[mergedTurns.length - 1].role === 'user') {
+        mergedTurns.push({ role: 'model', parts: [{ text: '[Acknowledged]' }] });
+    }
+
+    const totalImageParts = mergedTurns.reduce((acc, h) => acc + (h.parts?.filter(p => !!(p as any).inlineData)?.length || 0), 0);
+    console.log(`[Debug-Gemini] toGeminiHistory: Normalized ${mergedTurns.length} entries, total image parts: ${totalImageParts}`);
+
+    return mergedTurns;
 }
 
 /**
