@@ -33,6 +33,7 @@ pids
 *.pid.lock
 rpg-context-*.json
 disabled-threads.json
+gis-mode.json
 rpg-enabled-channels.json
 enabled-channels.json
 usage.json

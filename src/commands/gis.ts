@@ -16,11 +16,211 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { App } from '@slack/bolt';
 import { config } from '../config';
 import fetch from 'node-fetch';
 
 export type Mod = 'g' | 't' | 'i' | 'a' | 'm' | 'l' | undefined;
+export type GisMode = 'url' | 'upload';
+
+export const GIS_CONFIG_FILE = path.join(__dirname, '../../gis-mode.json');
+
+let currentMode: GisMode = 'url';
+
+export function loadGisMode(): GisMode {
+    try {
+        if (fs.existsSync(GIS_CONFIG_FILE)) {
+            const data = fs.readFileSync(GIS_CONFIG_FILE, 'utf-8');
+            const parsed = JSON.parse(data);
+            if (parsed && (parsed.mode === 'upload' || parsed.mode === 'url')) {
+                currentMode = parsed.mode;
+                return parsed.mode;
+            }
+        }
+    } catch (err) {
+        console.error('Error loading GIS mode:', err);
+    }
+    const defaultMode: GisMode = process.env.GIS_MODE === 'upload' ? 'upload' : 'url';
+    currentMode = defaultMode;
+    return defaultMode;
+}
+
+export function setGisMode(mode: GisMode): void {
+    currentMode = mode;
+    try {
+        fs.writeFileSync(GIS_CONFIG_FILE, JSON.stringify({ mode }, null, 2), 'utf-8');
+    } catch (err) {
+        console.error('Error saving GIS mode:', err);
+    }
+}
+
+export function getGisMode(): GisMode {
+    return currentMode;
+}
+
+// Module initialization
+currentMode = loadGisMode();
+
+export const GIS_MODE_UPLOAD_MSG = '🖼️ GIS mode set to *upload*. Images will now be fetched and uploaded directly to Slack.';
+export const GIS_MODE_URL_MSG = '🔗 GIS mode set to *url*. Images will be posted as direct URLs (original behavior).';
+
+export function formatGisModeStatus(mode: GisMode): string {
+    const desc = mode === 'upload'
+        ? 'images will be fetched and uploaded directly to Slack'
+        : 'images will be posted as direct URLs';
+    return `GIS is currently in *${mode}* mode (${desc}). Use \`!gis mode upload\` or \`!gis mode url\` to change.`;
+}
+
+export async function handleGisModeCommand(
+    action: string | undefined,
+    say: (args: any) => Promise<any>,
+    threadTs?: string
+): Promise<void> {
+    const cmd = action?.toLowerCase();
+    if (cmd === 'upload' || cmd === 'on') {
+        setGisMode('upload');
+        await say({ text: GIS_MODE_UPLOAD_MSG, thread_ts: threadTs });
+    } else if (cmd === 'url' || cmd === 'off') {
+        setGisMode('url');
+        await say({ text: GIS_MODE_URL_MSG, thread_ts: threadTs });
+    } else {
+        await say({ text: formatGisModeStatus(getGisMode()), thread_ts: threadTs });
+    }
+}
+
+export function determineFilename(urlStr: string, contentType: string, query: string): string {
+    let urlExt = '';
+    try {
+        const pathname = new URL(urlStr).pathname;
+        const match = pathname.match(/\.(png|jpe?g|gif|webp)$/i);
+        if (match) {
+            urlExt = match[0].toLowerCase();
+            if (urlExt === '.jpeg') urlExt = '.jpg';
+        }
+    } catch {
+        // Ignore URL parsing errors
+    }
+
+    const mime = (contentType || '').split(';')[0].trim().toLowerCase();
+    const mimeExt: Record<string, string> = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+    };
+
+    // Preserve .gif extension specifically for animated gifs
+    let ext = '.jpg';
+    if (urlExt === '.gif' || mimeExt[mime] === '.gif') {
+        ext = '.gif';
+    } else if (urlExt) {
+        ext = urlExt;
+    } else if (mimeExt[mime]) {
+        ext = mimeExt[mime];
+    }
+
+    let base = query
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/gi, '_')
+        .replace(/^_+|_+$/g, '');
+
+    if (!base) {
+        try {
+            const pathname = new URL(urlStr).pathname;
+            const urlBase = path.basename(pathname, path.extname(pathname))
+                .replace(/[^a-z0-9_-]+/gi, '_')
+                .replace(/^_+|_+$/g, '');
+            if (urlBase) {
+                base = urlBase;
+            }
+        } catch {
+            // Ignore URL parsing errors
+        }
+    }
+
+    if (!base) {
+        base = 'gis_image';
+    }
+
+    base = base.slice(0, 50);
+
+    return `${base}${ext}`;
+}
+
+export interface FetchAndUploadImageOptions {
+    client: any;
+    channel: string;
+    threadTs?: string;
+    imageUrl: string;
+    query: string;
+    initialComment: string;
+}
+
+export async function fetchAndUploadImage({
+    client,
+    channel,
+    threadTs,
+    imageUrl,
+    query,
+    initialComment,
+}: FetchAndUploadImageOptions): Promise<boolean> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+        const response = await fetch(imageUrl, {
+            headers: {
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            },
+            signal: controller.signal,
+            redirect: 'follow',
+        });
+
+        if (!response.ok) {
+            console.warn(`[GIS] Image fetch failed: HTTP ${response.status} for ${imageUrl}`);
+            return false;
+        }
+
+        const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB limit
+        const contentLength = response.headers.get('content-length');
+        if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_SIZE) {
+            console.warn(`[GIS] Content-Length (${contentLength}) exceeds 20MB limit for ${imageUrl}`);
+            return false;
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        if (buffer.length > MAX_IMAGE_SIZE) {
+            console.warn(`[GIS] Image buffer size (${buffer.length}) exceeds 20MB limit for ${imageUrl}`);
+            return false;
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        const filename = determineFilename(imageUrl, contentType, query);
+
+        await client.files.uploadV2({
+            channel_id: channel,
+            thread_ts: threadTs,
+            file: buffer,
+            filename,
+            initial_comment: initialComment,
+        });
+
+        return true;
+    } catch (error) {
+        console.warn(`[GIS] Failed to fetch or upload image from ${imageUrl}:`, error);
+        return false;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 const re = /^gis([gtiaml])?(\d+)? (.+)/i;
 
 const BadDomains =
@@ -39,7 +239,20 @@ interface GoogleSearchResult {
 }
 
 export const registerGisCommands = (app: App) => {
-    app.message(re, async ({ message, context, say }) => {
+    app.message(/^!gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i, async ({ message, context, say }) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+
+        const arg1 = context.matches[1]?.toLowerCase();
+        const arg2 = context.matches[2]?.toLowerCase();
+        const action = arg2 || arg1;
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+
+        await handleGisModeCommand(action, say, threadTs);
+    });
+
+    app.message(re, async ({ message, context, say, client }) => {
         if (!('user' in message) || !message.user) {
             return;
         }
@@ -109,11 +322,32 @@ export const registerGisCommands = (app: App) => {
                 .replace(/%25/g, '%')
                 .replace(/\\u003d/g, '=')
                 .replace(/\\u0026/g, '&');
+            const commentText = `${sanitizedUrl} (${elapsed} sec)`;
 
-            await say({
-                text: `${sanitizedUrl} (${elapsed} sec)`,
-                thread_ts: threadTs,
-            });
+            if (getGisMode() === 'upload') {
+                let uploaded = false;
+                if ('channel' in message && message.channel) {
+                    uploaded = await fetchAndUploadImage({
+                        client,
+                        channel: message.channel,
+                        threadTs,
+                        imageUrl: sanitizedUrl,
+                        query,
+                        initialComment: commentText,
+                    });
+                }
+                if (!uploaded) {
+                    await say({
+                        text: commentText,
+                        thread_ts: threadTs,
+                    });
+                }
+            } else {
+                await say({
+                    text: commentText,
+                    thread_ts: threadTs,
+                });
+            }
 
         } catch (error) {
             console.error('Error in GIS command:', error);

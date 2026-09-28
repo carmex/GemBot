@@ -84,6 +84,103 @@ async function runTests() {
     assert(test6 !== null, "Test 6: Should parse successfully");
     assert(test6?.search === "red formula 1 car", "Test 6: search should be 'red formula 1 car'");
 
+    console.log("\nRunning GIS Mode Command Parsing Tests...");
+    const modeRe = /^!gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i;
+    const gembotGisRe = /^!gembot gis(?:\s+(upload|url|on|off|status))?$/i;
+
+    function parseModeCommand(text: string) {
+        const match = modeRe.exec(text);
+        if (!match) return null;
+        const arg1 = match[1]?.toLowerCase();
+        const arg2 = match[2]?.toLowerCase();
+        const action = arg2 || arg1;
+        return { arg1, arg2, action };
+    }
+
+    function parseGembotGisCommand(text: string) {
+        const match = gembotGisRe.exec(text);
+        if (!match) return null;
+        const action = match[1]?.toLowerCase();
+        return { action };
+    }
+
+    // Mode command: !gis mode upload
+    const mTest1 = parseModeCommand("!gis mode upload");
+    assert(mTest1 !== null, "Mode Test 1: '!gis mode upload' should match");
+    assert(mTest1?.action === "upload", "Mode Test 1: action should be 'upload'");
+
+    // Mode command: !gis upload on
+    const mTest2 = parseModeCommand("!gis upload on");
+    assert(mTest2 !== null, "Mode Test 2: '!gis upload on' should match");
+    assert(mTest2?.action === "on", "Mode Test 2: action should be 'on'");
+
+    // Mode command: !gis mode url
+    const mTest3 = parseModeCommand("!gis mode url");
+    assert(mTest3 !== null, "Mode Test 3: '!gis mode url' should match");
+    assert(mTest3?.action === "url", "Mode Test 3: action should be 'url'");
+
+    // Mode command: !gis upload off
+    const mTest4 = parseModeCommand("!gis upload off");
+    assert(mTest4 !== null, "Mode Test 4: '!gis upload off' should match");
+    assert(mTest4?.action === "off", "Mode Test 4: action should be 'off'");
+
+    // Mode command: !gis mode
+    const mTest5 = parseModeCommand("!gis mode");
+    assert(mTest5 !== null, "Mode Test 5: '!gis mode' should match");
+    assert(mTest5?.action === "mode", "Mode Test 5: action should be 'mode'");
+
+    // Mode command: !gis status
+    const mTest6 = parseModeCommand("!gis status");
+    assert(mTest6 !== null, "Mode Test 6: '!gis status' should match");
+    assert(mTest6?.action === "status", "Mode Test 6: action should be 'status'");
+
+    // Mode command: !gis
+    const mTest7 = parseModeCommand("!gis");
+    assert(mTest7 !== null, "Mode Test 7: '!gis' should match");
+    assert(mTest7?.action === undefined, "Mode Test 7: action should be undefined");
+
+    // Mode command: !gis upload
+    const mTest8 = parseModeCommand("!gis upload");
+    assert(mTest8 !== null, "Mode Test 8: '!gis upload' should match");
+    assert(mTest8?.action === "upload", "Mode Test 8: action should be 'upload'");
+
+    // Gembot command: !gembot gis upload
+    const gTest1 = parseGembotGisCommand("!gembot gis upload");
+    assert(gTest1 !== null, "Gembot Test 1: '!gembot gis upload' should match");
+    assert(gTest1?.action === "upload", "Gembot Test 1: action should be 'upload'");
+
+    // Gembot command: !gembot gis url
+    const gTest2 = parseGembotGisCommand("!gembot gis url");
+    assert(gTest2 !== null, "Gembot Test 2: '!gembot gis url' should match");
+    assert(gTest2?.action === "url", "Gembot Test 2: action should be 'url'");
+
+    // Gembot command: !gembot gis on
+    const gTest3 = parseGembotGisCommand("!gembot gis on");
+    assert(gTest3 !== null, "Gembot Test 3: '!gembot gis on' should match");
+    assert(gTest3?.action === "on", "Gembot Test 3: action should be 'on'");
+
+    // Gembot command: !gembot gis off
+    const gTest4 = parseGembotGisCommand("!gembot gis off");
+    assert(gTest4 !== null, "Gembot Test 4: '!gembot gis off' should match");
+    assert(gTest4?.action === "off", "Gembot Test 4: action should be 'off'");
+
+    // Gembot command: !gembot gis status
+    const gTest5 = parseGembotGisCommand("!gembot gis status");
+    assert(gTest5 !== null, "Gembot Test 5: '!gembot gis status' should match");
+    assert(gTest5?.action === "status", "Gembot Test 5: action should be 'status'");
+
+    // Gembot command: !gembot gis
+    const gTest6 = parseGembotGisCommand("!gembot gis");
+    assert(gTest6 !== null, "Gembot Test 6: '!gembot gis' should match");
+    assert(gTest6?.action === undefined, "Gembot Test 6: action should be undefined");
+
+    // Non-matching validation
+    assert(re.test("!gis mode upload") === false, "Search regex should NOT match '!gis mode upload'");
+    assert(re.test("!gis status") === false, "Search regex should NOT match '!gis status'");
+    assert(re.test("!gembot gis upload") === false, "Search regex should NOT match '!gembot gis upload'");
+    assert(modeRe.test("gis cute cat") === false, "Mode regex should NOT match search query 'gis cute cat'");
+    assert(modeRe.test("!gis random query here") === false, "Mode regex should NOT match invalid '!gis random query here'");
+
     console.log("\nAll GIS tests passed!");
 }
 

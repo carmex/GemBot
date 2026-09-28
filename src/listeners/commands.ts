@@ -37,6 +37,7 @@ import { userManager } from '../features/user-manager';
 import { upsertSubscription, removeSubscription, updateLastSentDate } from '../features/tidbit-db';
 import { generateTidbits } from '../features/tidbit-generator';
 import { getUserLocalDateTime } from '../features/tidbit-worker';
+import { getGisMode, setGisMode, handleGisModeCommand } from '../commands/gis';
 
 
 export const registerCommandListeners = (app: App, aiHandler: AIHandler) => {
@@ -724,6 +725,15 @@ ${formatInventory(character.inventory)}
         });
     });
 
+    app.message(/^!gembot gis(?:\s+(upload|url|on|off|status))?$/i, async ({message, context, say}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+        const action = context.matches[1]?.trim();
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+        await handleGisModeCommand(action, say, threadTs);
+    });
+
     app.message(/^!(ud|urban)\s+(.+)/i, async ({message, context, client}) => {
         if (!('user' in message) || !message.user) {
             return;
@@ -1047,6 +1057,7 @@ ${formatInventory(character.inventory)}
 • \`!meme search <term>\`: Search for meme templates.
 • \`!meme <template> <text1> [| text2 ...]\`: Generates a meme. Multi-panel memes are supported using \`|\`.
 • \`gis [flags][#] <term>\`: Search Google Images (flags: \`g\`, \`t\`, \`i\`, \`a\` (gif), \`m\`, \`l\`; e.g., \`gis dogs\`, \`gisa 2 cats\`).
+• \`!gis mode <upload|url>\`: Switch GIS mode between uploading image files or posting URLs.
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!ud <term>\` or \`!urban <term>\`: Get definitions from Urban Dictionary.
 • \`!dict <word>\` or \`!dictionary <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
@@ -1103,6 +1114,7 @@ The bot tracks usage of the LLM and image generation features. You can check you
         '• `channel on`: Enable Gembot for all messages in this channel.\n' +
         '• `channel off`: Disable Gembot for all messages in this channel.\n' +
         '• `rpg <gm|player|off|status>`: Manage RPG mode for this channel.\n' +
+        '• `gis <upload|url|status>`: Switch GIS image delivery mode (upload file vs post URL).\n' +
         '• `help`: Show the help message with all commands.';
 
     app.message(/^!gembot$/i, async ({say}) => {
@@ -1121,6 +1133,7 @@ The bot tracks usage of the LLM and image generation features. You can check you
             /^rpg off$/i,
             /^rpg status$/i,
             /^rpg$/i,
+            /^gis/i,
             /^help$/i,
         ];
 
