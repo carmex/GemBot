@@ -4,6 +4,7 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import sharp from 'sharp';
 import {
     getGisMode,
     setGisMode,
@@ -33,6 +34,36 @@ const PNG_BYTES = Buffer.from(
 const GIF_BYTES = Buffer.from(
     '47494638396101000100800000ffffff00000021f90401000000002c00000000010001000002024401003b',
     'hex'
+);
+
+const JPEG_BYTES = Buffer.from(
+    'ffd8ffdb00430006040506050406060506070706080a100a0a09090a140e0f0c1017141818171416161a1d251f1a1b231c1616202c20232627292a29191f2d302d283025282928ffdb0043010707070a080a130a0a13281a161a2828282828282828282828282828282828282828282828282828282828282828282828282828282828282828282828282828ffc00011080002000203012200021101031101ffc4001500010100000000000000000000000000000007ffc40014100100000000000000000000000000000000ffc4001501010100000000000000000000000000000608ffc40014110100000000000000000000000000000000ffda000c03010002110311003f009d001ca45fffd9',
+    'hex'
+);
+
+const WEBP_OPAQUE_BYTES = Buffer.from(
+    '524946463e000000574542505650382032000000d001009d012a0200020001402625a00274ba01f80003b000fee9221ffbcf9fb9f3f73e7fd19fff94fdf238fe471ffca04000',
+    'hex'
+);
+
+const WEBP_ALPHA_BYTES = Buffer.from(
+    '524946465a00000057454250565038580a00000010000000010000010000414c504805000000008080808000565038202e0000009001009d012a0200020001402625a00274ba00039800fefb55e3ffa5c1ffd2e0ffe9707fe9707f1bb2ce1ba40000',
+    'hex'
+);
+
+const WEBP_ANIMATED_BYTES = Buffer.from(
+    '524946469400000057454250565038580a00000002000000000000000000414e494d06000000ffffffff0100414e4d46300000000000000000000000000000006400000256503820180000003001009d012a0100010001402625a400037000fefcf40000414e4d46300000000000000000000000000000006400000056503820180000003401009d012a0100010000002625a400037000fefd366800',
+    'hex'
+);
+
+const SVG_BYTES = Buffer.from(
+    '3c73766720786d6c6e733d22687474703a2f2f7777772e77332e6f72672f323030302f737667222077696474683d223222206865696768743d2232223e3c726563742077696474683d223222206865696768743d2232222066696c6c3d22626c7565222f3e3c2f7376673e',
+    'hex'
+);
+
+const HTML_BYTES = Buffer.from(
+    '<!DOCTYPE html><html><head><title>Cloudflare Challenge</title></head><body><h1>403 Forbidden</h1></body></html>',
+    'utf-8'
 );
 
 async function runTests() {
@@ -160,13 +191,28 @@ async function runTests() {
         const fn9 = determineFilename('https://example.com/', 'image/jpeg', '');
         assert(fn9 === 'gis_image.jpg', `fn9 should fall back to gis_image.jpg, got '${fn9}'`);
 
+        // Target extension overrides (targetExt argument)
+        const fnTarget1 = determineFilename('https://example.com/photos/cat.png', 'image/png', 'fluffy cat', '.jpg');
+        assert(fnTarget1 === 'fluffy_cat.jpg', `fnTarget1 should override to .jpg, got '${fnTarget1}'`);
+
+        const fnTarget2 = determineFilename('https://example.com/photos/cat.png', 'image/png', 'fluffy cat', 'jpg');
+        assert(fnTarget2 === 'fluffy_cat.jpg', `fnTarget2 should handle extension without dot, got '${fnTarget2}'`);
+
+        const fnTarget3 = determineFilename('https://example.com/photos/cat.png', 'image/png', 'fluffy cat', '.gif');
+        assert(fnTarget3 === 'fluffy_cat.gif', `fnTarget3 should override to .gif, got '${fnTarget3}'`);
+
+        const fnTarget4 = determineFilename('https://example.com/files/sample_photo.png', 'image/png', '', '.jpg');
+        assert(fnTarget4 === 'sample_photo.jpg', `fnTarget4 should override extension with empty query, got '${fnTarget4}'`);
+
         // ==========================================
         // 4. HTTP Mock Server & Download / Upload
         // ==========================================
         console.log('\n--- 4. HTTP Mock Server & Image Fetch / Upload Tests ---');
 
+        let lastAcceptHeader = '';
         const server = http.createServer((req, res) => {
             const urlPath = req.url || '';
+            lastAcceptHeader = (req.headers['accept'] as string) || '';
 
             if (urlPath === '/image.png') {
                 res.writeHead(200, {
@@ -180,6 +226,48 @@ async function runTests() {
                     'Content-Length': GIF_BYTES.length.toString(),
                 });
                 res.end(GIF_BYTES);
+            } else if (urlPath === '/opaque.webp') {
+                res.writeHead(200, {
+                    'Content-Type': 'image/webp',
+                    'Content-Length': WEBP_OPAQUE_BYTES.length.toString(),
+                });
+                res.end(WEBP_OPAQUE_BYTES);
+            } else if (urlPath === '/alpha.webp') {
+                res.writeHead(200, {
+                    'Content-Type': 'image/webp',
+                    'Content-Length': WEBP_ALPHA_BYTES.length.toString(),
+                });
+                res.end(WEBP_ALPHA_BYTES);
+            } else if (urlPath === '/animated.webp') {
+                res.writeHead(200, {
+                    'Content-Type': 'image/webp',
+                    'Content-Length': WEBP_ANIMATED_BYTES.length.toString(),
+                });
+                res.end(WEBP_ANIMATED_BYTES);
+            } else if (urlPath === '/vector.svg') {
+                res.writeHead(200, {
+                    'Content-Type': 'image/svg+xml',
+                    'Content-Length': SVG_BYTES.length.toString(),
+                });
+                res.end(SVG_BYTES);
+            } else if (urlPath === '/html-error.html') {
+                res.writeHead(200, {
+                    'Content-Type': 'text/html; charset=utf-8',
+                    'Content-Length': HTML_BYTES.length.toString(),
+                });
+                res.end(HTML_BYTES);
+            } else if (urlPath === '/disguised-html.jpg') {
+                res.writeHead(200, {
+                    'Content-Type': 'image/jpeg',
+                    'Content-Length': HTML_BYTES.length.toString(),
+                });
+                res.end(HTML_BYTES);
+            } else if (urlPath === '/mismatched-ext.png') {
+                res.writeHead(200, {
+                    'Content-Type': 'image/jpeg',
+                    'Content-Length': JPEG_BYTES.length.toString(),
+                });
+                res.end(JPEG_BYTES);
             } else if (urlPath === '/not-found.png') {
                 res.writeHead(404, { 'Content-Type': 'text/plain' });
                 res.end('Not Found');
@@ -261,7 +349,126 @@ async function runTests() {
         assert(uploadCalls[0].filename === 'dancing_cat_animated_gif.gif', 'filename should end with .gif');
         assert(uploadCalls[0].file.equals(GIF_BYTES), 'file buffer should match source GIF bytes');
 
-        // Test 4c: 404 Not Found returns false
+        // Test 4c: Accept Header prioritizes Slack native formats
+        assert(
+            lastAcceptHeader.startsWith('image/jpeg,image/png,image/gif;q=0.9'),
+            `Accept header should prioritize native Slack formats, got '${lastAcceptHeader}'`
+        );
+
+        // Test 4d: WebP opaque converted to JPEG (.jpg) before uploadV2
+        uploadCalls.length = 0;
+        const successOpaqueWebp = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/opaque.webp`,
+            query: 'forest landscape',
+            initialComment: 'https://example.com/opaque.webp (0.30 sec)',
+        });
+        assert(successOpaqueWebp === true, 'fetchAndUploadImage should succeed for opaque WebP');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for opaque WebP');
+        assert(uploadCalls[0].filename === 'forest_landscape.jpg', `Filename should end in .jpg, got '${uploadCalls[0].filename}'`);
+        const opaqueMeta = await sharp(uploadCalls[0].file).metadata();
+        assert(opaqueMeta.format === 'jpeg', `Converted buffer format should be jpeg, got '${opaqueMeta.format}'`);
+
+        // Test 4e: WebP alpha converted to PNG (.png) before uploadV2
+        uploadCalls.length = 0;
+        const successAlphaWebp = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/alpha.webp`,
+            query: 'transparent sticker',
+            initialComment: 'https://example.com/alpha.webp (0.30 sec)',
+        });
+        assert(successAlphaWebp === true, 'fetchAndUploadImage should succeed for alpha WebP');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for alpha WebP');
+        assert(uploadCalls[0].filename === 'transparent_sticker.png', `Filename should end in .png, got '${uploadCalls[0].filename}'`);
+        const alphaMeta = await sharp(uploadCalls[0].file).metadata();
+        assert(alphaMeta.format === 'png', `Converted buffer format should be png, got '${alphaMeta.format}'`);
+
+        // Test 4f: Animated WebP converted to animated GIF (.gif) before uploadV2
+        uploadCalls.length = 0;
+        const successAnimWebp = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/animated.webp`,
+            query: 'running puppy',
+            initialComment: 'https://example.com/animated.webp (0.30 sec)',
+        });
+        assert(successAnimWebp === true, 'fetchAndUploadImage should succeed for animated WebP');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for animated WebP');
+        assert(uploadCalls[0].filename === 'running_puppy.gif', `Filename should end in .gif, got '${uploadCalls[0].filename}'`);
+        const animMeta = await sharp(uploadCalls[0].file, { animated: true }).metadata();
+        assert(animMeta.format === 'gif', `Converted buffer format should be gif, got '${animMeta.format}'`);
+        assert(Boolean(animMeta.pages && animMeta.pages > 1), `Converted GIF should be animated, got pages=${animMeta.pages}`);
+
+        // Test 4g: SVG converted to PNG (.png) before uploadV2
+        uploadCalls.length = 0;
+        const successSvg = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/vector.svg`,
+            query: 'vector logo',
+            initialComment: 'https://example.com/vector.svg (0.30 sec)',
+        });
+        assert(successSvg === true, 'fetchAndUploadImage should succeed for SVG');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for SVG');
+        assert(uploadCalls[0].filename === 'vector_logo.png', `Filename should end in .png, got '${uploadCalls[0].filename}'`);
+        const svgMeta = await sharp(uploadCalls[0].file).metadata();
+        assert(svgMeta.format === 'png', `Converted buffer format should be png, got '${svgMeta.format}'`);
+
+        // Test 4h: Non-image 200 OK HTML payload rejected early (Content-Type: text/html)
+        uploadCalls.length = 0;
+        const failHtmlEarly = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/html-error.html`,
+            query: 'cloudflare challenge',
+            initialComment: 'challenge',
+        });
+        assert(failHtmlEarly === false, 'fetchAndUploadImage should return false for text/html');
+        assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called for text/html');
+
+        // Test 4i: Non-image disguised 200 OK payload rejected by sharp
+        uploadCalls.length = 0;
+        const failHtmlDisguised = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/disguised-html.jpg`,
+            query: 'disguised html',
+            initialComment: 'disguised',
+        });
+        assert(failHtmlDisguised === false, 'fetchAndUploadImage should return false when sharp rejects invalid payload');
+        assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called when sharp rejects payload');
+
+        // Test 4j: Mismatched URL extension (.png URL serving JPEG bytes) corrected to .jpg
+        uploadCalls.length = 0;
+        const successMismatched = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/mismatched-ext.png`,
+            query: 'sunset mountain',
+            initialComment: 'https://example.com/mismatched-ext.png (0.30 sec)',
+        });
+        assert(successMismatched === true, 'fetchAndUploadImage should succeed for mismatched extension');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called once');
+        assert(uploadCalls[0].filename === 'sunset_mountain.jpg', `Filename extension should be corrected to .jpg, got '${uploadCalls[0].filename}'`);
+        const mismatchedMeta = await sharp(uploadCalls[0].file).metadata();
+        assert(mismatchedMeta.format === 'jpeg', `File buffer format should remain jpeg, got '${mismatchedMeta.format}'`);
+
+        // Test 4k: Mismatched URL extension with empty query falls back to URL basename with .jpg
+        uploadCalls.length = 0;
+        const successMismatchedEmptyQuery = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C_CHANNEL_1',
+            imageUrl: `${serverUrl}/mismatched-ext.png`,
+            query: '',
+            initialComment: 'https://example.com/mismatched-ext.png (0.30 sec)',
+        });
+        assert(successMismatchedEmptyQuery === true, 'fetchAndUploadImage should succeed with empty query');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called once');
+        assert(uploadCalls[0].filename === 'mismatched-ext.jpg', `Filename should use URL basename with .jpg, got '${uploadCalls[0].filename}'`);
+
+        // Test 4l: 404 Not Found returns false
         uploadCalls.length = 0;
         const fail404 = await fetchAndUploadImage({
             client: mockClient,
@@ -273,7 +480,7 @@ async function runTests() {
         assert(fail404 === false, 'fetchAndUploadImage should return false for 404');
         assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called on 404');
 
-        // Test 4d: 500 Server Error returns false
+        // Test 4m: 500 Server Error returns false
         uploadCalls.length = 0;
         const fail500 = await fetchAndUploadImage({
             client: mockClient,
@@ -285,7 +492,7 @@ async function runTests() {
         assert(fail500 === false, 'fetchAndUploadImage should return false for 500');
         assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called on 500');
 
-        // Test 4e: Oversized via Content-Length header returns false
+        // Test 4n: Oversized via Content-Length header returns false
         uploadCalls.length = 0;
         const failOversizedHeader = await fetchAndUploadImage({
             client: mockClient,
@@ -297,7 +504,7 @@ async function runTests() {
         assert(failOversizedHeader === false, 'fetchAndUploadImage should return false for Content-Length > 20MB');
         assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called for oversized header');
 
-        // Test 4f: Oversized via buffer body returns false
+        // Test 4o: Oversized via buffer body returns false
         uploadCalls.length = 0;
         const failOversizedBody = await fetchAndUploadImage({
             client: mockClient,
@@ -309,7 +516,7 @@ async function runTests() {
         assert(failOversizedBody === false, 'fetchAndUploadImage should return false for buffer > 20MB');
         assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called for oversized body');
 
-        // Test 4g: Network connection failure returns false
+        // Test 4p: Network connection failure returns false
         uploadCalls.length = 0;
         const failNetwork = await fetchAndUploadImage({
             client: mockClient,
@@ -321,7 +528,7 @@ async function runTests() {
         assert(failNetwork === false, 'fetchAndUploadImage should return false on network connection failure');
         assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called on connection failure');
 
-        // Test 4h: uploadV2 throws error -> returns false
+        // Test 4q: uploadV2 throws error -> returns false
         const throwingClient = {
             files: {
                 uploadV2: async () => {

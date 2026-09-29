@@ -21,6 +21,7 @@ import * as path from 'path';
 import { App } from '@slack/bolt';
 import { config } from '../config';
 import fetch from 'node-fetch';
+import sharp from 'sharp';
 
 export type Mod = 'g' | 't' | 'i' | 'a' | 'm' | 'l' | undefined;
 export type GisMode = 'url' | 'upload';
@@ -90,36 +91,45 @@ export async function handleGisModeCommand(
     }
 }
 
-export function determineFilename(urlStr: string, contentType: string, query: string): string {
-    let urlExt = '';
-    try {
-        const pathname = new URL(urlStr).pathname;
-        const match = pathname.match(/\.(png|jpe?g|gif|webp)$/i);
-        if (match) {
-            urlExt = match[0].toLowerCase();
-            if (urlExt === '.jpeg') urlExt = '.jpg';
-        }
-    } catch {
-        // Ignore URL parsing errors
-    }
-
-    const mime = (contentType || '').split(';')[0].trim().toLowerCase();
-    const mimeExt: Record<string, string> = {
-        'image/jpeg': '.jpg',
-        'image/jpg': '.jpg',
-        'image/png': '.png',
-        'image/gif': '.gif',
-        'image/webp': '.webp',
-    };
-
-    // Preserve .gif extension specifically for animated gifs
+export function determineFilename(
+    urlStr: string,
+    contentType: string,
+    query: string,
+    targetExt?: string
+): string {
     let ext = '.jpg';
-    if (urlExt === '.gif' || mimeExt[mime] === '.gif') {
-        ext = '.gif';
-    } else if (urlExt) {
-        ext = urlExt;
-    } else if (mimeExt[mime]) {
-        ext = mimeExt[mime];
+    if (targetExt) {
+        ext = targetExt.startsWith('.') ? targetExt.toLowerCase() : `.${targetExt.toLowerCase()}`;
+    } else {
+        let urlExt = '';
+        try {
+            const pathname = new URL(urlStr).pathname;
+            const match = pathname.match(/\.(png|jpe?g|gif|webp)$/i);
+            if (match) {
+                urlExt = match[0].toLowerCase();
+                if (urlExt === '.jpeg') urlExt = '.jpg';
+            }
+        } catch {
+            // Ignore URL parsing errors
+        }
+
+        const mime = (contentType || '').split(';')[0].trim().toLowerCase();
+        const mimeExt: Record<string, string> = {
+            'image/jpeg': '.jpg',
+            'image/jpg': '.jpg',
+            'image/png': '.png',
+            'image/gif': '.gif',
+            'image/webp': '.webp',
+        };
+
+        // Preserve .gif extension specifically for animated gifs
+        if (urlExt === '.gif' || mimeExt[mime] === '.gif') {
+            ext = '.gif';
+        } else if (urlExt) {
+            ext = urlExt;
+        } else if (mimeExt[mime]) {
+            ext = mimeExt[mime];
+        }
     }
 
     let base = query
@@ -176,7 +186,7 @@ export async function fetchAndUploadImage({
             headers: {
                 'User-Agent':
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept': 'image/jpeg,image/png,image/gif;q=0.9,image/*;q=0.8,*/*;q=0.5',
             },
             signal: controller.signal,
             redirect: 'follow',
@@ -184,6 +194,13 @@ export async function fetchAndUploadImage({
 
         if (!response.ok) {
             console.warn(`[GIS] Image fetch failed: HTTP ${response.status} for ${imageUrl}`);
+            return false;
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        const normalizedContentType = contentType.toLowerCase().trim();
+        if (normalizedContentType.startsWith('text/') || normalizedContentType.startsWith('application/json')) {
+            console.warn(`[GIS] Non-image Content-Type (${contentType}) for ${imageUrl}`);
             return false;
         }
 
@@ -201,13 +218,58 @@ export async function fetchAndUploadImage({
             return false;
         }
 
-        const contentType = response.headers.get('content-type') || '';
-        const filename = determineFilename(imageUrl, contentType, query);
+        let metadata: sharp.Metadata;
+        try {
+            metadata = await sharp(buffer, { animated: true }).metadata();
+        } catch (err) {
+            console.warn(`[GIS] Failed to read image metadata for ${imageUrl}:`, err);
+            return false;
+        }
+
+        if (!metadata.format) {
+            console.warn(`[GIS] Unknown image format for ${imageUrl}`);
+            return false;
+        }
+
+        let uploadBuffer: Buffer = buffer;
+        let targetExt: string;
+
+        if (metadata.format === 'jpeg' || (metadata.format as string) === 'jpg') {
+            targetExt = '.jpg';
+        } else if (metadata.format === 'png') {
+            targetExt = '.png';
+        } else if (metadata.format === 'gif') {
+            targetExt = '.gif';
+        } else {
+            // Non-native Slack format (webp, avif, svg, tiff, bmp, heif, etc.)
+            try {
+                if (metadata.pages && metadata.pages > 1) {
+                    uploadBuffer = await sharp(buffer, { animated: true }).gif().toBuffer();
+                    targetExt = '.gif';
+                } else if (metadata.hasAlpha) {
+                    uploadBuffer = await sharp(buffer).png().toBuffer();
+                    targetExt = '.png';
+                } else {
+                    uploadBuffer = await sharp(buffer).jpeg({ quality: 90 }).toBuffer();
+                    targetExt = '.jpg';
+                }
+            } catch (convErr) {
+                console.warn(`[GIS] Failed to convert image format (${metadata.format}) for ${imageUrl}:`, convErr);
+                return false;
+            }
+
+            if (uploadBuffer.length > MAX_IMAGE_SIZE) {
+                console.warn(`[GIS] Converted image buffer size (${uploadBuffer.length}) exceeds 20MB limit for ${imageUrl}`);
+                return false;
+            }
+        }
+
+        const filename = determineFilename(imageUrl, contentType, query, targetExt);
 
         await client.files.uploadV2({
             channel_id: channel,
             thread_ts: threadTs,
-            file: buffer,
+            file: uploadBuffer,
             filename,
             initial_comment: initialComment,
         });
