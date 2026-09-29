@@ -633,6 +633,112 @@ async function runTests() {
         assert(sayState.called, 'say() was called directly in url mode');
         assert(sayState.args.text === 'https://example.com/image.png (0.50 sec)', 'say text matches in url mode');
 
+        // ==========================================
+        // 6. GIS Upload NSFW Rating Tests
+        // ==========================================
+        console.log('\n--- 6. GIS Upload NSFW Rating Tests ---');
+
+        // Test 6a: Rating appended to comment in upload mode
+        uploadCalls.length = 0;
+        let nsfwUploadSuccess = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'cat',
+            initialComment: 'https://example.com/cat.png (0.25 sec)',
+            nsfwRater: async () => 3,
+        });
+        assert(nsfwUploadSuccess === true, 'Upload succeeded with NSFW rater');
+        assert(uploadCalls.length === 1, 'files.uploadV2 called once');
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [NSFW: 3/10]',
+            `Rating 3 should be appended, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        // Test 6b: Boundary rating 1
+        uploadCalls.length = 0;
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'safe image',
+            initialComment: 'https://example.com/safe.png (0.15 sec)',
+            nsfwRater: async () => 1,
+        });
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/safe.png (0.15 sec) [NSFW: 1/10]',
+            `Boundary rating 1 should be appended, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        // Test 6c: Boundary rating 10 & absence of gating (upload must proceed!)
+        uploadCalls.length = 0;
+        const uploadRating10 = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'extreme nsfw image',
+            initialComment: 'https://example.com/extreme.png (0.45 sec)',
+            nsfwRater: async () => 10,
+        });
+        assert(uploadRating10 === true, 'Upload must succeed even when rating is 10 (no gating)');
+        assert(uploadCalls.length === 1, 'files.uploadV2 must be called for rating 10');
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/extreme.png (0.45 sec) [NSFW: 10/10]',
+            `Boundary rating 10 should be appended, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        // Test 6d: Rating failure / exception does NOT prevent image upload (fallback resilience)
+        uploadCalls.length = 0;
+        const uploadThrowRater = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'throw image',
+            initialComment: 'https://example.com/throw.png (0.20 sec)',
+            nsfwRater: async () => {
+                throw new Error('LLM rating failure');
+            },
+        });
+        assert(uploadThrowRater === true, 'Upload must succeed when NSFW rater throws an error');
+        assert(uploadCalls.length === 1, 'files.uploadV2 must be called when rater throws');
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/throw.png (0.20 sec)',
+            `Original comment should be preserved on rater error, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        // Test 6e: Unparseable / null rating preserves initial comment
+        uploadCalls.length = 0;
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'null rating image',
+            initialComment: 'https://example.com/null.png (0.18 sec)',
+            nsfwRater: async () => null,
+        });
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/null.png (0.18 sec)',
+            `Original comment should be preserved when rating is null, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        // Test 6f: aiHandler.rateImageNsfw integration
+        uploadCalls.length = 0;
+        const mockAiHandler = {
+            rateImageNsfw: async (buf: Buffer) => 5,
+        };
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'ai handler image',
+            initialComment: 'https://example.com/ai.png (0.10 sec)',
+            aiHandler: mockAiHandler,
+        });
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/ai.png (0.10 sec) [NSFW: 5/10]',
+            `Rating from aiHandler should be appended, got: '${uploadCalls[0].initial_comment}'`
+        );
+
         // Close mock server
         await new Promise<void>((resolve) => server.close(() => resolve()));
         console.log('Mock server closed.');

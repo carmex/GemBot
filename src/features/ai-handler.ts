@@ -29,6 +29,7 @@ import { registerWatchlistCommands } from '../commands/watchlist';
 import { registerFinancialCommands } from '../commands/financial';
 import { registerMemeCommands } from '../commands/meme';
 import { registerGisCommands } from '../commands/gis';
+import { rateImageNsfw } from './nsfw-rater';
 import { registerPollenCommands } from '../commands/pollen';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
@@ -158,6 +159,10 @@ export class AIHandler {
         return this.imageGenerator!.processImageFromUrl(url);
     }
 
+    public async rateImageNsfw(imageBuffer: Buffer): Promise<number | null> {
+        return rateImageNsfw(imageBuffer, { provider: this.provider });
+    }
+
     public loadThreadSummary(threadId: string): any {
         return this.summarizer!.loadThreadSummary(threadId);
     }
@@ -174,7 +179,7 @@ export class AIHandler {
         registerWatchlistCommands(this.app);
         registerFinancialCommands(this.app);
         registerMemeCommands(this.app, this);
-        registerGisCommands(this.app);
+        registerGisCommands(this.app, this);
         registerPollenCommands(this.app);
         registerEventListeners(this.app, this);
         registerCommandListeners(this.app, this);

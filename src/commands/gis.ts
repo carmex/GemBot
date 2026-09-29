@@ -22,6 +22,8 @@ import { App } from '@slack/bolt';
 import { config } from '../config';
 import fetch from 'node-fetch';
 import sharp from 'sharp';
+import { rateImageNsfw } from '../features/nsfw-rater';
+import { AIHandler } from '../features/ai-handler';
 
 export type Mod = 'g' | 't' | 'i' | 'a' | 'm' | 'l' | undefined;
 export type GisMode = 'url' | 'upload';
@@ -168,6 +170,8 @@ export interface FetchAndUploadImageOptions {
     imageUrl: string;
     query: string;
     initialComment: string;
+    nsfwRater?: (buffer: Buffer) => Promise<number | null>;
+    aiHandler?: any;
 }
 
 export async function fetchAndUploadImage({
@@ -177,6 +181,8 @@ export async function fetchAndUploadImage({
     imageUrl,
     query,
     initialComment,
+    nsfwRater,
+    aiHandler,
 }: FetchAndUploadImageOptions): Promise<boolean> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -266,12 +272,23 @@ export async function fetchAndUploadImage({
 
         const filename = determineFilename(imageUrl, contentType, query, targetExt);
 
+        let finalComment = initialComment;
+        try {
+            const rater = nsfwRater || (aiHandler?.rateImageNsfw ? (buf: Buffer) => aiHandler.rateImageNsfw(buf) : rateImageNsfw);
+            const rating = await rater(uploadBuffer);
+            if (typeof rating === 'number' && rating >= 1 && rating <= 10) {
+                finalComment = `${initialComment} [NSFW: ${rating}/10]`;
+            }
+        } catch (err) {
+            console.warn(`[GIS] NSFW rating error for ${imageUrl}:`, err);
+        }
+
         await client.files.uploadV2({
             channel_id: channel,
             thread_ts: threadTs,
             file: uploadBuffer,
             filename,
-            initial_comment: initialComment,
+            initial_comment: finalComment,
         });
 
         return true;
@@ -300,7 +317,7 @@ interface GoogleSearchResult {
     items?: GoogleImageResult[];
 }
 
-export const registerGisCommands = (app: App) => {
+export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
     app.message(/^!gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i, async ({ message, context, say }) => {
         if (!('user' in message) || !message.user) {
             return;
@@ -396,6 +413,7 @@ export const registerGisCommands = (app: App) => {
                         imageUrl: sanitizedUrl,
                         query,
                         initialComment: commentText,
+                        aiHandler,
                     });
                 }
                 if (!uploaded) {
