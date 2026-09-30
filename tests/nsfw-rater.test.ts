@@ -34,11 +34,15 @@ async function runTests() {
     console.log('--- 1. parseNsfwRating Tests ---');
 
     // Clean ratings
+    assert(parseNsfwRating('0') === 0, 'Clean "0" should return 0');
     assert(parseNsfwRating('1') === 1, 'Clean "1" should return 1');
     assert(parseNsfwRating('10') === 10, 'Clean "10" should return 10');
     assert(parseNsfwRating('5') === 5, 'Clean "5" should return 5');
 
     // Text formats
+    assert(parseNsfwRating('Rating: 0') === 0, '"Rating: 0" should return 0');
+    assert(parseNsfwRating('Score: 0') === 0, '"Score: 0" should return 0');
+    assert(parseNsfwRating('0/10') === 0, '"0/10" should return 0');
     assert(parseNsfwRating('Rating: 8') === 8, '"Rating: 8" should return 8');
     assert(parseNsfwRating('NSFW: 9/10') === 9, '"NSFW: 9/10" should return 9');
     assert(parseNsfwRating('Score: 3') === 3, '"Score: 3" should return 3');
@@ -57,7 +61,6 @@ async function runTests() {
     assert(parseNsfwRating('**Rating:** **10**') === 10, '"**Rating:** **10**" should return 10');
 
     // Invalid formats
-    assert(parseNsfwRating('0') === null, '"0" should return null');
     assert(parseNsfwRating('11') === null, '"11" should return null');
     assert(parseNsfwRating('-5') === null, '"-5" should return null');
     assert(parseNsfwRating('Score: -5') === null, '"Score: -5" should return null');
@@ -69,6 +72,10 @@ async function runTests() {
     assert(parseNsfwRating('1.5') === null, '"1.5" should return null');
     assert(parseNsfwRating('100') === null, '"100" should return null');
     assert(parseNsfwRating('I rate this 12 out of 10') === null, '"12 out of 10" should return null');
+
+    // Prompt verification
+    assert(NSFW_RATING_USER_PROMPT.includes('0 to 10'), 'NSFW_RATING_USER_PROMPT should mention 0 to 10');
+    assert(NSFW_RATING_SYSTEM_PROMPT.includes('0 to 10'), 'NSFW_RATING_SYSTEM_PROMPT should mention 0 to 10');
 
     // ==========================================
     // 2. rateImageNsfw Tests

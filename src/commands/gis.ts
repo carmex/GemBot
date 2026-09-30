@@ -24,6 +24,7 @@ import fetch from 'node-fetch';
 import sharp from 'sharp';
 import { rateImageNsfw } from '../features/nsfw-rater';
 import { AIHandler } from '../features/ai-handler';
+import { getBotSetting, setBotSetting } from '../features/thread-db';
 
 export type Mod = 'g' | 't' | 'i' | 'a' | 'm' | 'l' | undefined;
 export type GisMode = 'url' | 'upload';
@@ -32,19 +33,57 @@ export const GIS_CONFIG_FILE = path.join(__dirname, '../../gis-mode.json');
 
 let currentMode: GisMode = 'url';
 
+export function getNsfwScoreEmoji(score: number): string {
+    const emojis: Record<number, string> = {
+        0: ':_charles_green5:',
+        1: ':_charles_green4:',
+        2: ':_charles_green3:',
+        3: ':_charles_green2:',
+        4: ':_charles_green1:',
+        5: ':_charles_red1:',
+        6: ':_charles_red2:',
+        7: ':_charles_red3:',
+        8: ':_charles_red4:',
+        9: ':_charles_red5:',
+        10: ':_charles_red5:',
+    };
+    return emojis[score] || ':_charles_red5:';
+}
+
 export function loadGisMode(): GisMode {
+    try {
+        const dbSetting = getBotSetting('gis_mode');
+        if (dbSetting === 'upload' || dbSetting === 'url') {
+            currentMode = dbSetting;
+            try {
+                fs.writeFileSync(GIS_CONFIG_FILE, JSON.stringify({ mode: dbSetting }, null, 2), 'utf-8');
+            } catch (err) {
+                // Ignore file sync error
+            }
+            return dbSetting;
+        }
+    } catch (err) {
+        console.error('Error loading GIS mode from SQLite:', err);
+    }
+
     try {
         if (fs.existsSync(GIS_CONFIG_FILE)) {
             const data = fs.readFileSync(GIS_CONFIG_FILE, 'utf-8');
             const parsed = JSON.parse(data);
             if (parsed && (parsed.mode === 'upload' || parsed.mode === 'url')) {
                 currentMode = parsed.mode;
+                try {
+                    setBotSetting('gis_mode', parsed.mode);
+                } catch (err) {
+                    // Ignore SQLite sync error
+                }
                 return parsed.mode;
             }
         }
     } catch (err) {
-        console.error('Error loading GIS mode:', err);
+        console.error('Error loading GIS mode from file:', err);
     }
+
     const defaultMode: GisMode = process.env.GIS_MODE === 'upload' ? 'upload' : 'url';
     currentMode = defaultMode;
     return defaultMode;
@@ -53,9 +92,14 @@ export function loadGisMode(): GisMode {
 export function setGisMode(mode: GisMode): void {
     currentMode = mode;
     try {
+        setBotSetting('gis_mode', mode);
+    } catch (err) {
+        console.error('Error saving GIS mode to SQLite:', err);
+    }
+    try {
         fs.writeFileSync(GIS_CONFIG_FILE, JSON.stringify({ mode }, null, 2), 'utf-8');
     } catch (err) {
-        console.error('Error saving GIS mode:', err);
+        console.error('Error saving GIS mode to file:', err);
     }
 }
 
@@ -172,6 +216,7 @@ export interface FetchAndUploadImageOptions {
     initialComment: string;
     nsfwRater?: (buffer: Buffer) => Promise<number | null>;
     aiHandler?: any;
+    say?: (args: any) => Promise<any>;
 }
 
 export async function fetchAndUploadImage({
@@ -183,6 +228,7 @@ export async function fetchAndUploadImage({
     initialComment,
     nsfwRater,
     aiHandler,
+    say,
 }: FetchAndUploadImageOptions): Promise<boolean> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -273,14 +319,25 @@ export async function fetchAndUploadImage({
         const filename = determineFilename(imageUrl, contentType, query, targetExt);
 
         let finalComment = initialComment;
+        let rating: number | null = null;
         try {
             const rater = nsfwRater || (aiHandler?.rateImageNsfw ? (buf: Buffer) => aiHandler.rateImageNsfw(buf) : rateImageNsfw);
-            const rating = await rater(uploadBuffer);
-            if (typeof rating === 'number' && rating >= 1 && rating <= 10) {
-                finalComment = `${initialComment} [NSFW: ${rating}/10]`;
+            rating = await rater(uploadBuffer);
+            if (typeof rating === 'number' && rating >= 0 && rating <= 10) {
+                const scoreTag = `[${rating}/10 ${getNsfwScoreEmoji(rating)}]`;
+                finalComment = `${initialComment} ${scoreTag}`;
             }
         } catch (err) {
             console.warn(`[GIS] NSFW rating error for ${imageUrl}:`, err);
+        }
+
+        if (typeof rating === 'number' && rating > 0 && rating <= 10) {
+            if (say) {
+                await say({ text: finalComment, thread_ts: threadTs });
+            } else if (client?.chat?.postMessage) {
+                await client.chat.postMessage({ channel, thread_ts: threadTs, text: finalComment });
+            }
+            return true;
         }
 
         await client.files.uploadV2({
@@ -300,7 +357,7 @@ export async function fetchAndUploadImage({
     }
 }
 
-const re = /^gis([gtiaml])?(\d+)? (.+)/i;
+const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
 const BadDomains =
     /(reddit\.com)|(redd\.it)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
@@ -318,7 +375,7 @@ interface GoogleSearchResult {
 }
 
 export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
-    app.message(/^!gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i, async ({ message, context, say }) => {
+    app.message(/^!?gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i, async ({ message, context, say }) => {
         if (!('user' in message) || !message.user) {
             return;
         }
@@ -414,6 +471,7 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
                         query,
                         initialComment: commentText,
                         aiHandler,
+                        say,
                     });
                 }
                 if (!uploaded) {
