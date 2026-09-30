@@ -1057,7 +1057,7 @@ ${formatInventory(character.inventory)}
 • \`!meme search <term>\`: Search for meme templates.
 • \`!meme <template> <text1> [| text2 ...]\`: Generates a meme. Multi-panel memes are supported using \`|\`.
 • \`gis [flags][#] <term>\`: Search Google Images (flags: \`g\`, \`t\`, \`i\`, \`a\` (gif), \`m\`, \`l\`; e.g., \`gis dogs\`, \`gisa 2 cats\`).
-• \`!gis mode <upload|url>\`: Switch GIS mode between uploading image files or posting URLs.
+• \`!gis mode <upload|url>\`: Switch GIS mode between uploading image files (only if rated 0 for safety) or posting URLs.
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!ud <term>\` or \`!urban <term>\`: Get definitions from Urban Dictionary.
 • \`!dict <word>\` or \`!dictionary <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.

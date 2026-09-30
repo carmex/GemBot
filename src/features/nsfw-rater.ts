@@ -9,13 +9,22 @@ import { LLMProvider } from './llm/providers/types';
 import { createProvider, providerHealth } from './llm/provider-factory';
 
 export const NSFW_RATING_SYSTEM_PROMPT =
-    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10.';
+    'You are an objective workplace content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10 based on appropriateness for an open corporate office environment.';
 
-export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10:
-0 = Completely safe (safe for work, general audience, innocent, everyday objects, nature)
-10 = Completely unsafe (hardcore pornography, graphic violence, gore, extreme explicit content)
+export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10 based on appropriateness for an open workplace screen:
 
-Respond with ONLY a single integer between 0 and 10 representing the rating (e.g. "0" or "7"). Do not provide explanations.`;
+0 = Strictly safe for work (general audience, modest/everyday clothing, non-sexual, professional scenes, nature, everyday objects). 100% safe to display on an open monitor at work.
+1-2 = Mildly suggestive / borderline (revealing clothing, deep cleavage, swimwear/beachwear, provocative or sexy posing, tight/skimpy attire, risqué modeling). Not appropriate for an open workplace monitor.
+3-5 = Moderately suggestive (lingerie, underwear, erotic modeling, partial nudity, heavy sexual innuendo).
+6-9 = Explicit / Graphic (nudity, sexual acts, graphic violence/gore).
+10 = Extreme explicit (hardcore pornography, extreme violence/gore).
+
+CRITICAL BOUNDARY RULES:
+- If the image features visible cleavage, revealing/sexy outfits, or suggestive/provocative posing, it MUST be rated at least 1 and NEVER 0.
+- A rating of 0 is strictly reserved for images with ZERO sexual suggestiveness.
+- If in doubt between 0 and 1, always rate at least 1.
+
+Respond with ONLY a single integer between 0 and 10 representing the rating (e.g. "1"). Do not provide explanations.`;
 
 /**
  * Parses a 0-10 NSFW integer rating from LLM text response.
