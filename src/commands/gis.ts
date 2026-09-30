@@ -110,12 +110,12 @@ export function getGisMode(): GisMode {
 // Module initialization
 currentMode = loadGisMode();
 
-export const GIS_MODE_UPLOAD_MSG = '🖼️ GIS mode set to *upload*. Images will now be fetched and uploaded directly to Slack.';
+export const GIS_MODE_UPLOAD_MSG = '🖼️ GIS mode set to *upload*. Images will now be fetched and uploaded directly to Slack only if rated 0 for safety (otherwise posted as direct URLs).';
 export const GIS_MODE_URL_MSG = '🔗 GIS mode set to *url*. Images will be posted as direct URLs (original behavior).';
 
 export function formatGisModeStatus(mode: GisMode): string {
     const desc = mode === 'upload'
-        ? 'images will be fetched and uploaded directly to Slack'
+        ? 'images will be fetched and uploaded directly to Slack only if rated 0 for safety, otherwise posted as direct URLs'
         : 'images will be posted as direct URLs';
     return `GIS is currently in *${mode}* mode (${desc}). Use \`!gis mode upload\` or \`!gis mode url\` to change.`;
 }
@@ -331,24 +331,29 @@ export async function fetchAndUploadImage({
             console.warn(`[GIS] NSFW rating error for ${imageUrl}:`, err);
         }
 
-        if (typeof rating === 'number' && rating > 0 && rating <= 10) {
-            if (say) {
-                await say({ text: finalComment, thread_ts: threadTs });
-            } else if (client?.chat?.postMessage) {
-                await client.chat.postMessage({ channel, thread_ts: threadTs, text: finalComment });
-            }
+        // Only upload to Slack if verified strictly safe (rating === 0)
+        if (rating === 0) {
+            await client.files.uploadV2({
+                channel_id: channel,
+                thread_ts: threadTs,
+                file: uploadBuffer,
+                filename,
+                initial_comment: finalComment,
+            });
             return true;
         }
 
-        await client.files.uploadV2({
-            channel_id: channel,
-            thread_ts: threadTs,
-            file: uploadBuffer,
-            filename,
-            initial_comment: finalComment,
-        });
+        // For any non-zero rating (1-10) or if rating failed/timed out/unrated (rating !== 0):
+        // Do NOT upload the image file to Slack (better safe than sorry). Post the URL message instead.
+        if (say) {
+            await say({ text: finalComment, thread_ts: threadTs });
+            return true;
+        } else if (client?.chat?.postMessage) {
+            await client.chat.postMessage({ channel, thread_ts: threadTs, text: finalComment });
+            return true;
+        }
 
-        return true;
+        return false;
     } catch (error) {
         console.warn(`[GIS] Failed to fetch or upload image from ${imageUrl}:`, error);
         return false;

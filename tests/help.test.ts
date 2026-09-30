@@ -49,7 +49,7 @@ function runTests() {
 
     // 2. Read src/listeners/commands.ts and extract helpText
     const commandsFilePath = path.join(__dirname, '../src/listeners/commands.ts');
-    const fileContent = fs.readFileSync(commandsFilePath, 'utf-8');
+    const fileContent = fs.readFileSync(commandsFilePath, 'utf-8').replace(/\r\n/g, '\n');
 
     // Verify regex is used in commands.ts
     assert.ok(

@@ -314,6 +314,7 @@ async function runTests() {
         console.log(`Mock image server running at ${serverUrl}`);
 
         const uploadCalls: any[] = [];
+        const mockSafeRater = async () => 0;
         const mockClient = {
             files: {
                 uploadV2: async (args: any) => {
@@ -332,6 +333,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/image.png`,
             query: 'cute puppy',
             initialComment: 'https://example.com/image.png (0.42 sec)',
+            nsfwRater: mockSafeRater,
         });
 
         assert(successPng === true, 'fetchAndUploadImage should return true for valid PNG');
@@ -339,7 +341,7 @@ async function runTests() {
         assert(uploadCalls[0].channel_id === 'C_CHANNEL_1', 'channel_id should match');
         assert(uploadCalls[0].thread_ts === 'T_THREAD_1', 'thread_ts should match');
         assert(uploadCalls[0].filename === 'cute_puppy.png', 'filename should be cute_puppy.png');
-        assert(uploadCalls[0].initial_comment === 'https://example.com/image.png (0.42 sec)', 'initial_comment should match');
+        assert(uploadCalls[0].initial_comment === 'https://example.com/image.png (0.42 sec) [0/10 :_charles_green5:]', 'initial_comment should match');
         assert(Buffer.isBuffer(uploadCalls[0].file), 'file should be a Buffer');
         assert(uploadCalls[0].file.equals(PNG_BYTES), 'file buffer should match source PNG bytes');
 
@@ -352,6 +354,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/animated.gif`,
             query: 'dancing cat animated gif',
             initialComment: 'https://example.com/animated.gif (0.35 sec)',
+            nsfwRater: mockSafeRater,
         });
 
         assert(successGif === true, 'fetchAndUploadImage should return true for valid GIF');
@@ -375,6 +378,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/opaque.webp`,
             query: 'forest landscape',
             initialComment: 'https://example.com/opaque.webp (0.30 sec)',
+            nsfwRater: mockSafeRater,
         });
         assert(successOpaqueWebp === true, 'fetchAndUploadImage should succeed for opaque WebP');
         assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for opaque WebP');
@@ -390,6 +394,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/alpha.webp`,
             query: 'transparent sticker',
             initialComment: 'https://example.com/alpha.webp (0.30 sec)',
+            nsfwRater: mockSafeRater,
         });
         assert(successAlphaWebp === true, 'fetchAndUploadImage should succeed for alpha WebP');
         assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for alpha WebP');
@@ -405,6 +410,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/animated.webp`,
             query: 'running puppy',
             initialComment: 'https://example.com/animated.webp (0.30 sec)',
+            nsfwRater: mockSafeRater,
         });
         assert(successAnimWebp === true, 'fetchAndUploadImage should succeed for animated WebP');
         assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for animated WebP');
@@ -421,6 +427,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/vector.svg`,
             query: 'vector logo',
             initialComment: 'https://example.com/vector.svg (0.30 sec)',
+            nsfwRater: mockSafeRater,
         });
         assert(successSvg === true, 'fetchAndUploadImage should succeed for SVG');
         assert(uploadCalls.length === 1, 'files.uploadV2 should be called once for SVG');
@@ -460,6 +467,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/mismatched-ext.png`,
             query: 'sunset mountain',
             initialComment: 'https://example.com/mismatched-ext.png (0.30 sec)',
+            nsfwRater: mockSafeRater,
         });
         assert(successMismatched === true, 'fetchAndUploadImage should succeed for mismatched extension');
         assert(uploadCalls.length === 1, 'files.uploadV2 should be called once');
@@ -475,6 +483,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/mismatched-ext.png`,
             query: '',
             initialComment: 'https://example.com/mismatched-ext.png (0.30 sec)',
+            nsfwRater: mockSafeRater,
         });
         assert(successMismatchedEmptyQuery === true, 'fetchAndUploadImage should succeed with empty query');
         assert(uploadCalls.length === 1, 'files.uploadV2 should be called once');
@@ -554,6 +563,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/image.png`,
             query: 'test throw',
             initialComment: 'comment',
+            nsfwRater: mockSafeRater,
         });
         assert(failUpload === false, 'fetchAndUploadImage should return false if files.uploadV2 throws');
 
@@ -582,6 +592,7 @@ async function runTests() {
             imageUrl: `${serverUrl}/image.png`,
             query: 'test',
             initialComment: 'https://example.com/image.png (0.50 sec)',
+            nsfwRater: mockSafeRater,
         });
         if (!uploaded) {
             await trackingSay({
@@ -719,7 +730,7 @@ async function runTests() {
             `Boundary rating 10 message should end with [10/10 :_charles_red5:], got: '${lastMessageSaid.text}'`
         );
 
-        // Test 6d: Rating failure / exception does NOT prevent image upload (fallback resilience)
+        // Test 6d: Rating failure / exception gates upload (better safe than sorry)
         uploadCalls.length = 0;
         lastMessageSaid = null;
         const uploadThrowRater = await fetchAndUploadImage({
@@ -733,17 +744,18 @@ async function runTests() {
             },
             say: testSay,
         });
-        assert(uploadThrowRater === true, 'Upload must succeed when NSFW rater throws an error');
-        assert(uploadCalls.length === 1, 'files.uploadV2 must be called when rater throws');
+        assert(uploadThrowRater === true, 'Handler must return true when NSFW rater throws an error');
+        assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called when rater throws');
+        assert(lastMessageSaid !== null, 'Message should be sent via say when rater throws');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/throw.png (0.20 sec)',
-            `Original comment without score should be preserved on rater error, got: '${uploadCalls[0].initial_comment}'`
+            lastMessageSaid.text === 'https://example.com/throw.png (0.20 sec)',
+            `Original comment without score should be sent via say on rater error, got: '${lastMessageSaid.text}'`
         );
 
-        // Test 6e: Unparseable / null rating preserves initial comment and uploads
+        // Test 6e: Unparseable / null rating gates upload (better safe than sorry)
         uploadCalls.length = 0;
         lastMessageSaid = null;
-        await fetchAndUploadImage({
+        const uploadNullRater = await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
             imageUrl: `${serverUrl}/image.png`,
@@ -752,10 +764,12 @@ async function runTests() {
             nsfwRater: async () => null,
             say: testSay,
         });
-        assert(uploadCalls.length === 1, 'files.uploadV2 called for null rating fallback');
+        assert(uploadNullRater === true, 'Handler must return true for null rating fallback');
+        assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for null rating fallback');
+        assert(lastMessageSaid !== null, 'Message should be sent via say when rating is null');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/null.png (0.18 sec)',
-            `Original comment should be preserved when rating is null, got: '${uploadCalls[0].initial_comment}'`
+            lastMessageSaid.text === 'https://example.com/null.png (0.18 sec)',
+            `Original comment should be sent via say when rating is null, got: '${lastMessageSaid.text}'`
         );
 
         // Test 6f: aiHandler integration with rating 0
