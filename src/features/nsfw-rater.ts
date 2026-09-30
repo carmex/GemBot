@@ -9,14 +9,17 @@ import { LLMProvider } from './llm/providers/types';
 import { createProvider, providerHealth } from './llm/provider-factory';
 
 export const NSFW_RATING_SYSTEM_PROMPT =
-    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10. When multiple panels or animation frames are shown, rate according to the highest NSFW severity found in any frame.';
+    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10.';
 
-export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10:
-0 = Safe (safe for work, general audience, everyday objects, animals, nature, non-suggestive people)
-1 = Borderline or mildly suggestive (revealing clothing, cleavage, swimwear, suggestive posing)
-10 = Completely unsafe (pornography, graphic violence, extreme adult content)
+export const NSFW_RATING_USER_PROMPT = `Rate the NSFW level of this image on a scale from 0 to 10:
+0 = Completely safe (general audience, everyday objects, animals, nature, landscapes, food, harmless cartoons, fully clothed people).
+1-2 = Mildly suggestive (revealing clothing, deep cleavage, swimwear, suggestive poses).
+3-5 = Moderately suggestive (underwear, lingerie, partial nudity, erotic modeling).
+6-9 = Sexually explicit / graphic.
+10 = Extreme explicit (hardcore pornography, graphic violence/gore).
 
-If the image contains multiple frames or panels (e.g. from an animated GIF), evaluate all panels and rate based on the most severe or unsafe panel depicted.
+If the image contains multiple animation frames or panels, rate based on the most severe frame depicted.
+If completely safe with no suggestive or adult content, the rating must be 0.
 
 First provide a brief 1-sentence explanation of what is depicted and any safety concerns, then give the rating as "Rating: <number>".
 Format:
