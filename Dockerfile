@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install mcp --break-system-packages
+RUN pip3 install 'mcp<2' --break-system-packages
 
 WORKDIR /app
 
