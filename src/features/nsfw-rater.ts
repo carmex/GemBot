@@ -1,6 +1,6 @@
 /*
  * GemBot: NSFW Image Rater
- * Rates images on a 1-10 scale using LLM vision capabilities.
+ * Rates images on a 0-10 scale using LLM vision capabilities.
  */
 
 import sharp from 'sharp';
@@ -9,16 +9,16 @@ import { LLMProvider } from './llm/providers/types';
 import { createProvider, providerHealth } from './llm/provider-factory';
 
 export const NSFW_RATING_SYSTEM_PROMPT =
-    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 1 to 10.';
+    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10.';
 
-export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 1 to 10:
-1 = Completely safe (safe for work, general audience, innocent, everyday objects, nature)
+export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10:
+0 = Completely safe (safe for work, general audience, innocent, everyday objects, nature)
 10 = Completely unsafe (hardcore pornography, graphic violence, gore, extreme explicit content)
 
-Respond with ONLY a single integer between 1 and 10 representing the rating (e.g. "1" or "7"). Do not provide explanations.`;
+Respond with ONLY a single integer between 0 and 10 representing the rating (e.g. "0" or "7"). Do not provide explanations.`;
 
 /**
- * Parses a 1-10 NSFW integer rating from LLM text response.
+ * Parses a 0-10 NSFW integer rating from LLM text response.
  * Returns null if unparseable, out of range, or invalid.
  */
 export function parseNsfwRating(text: string): number | null {
@@ -43,31 +43,31 @@ export function parseNsfwRating(text: string): number | null {
     }
 
     // 1. Fraction check: e.g. "9/10", "2 out of 10", "NSFW: 9/10"
-    const fractionMatch = cleaned.match(/\b(10|[1-9])\s*(?:\/|\s+out\s+of\s+)\s*10\b/i);
+    const fractionMatch = cleaned.match(/\b(10|[0-9])\s*(?:\/|\s+out\s+of\s+)\s*10\b/i);
     if (fractionMatch) {
         const val = parseInt(fractionMatch[1], 10);
-        if (val >= 1 && val <= 10) return val;
+        if (val >= 0 && val <= 10) return val;
     }
 
     // 2. Labeled check: e.g. "Rating: 8", "Score: 3", "NSFW: 9", "Scale: 5"
-    const labeledMatch = cleaned.match(/(?:rating|score|nsfw|scale)\s*[:=\-]?\s*(10|[1-9])\b/i);
+    const labeledMatch = cleaned.match(/(?:rating|score|nsfw|scale)\s*[:=\-]?\s*(10|[0-9])\b/i);
     if (labeledMatch) {
         const val = parseInt(labeledMatch[1], 10);
-        if (val >= 1 && val <= 10) return val;
+        if (val >= 0 && val <= 10) return val;
     }
 
-    // 3. Exact number check: starts with 1-10 followed by word boundary, punctuation, or end of string
-    const exactMatch = cleaned.match(/^\s*(10|[1-9])(?:\b|[.:]|$)/);
+    // 3. Exact number check: starts with 0-10 followed by word boundary, punctuation, or end of string
+    const exactMatch = cleaned.match(/^\s*(10|[0-9])(?:\b|[.:]|$)/);
     if (exactMatch) {
         const val = parseInt(exactMatch[1], 10);
-        if (val >= 1 && val <= 10) return val;
+        if (val >= 0 && val <= 10) return val;
     }
 
     // 4. Standalone integer check: if there is only a single integer in the entire text
     const allNumbers = cleaned.match(/\b\d+\b/g);
     if (allNumbers && allNumbers.length === 1) {
         const val = parseInt(allNumbers[0], 10);
-        if (val >= 1 && val <= 10) return val;
+        if (val >= 0 && val <= 10) return val;
     }
 
     return null;
@@ -79,7 +79,7 @@ export interface RateImageNsfwOptions {
 }
 
 /**
- * Rates an image buffer on a 1-10 NSFW scale using an LLM vision provider.
+ * Rates an image buffer on a 0-10 NSFW scale using an LLM vision provider.
  * Never throws; returns null on any error or timeout.
  */
 export async function rateImageNsfw(

@@ -12,11 +12,13 @@ import {
     determineFilename,
     fetchAndUploadImage,
     handleGisModeCommand,
+    getNsfwScoreEmoji,
     GIS_CONFIG_FILE,
     GIS_MODE_UPLOAD_MSG,
     GIS_MODE_URL_MSG,
     formatGisModeStatus,
 } from '../src/commands/gis';
+import { getBotSetting, setBotSetting, deleteBotSetting } from '../src/features/thread-db';
 
 function assert(condition: boolean, message: string) {
     if (!condition) {
@@ -85,10 +87,11 @@ async function runTests() {
         if (fs.existsSync(GIS_CONFIG_FILE)) {
             fs.unlinkSync(GIS_CONFIG_FILE);
         }
+        deleteBotSetting('gis_mode');
         delete process.env.GIS_MODE;
 
         // Default mode should be 'url'
-        assert(loadGisMode() === 'url', 'loadGisMode should default to "url" when no config file and no env var');
+        assert(loadGisMode() === 'url', 'loadGisMode should default to "url" when no config file, no sqlite, and no env var');
         assert(getGisMode() === 'url', 'getGisMode should return "url"');
 
         // Env var GIS_MODE=upload fallback
@@ -98,20 +101,29 @@ async function runTests() {
 
         delete process.env.GIS_MODE;
 
-        // setGisMode('upload')
+        // setGisMode('upload') - should persist to both SQLite and config file
         setGisMode('upload');
         assert(getGisMode() === 'upload', 'getGisMode should return "upload" after setGisMode("upload")');
+        assert(getBotSetting('gis_mode') === 'upload', 'SQLite bot_settings should store "upload"');
         assert(fs.existsSync(GIS_CONFIG_FILE), 'GIS_CONFIG_FILE should exist after setGisMode');
         const fileContentUpload = JSON.parse(fs.readFileSync(GIS_CONFIG_FILE, 'utf-8'));
         assert(fileContentUpload.mode === 'upload', 'GIS_CONFIG_FILE should contain { mode: "upload" }');
-        assert(loadGisMode() === 'upload', 'loadGisMode should read "upload" from file');
+        assert(loadGisMode() === 'upload', 'loadGisMode should read "upload" from SQLite');
 
-        // setGisMode('url')
+        // setGisMode('url') - should persist to both SQLite and config file
         setGisMode('url');
         assert(getGisMode() === 'url', 'getGisMode should return "url" after setGisMode("url")');
+        assert(getBotSetting('gis_mode') === 'url', 'SQLite bot_settings should store "url"');
         const fileContentUrl = JSON.parse(fs.readFileSync(GIS_CONFIG_FILE, 'utf-8'));
         assert(fileContentUrl.mode === 'url', 'GIS_CONFIG_FILE should contain { mode: "url" }');
-        assert(loadGisMode() === 'url', 'loadGisMode should read "url" from file');
+        assert(loadGisMode() === 'url', 'loadGisMode should read "url" from SQLite');
+
+        // SQLite persistence survives config file deletion (Docker rebuild simulation)
+        setGisMode('upload');
+        fs.unlinkSync(GIS_CONFIG_FILE);
+        assert(!fs.existsSync(GIS_CONFIG_FILE), 'Config file unlinked');
+        assert(loadGisMode() === 'upload', 'loadGisMode should restore "upload" from SQLite and sync file');
+        assert(fs.existsSync(GIS_CONFIG_FILE), 'GIS_CONFIG_FILE should be recreated from SQLite');
 
         // ==========================================
         // 2. Command Handler (handleGisModeCommand)
@@ -634,61 +646,82 @@ async function runTests() {
         assert(sayState.args.text === 'https://example.com/image.png (0.50 sec)', 'say text matches in url mode');
 
         // ==========================================
-        // 6. GIS Upload NSFW Rating Tests
+        // 6. GIS Upload NSFW Rating & Gating Tests
         // ==========================================
-        console.log('\n--- 6. GIS Upload NSFW Rating Tests ---');
+        console.log('\n--- 6. GIS Upload NSFW Rating & Gating Tests ---');
 
-        // Test 6a: Rating appended to comment in upload mode
+        let lastMessageSaid: any = null;
+        const testSay = async (args: any) => {
+            lastMessageSaid = args;
+        };
+
+        // Test 6a: Rating 0 -> Image uploaded to Slack, initial comment ends with [0/10 :_charles_green5:]
         uploadCalls.length = 0;
-        let nsfwUploadSuccess = await fetchAndUploadImage({
+        lastMessageSaid = null;
+        let rating0Success = await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
+            threadTs: 'T1',
             imageUrl: `${serverUrl}/image.png`,
             query: 'cat',
             initialComment: 'https://example.com/cat.png (0.25 sec)',
-            nsfwRater: async () => 3,
+            nsfwRater: async () => 0,
+            say: testSay,
         });
-        assert(nsfwUploadSuccess === true, 'Upload succeeded with NSFW rater');
-        assert(uploadCalls.length === 1, 'files.uploadV2 called once');
+        assert(rating0Success === true, 'Upload succeeded for rating 0');
+        assert(uploadCalls.length === 1, 'files.uploadV2 called once for rating 0');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [NSFW: 3/10]',
-            `Rating 3 should be appended, got: '${uploadCalls[0].initial_comment}'`
+            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [0/10 :_charles_green5:]',
+            `Rating 0 comment should end with [0/10 :_charles_green5:], got: '${uploadCalls[0].initial_comment}'`
         );
+        assert(lastMessageSaid === null, 'say() should NOT be called when image is uploaded');
 
-        // Test 6b: Boundary rating 1
+        // Test 6b: Rating 3 -> Upload gated (files.uploadV2 NOT called), URL + [3/10 :_charles_green2:] sent via say
         uploadCalls.length = 0;
-        await fetchAndUploadImage({
+        lastMessageSaid = null;
+        let rating3Success = await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
+            threadTs: 'T1',
             imageUrl: `${serverUrl}/image.png`,
-            query: 'safe image',
-            initialComment: 'https://example.com/safe.png (0.15 sec)',
-            nsfwRater: async () => 1,
+            query: 'questionable image',
+            initialComment: 'https://example.com/questionable.png (0.25 sec)',
+            nsfwRater: async () => 3,
+            say: testSay,
         });
+        assert(rating3Success === true, 'Handler returned true for gated rating 3');
+        assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 3');
+        assert(lastMessageSaid !== null, 'Message should be sent via say for rating 3');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/safe.png (0.15 sec) [NSFW: 1/10]',
-            `Boundary rating 1 should be appended, got: '${uploadCalls[0].initial_comment}'`
+            lastMessageSaid.text === 'https://example.com/questionable.png (0.25 sec) [3/10 :_charles_green2:]',
+            `Gated message should include URL and [3/10 :_charles_green2:], got: '${lastMessageSaid.text}'`
         );
+        assert(lastMessageSaid.thread_ts === 'T1', 'Thread timestamp preserved');
 
-        // Test 6c: Boundary rating 10 & absence of gating (upload must proceed!)
+        // Test 6c: Boundary rating 10 -> Upload gated, URL + [10/10 :_charles_red5:] sent via message
         uploadCalls.length = 0;
+        lastMessageSaid = null;
         const uploadRating10 = await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
+            threadTs: 'T2',
             imageUrl: `${serverUrl}/image.png`,
             query: 'extreme nsfw image',
             initialComment: 'https://example.com/extreme.png (0.45 sec)',
             nsfwRater: async () => 10,
+            say: testSay,
         });
-        assert(uploadRating10 === true, 'Upload must succeed even when rating is 10 (no gating)');
-        assert(uploadCalls.length === 1, 'files.uploadV2 must be called for rating 10');
+        assert(uploadRating10 === true, 'Handler returned true for gated rating 10');
+        assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 10');
+        assert(lastMessageSaid !== null, 'Message should be sent via say for rating 10');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/extreme.png (0.45 sec) [NSFW: 10/10]',
-            `Boundary rating 10 should be appended, got: '${uploadCalls[0].initial_comment}'`
+            lastMessageSaid.text === 'https://example.com/extreme.png (0.45 sec) [10/10 :_charles_red5:]',
+            `Boundary rating 10 message should end with [10/10 :_charles_red5:], got: '${lastMessageSaid.text}'`
         );
 
         // Test 6d: Rating failure / exception does NOT prevent image upload (fallback resilience)
         uploadCalls.length = 0;
+        lastMessageSaid = null;
         const uploadThrowRater = await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
@@ -698,16 +731,18 @@ async function runTests() {
             nsfwRater: async () => {
                 throw new Error('LLM rating failure');
             },
+            say: testSay,
         });
         assert(uploadThrowRater === true, 'Upload must succeed when NSFW rater throws an error');
         assert(uploadCalls.length === 1, 'files.uploadV2 must be called when rater throws');
         assert(
             uploadCalls[0].initial_comment === 'https://example.com/throw.png (0.20 sec)',
-            `Original comment should be preserved on rater error, got: '${uploadCalls[0].initial_comment}'`
+            `Original comment without score should be preserved on rater error, got: '${uploadCalls[0].initial_comment}'`
         );
 
-        // Test 6e: Unparseable / null rating preserves initial comment
+        // Test 6e: Unparseable / null rating preserves initial comment and uploads
         uploadCalls.length = 0;
+        lastMessageSaid = null;
         await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
@@ -715,28 +750,88 @@ async function runTests() {
             query: 'null rating image',
             initialComment: 'https://example.com/null.png (0.18 sec)',
             nsfwRater: async () => null,
+            say: testSay,
         });
+        assert(uploadCalls.length === 1, 'files.uploadV2 called for null rating fallback');
         assert(
             uploadCalls[0].initial_comment === 'https://example.com/null.png (0.18 sec)',
             `Original comment should be preserved when rating is null, got: '${uploadCalls[0].initial_comment}'`
         );
 
-        // Test 6f: aiHandler.rateImageNsfw integration
+        // Test 6f: aiHandler integration with rating 0
         uploadCalls.length = 0;
-        const mockAiHandler = {
+        const mockAiHandlerSafe = {
+            rateImageNsfw: async (buf: Buffer) => 0,
+        };
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'ai safe image',
+            initialComment: 'https://example.com/safe.png (0.10 sec)',
+            aiHandler: mockAiHandlerSafe,
+            say: testSay,
+        });
+        assert(uploadCalls.length === 1, 'files.uploadV2 called for aiHandler rating 0');
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/safe.png (0.10 sec) [0/10 :_charles_green5:]',
+            `Rating 0 from aiHandler should be appended, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        // Test 6g: aiHandler integration with rating 5 (gated)
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const mockAiHandlerUnsafe = {
             rateImageNsfw: async (buf: Buffer) => 5,
         };
         await fetchAndUploadImage({
             client: mockClient,
             channel: 'C1',
             imageUrl: `${serverUrl}/image.png`,
-            query: 'ai handler image',
-            initialComment: 'https://example.com/ai.png (0.10 sec)',
-            aiHandler: mockAiHandler,
+            query: 'ai unsafe image',
+            initialComment: 'https://example.com/unsafe.png (0.10 sec)',
+            aiHandler: mockAiHandlerUnsafe,
+            say: testSay,
         });
+        assert(uploadCalls.length === 0, 'files.uploadV2 NOT called for aiHandler rating 5');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/ai.png (0.10 sec) [NSFW: 5/10]',
-            `Rating from aiHandler should be appended, got: '${uploadCalls[0].initial_comment}'`
+            lastMessageSaid.text === 'https://example.com/unsafe.png (0.10 sec) [5/10 :_charles_red1:]',
+            `Rating 5 from aiHandler should be gated with red1 emoji, got: '${lastMessageSaid.text}'`
+        );
+
+        // Test 6h: client.chat.postMessage fallback when say is not provided
+        let chatPostCall: any = null;
+        const clientWithChat = {
+            files: {
+                uploadV2: async (args: any) => {
+                    uploadCalls.push(args);
+                    return { ok: true };
+                },
+            },
+            chat: {
+                postMessage: async (args: any) => {
+                    chatPostCall = args;
+                    return { ok: true };
+                },
+            },
+        };
+        uploadCalls.length = 0;
+        await fetchAndUploadImage({
+            client: clientWithChat,
+            channel: 'C_CHAT',
+            threadTs: 'T_CHAT',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'client chat test',
+            initialComment: 'https://example.com/chat.png (0.10 sec)',
+            nsfwRater: async () => 7,
+        });
+        assert(uploadCalls.length === 0, 'files.uploadV2 NOT called when gated');
+        assert(chatPostCall !== null, 'client.chat.postMessage called when say is omitted');
+        assert(chatPostCall.channel === 'C_CHAT', 'channel passed to chat.postMessage');
+        assert(chatPostCall.thread_ts === 'T_CHAT', 'thread_ts passed to chat.postMessage');
+        assert(
+            chatPostCall.text === 'https://example.com/chat.png (0.10 sec) [7/10 :_charles_red3:]',
+            `Rating 7 should format as [7/10 :_charles_red3:], got: '${chatPostCall.text}'`
         );
 
         // Close mock server
@@ -745,6 +840,11 @@ async function runTests() {
 
         console.log('\nAll GIS Upload & Mode tests passed successfully!');
     } finally {
+        // Clean up SQLite
+        try {
+            deleteBotSetting('gis_mode');
+        } catch {}
+
         // Restore original config file state
         if (originalConfig !== null) {
             fs.writeFileSync(GIS_CONFIG_FILE, originalConfig, 'utf-8');
