@@ -9,22 +9,17 @@ import { LLMProvider } from './llm/providers/types';
 import { createProvider, providerHealth } from './llm/provider-factory';
 
 export const NSFW_RATING_SYSTEM_PROMPT =
-    'You are an objective workplace content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10 based on appropriateness for an open corporate office environment.';
+    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10.';
 
-export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10 based on appropriateness for an open workplace screen:
+export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10:
+0 = Safe (safe for work, general audience, everyday objects, animals, nature, non-suggestive people)
+1 = Borderline or mildly suggestive (revealing clothing, cleavage, swimwear, suggestive posing)
+10 = Completely unsafe (pornography, graphic violence, extreme adult content)
 
-0 = Strictly safe for work (general audience, modest/everyday clothing, non-sexual, professional scenes, nature, everyday objects). 100% safe to display on an open monitor at work.
-1-2 = Mildly suggestive / borderline (revealing clothing, deep cleavage, swimwear/beachwear, provocative or sexy posing, tight/skimpy attire, risqué modeling). Not appropriate for an open workplace monitor.
-3-5 = Moderately suggestive (lingerie, underwear, erotic modeling, partial nudity, heavy sexual innuendo).
-6-9 = Explicit / Graphic (nudity, sexual acts, graphic violence/gore).
-10 = Extreme explicit (hardcore pornography, extreme violence/gore).
-
-CRITICAL BOUNDARY RULES:
-- If the image features visible cleavage, revealing/sexy outfits, or suggestive/provocative posing, it MUST be rated at least 1 and NEVER 0.
-- A rating of 0 is strictly reserved for images with ZERO sexual suggestiveness.
-- If in doubt between 0 and 1, always rate at least 1.
-
-Respond with ONLY a single integer between 0 and 10 representing the rating (e.g. "1"). Do not provide explanations.`;
+First provide a brief 1-sentence explanation of what is depicted and any safety concerns, then give the rating as "Rating: <number>".
+Format:
+Explanation: <1 sentence>
+Rating: <single integer 0-10>`;
 
 /**
  * Parses a 0-10 NSFW integer rating from LLM text response.
@@ -51,7 +46,14 @@ export function parseNsfwRating(text: string): number | null {
         return null;
     }
 
-    // 1. Fraction check: e.g. "9/10", "2 out of 10", "NSFW: 9/10"
+    // 1. Line-start labeled check: e.g. "^Rating: 8", "\nRating: 0"
+    const lineLabeledMatch = cleaned.match(/^\s*(?:rating|score|nsfw|scale)\s*[:=\-]?\s*(10|[0-9])\b/im);
+    if (lineLabeledMatch) {
+        const val = parseInt(lineLabeledMatch[1], 10);
+        if (val >= 0 && val <= 10) return val;
+    }
+
+    // 2. Fraction check: e.g. "9/10", "2 out of 10", "NSFW: 9/10"
     const fractionMatch = cleaned.match(/\b(10|[0-9])\s*(?:\/|\s+out\s+of\s+)\s*10\b/i);
     if (fractionMatch) {
         const val = parseInt(fractionMatch[1], 10);
@@ -139,7 +141,10 @@ export async function rateImageNsfw(
             });
 
             const result = await Promise.race([chatPromise, timeoutPromise]);
-            return parseNsfwRating(result.text);
+            const rating = parseNsfwRating(result.text);
+            const cleanText = (result.text || '').trim().replace(/\r?\n/g, ' | ');
+            console.log(`[NSFW-Rater] LLM evaluation: "${cleanText}" -> Parsed score: ${rating}`);
+            return rating;
         } finally {
             if (timeoutId) {
                 clearTimeout(timeoutId);
