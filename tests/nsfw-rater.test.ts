@@ -6,6 +6,8 @@ import sharp from 'sharp';
 import { Part } from '@google/generative-ai';
 import {
     parseNsfwRating,
+    getFrameIndices,
+    prepareImageForRating,
     rateImageNsfw,
     NSFW_RATING_SYSTEM_PROMPT,
     NSFW_RATING_USER_PROMPT,
@@ -95,9 +97,165 @@ async function runTests() {
     assert(NSFW_RATING_SYSTEM_PROMPT.includes('0 to 10'), 'NSFW_RATING_SYSTEM_PROMPT should mention 0 to 10');
 
     // ==========================================
-    // 2. rateImageNsfw Tests
+    // 2. getFrameIndices Unit Tests
     // ==========================================
-    console.log('\n--- 2. rateImageNsfw Tests ---');
+    console.log('\n--- 2. getFrameIndices Tests ---');
+    const eq = (a: number[], b: number[]) =>
+        a.length === b.length && a.every((v, i) => v === b[i]);
+
+    assert(eq(getFrameIndices(0), [0]), 'getFrameIndices(0) should be [0]');
+    assert(eq(getFrameIndices(1), [0]), 'getFrameIndices(1) should be [0]');
+    assert(eq(getFrameIndices(2), [0, 1]), 'getFrameIndices(2) should be [0, 1]');
+    assert(eq(getFrameIndices(3), [0, 1, 2]), 'getFrameIndices(3) should be [0, 1, 2]');
+    assert(eq(getFrameIndices(5), [0, 2, 4]), 'getFrameIndices(5) should be [0, 2, 4]');
+    assert(eq(getFrameIndices(10), [0, 4, 9]), 'getFrameIndices(10) should be [0, 4, 9]');
+
+    // ==========================================
+    // 3. prepareImageForRating Unit Tests
+    // ==========================================
+    console.log('\n--- 3. prepareImageForRating Tests ---');
+
+    async function createTestGif(
+        frames: { r: number; g: number; b: number }[],
+        width = 60,
+        height = 60
+    ): Promise<Buffer> {
+        const framePixelCount = width * height;
+        const rawBuffers = frames.map(({ r, g, b }) => {
+            const buf = Buffer.alloc(framePixelCount * 3);
+            for (let i = 0; i < framePixelCount; i++) {
+                buf[i * 3] = r;
+                buf[i * 3 + 1] = g;
+                buf[i * 3 + 2] = b;
+            }
+            return buf;
+        });
+        return await sharp(Buffer.concat(rawBuffers), {
+            raw: {
+                width,
+                height: height * frames.length,
+                channels: 3,
+                pageHeight: height,
+            },
+        })
+            .gif()
+            .toBuffer();
+    }
+
+    // 3a: Static PNG input
+    const staticPngBuffer = await sharp({
+        create: {
+            width: 800,
+            height: 600,
+            channels: 3,
+            background: { r: 50, g: 100, b: 150 },
+        },
+    })
+        .png()
+        .toBuffer();
+
+    const preparedPng = await prepareImageForRating(staticPngBuffer);
+    const preparedPngMeta = await sharp(preparedPng).metadata();
+    assert(preparedPngMeta.format === 'jpeg', 'Static PNG should return a JPEG');
+    assert(
+        (preparedPngMeta.width || 0) <= 768 && (preparedPngMeta.height || 0) <= 768,
+        `Static PNG should be resized within 768x768, got ${preparedPngMeta.width}x${preparedPngMeta.height}`
+    );
+
+    // 3b: 1-frame static GIF input
+    const singleFrameGif = await createTestGif([{ r: 128, g: 128, b: 128 }]);
+    const preparedSingleGif = await prepareImageForRating(singleFrameGif);
+    const preparedSingleGifMeta = await sharp(preparedSingleGif).metadata();
+    assert(preparedSingleGifMeta.format === 'jpeg', '1-frame static GIF should return a JPEG');
+    assert(
+        (preparedSingleGifMeta.width || 0) <= 768 && (preparedSingleGifMeta.height || 0) <= 768,
+        `1-frame static GIF should be within 768x768, got ${preparedSingleGifMeta.width}x${preparedSingleGifMeta.height}`
+    );
+
+    // 3c: 2-frame animated GIF input
+    const twoFrameGif = await createTestGif([
+        { r: 255, g: 0, b: 0 },
+        { r: 0, g: 0, b: 255 },
+    ]);
+    const preparedTwoGif = await prepareImageForRating(twoFrameGif);
+    const preparedTwoGifMeta = await sharp(preparedTwoGif).metadata();
+    assert(preparedTwoGifMeta.format === 'jpeg', '2-frame GIF should return a stitched JPEG');
+    assert(
+        (preparedTwoGifMeta.width || 0) <= 768 && (preparedTwoGifMeta.height || 0) <= 768,
+        `2-frame GIF should be within 768x768, got ${preparedTwoGifMeta.width}x${preparedTwoGifMeta.height}`
+    );
+    assert(
+        preparedTwoGifMeta.width === 120 && preparedTwoGifMeta.height === 60,
+        `2-frame GIF should stitch 2 frames side-by-side to 120x60, got ${preparedTwoGifMeta.width}x${preparedTwoGifMeta.height}`
+    );
+
+    // 3d: 5-frame animated GIF input with distinct frame colors (Red, Yellow, Green, Cyan, Blue)
+    const fiveColors = [
+        { r: 255, g: 0, b: 0 }, // 0: Red
+        { r: 255, g: 255, b: 0 }, // 1: Yellow
+        { r: 0, g: 255, b: 0 }, // 2: Green
+        { r: 0, g: 255, b: 255 }, // 3: Cyan
+        { r: 0, g: 0, b: 255 }, // 4: Blue
+    ];
+    const fiveFrameGif = await createTestGif(fiveColors, 60, 60);
+    const preparedFiveGif = await prepareImageForRating(fiveFrameGif);
+    const preparedFiveGifMeta = await sharp(preparedFiveGif).metadata();
+
+    assert(preparedFiveGifMeta.format === 'jpeg', '5-frame GIF should return a JPEG');
+    assert(
+        (preparedFiveGifMeta.width || 0) <= 768 && (preparedFiveGifMeta.height || 0) <= 768,
+        `5-frame stitched JPEG should be within 768x768, got ${preparedFiveGifMeta.width}x${preparedFiveGifMeta.height}`
+    );
+    assert(
+        preparedFiveGifMeta.width === 180 && preparedFiveGifMeta.height === 60,
+        `5-frame stitched JPEG should have width 180 (3 stitched frames of 60px) and height 60, got ${preparedFiveGifMeta.width}x${preparedFiveGifMeta.height}`
+    );
+
+    // Sample raw pixels at left (x = width / 6), center (x = width / 2), and right (x = 5 * width / 6)
+    const rawPixels = await sharp(preparedFiveGif).raw().toBuffer();
+    const channels = preparedFiveGifMeta.channels || 3;
+    const w = preparedFiveGifMeta.width || 180;
+    const yCenter = Math.floor((preparedFiveGifMeta.height || 60) / 2);
+
+    const getPixel = (x: number, y: number) => {
+        const idx = (y * w + x) * channels;
+        return {
+            r: rawPixels[idx],
+            g: rawPixels[idx + 1],
+            b: rawPixels[idx + 2],
+        };
+    };
+
+    const leftColor = getPixel(Math.floor(w / 6), yCenter);
+    const centerColor = getPixel(Math.floor(w / 2), yCenter);
+    const rightColor = getPixel(Math.floor((5 * w) / 6), yCenter);
+
+    assert(
+        leftColor.r > 200 && leftColor.g < 50 && leftColor.b < 50,
+        `Left pixel should be Red, got rgb(${leftColor.r}, ${leftColor.g}, ${leftColor.b})`
+    );
+    assert(
+        centerColor.r < 50 && centerColor.g > 200 && centerColor.b < 50,
+        `Center pixel should be Green, got rgb(${centerColor.r}, ${centerColor.g}, ${centerColor.b})`
+    );
+    assert(
+        rightColor.r < 50 && rightColor.g < 50 && rightColor.b > 200,
+        `Right pixel should be Blue, got rgb(${rightColor.r}, ${rightColor.g}, ${rightColor.b})`
+    );
+
+    // 3e: Malformed/corrupt buffer gracefully throws/rejects
+    let corruptRejected = false;
+    try {
+        await prepareImageForRating(Buffer.from('corrupt non-image buffer'));
+    } catch {
+        corruptRejected = true;
+    }
+    assert(corruptRejected, 'prepareImageForRating should reject on malformed buffer');
+
+    // ==========================================
+    // 4. rateImageNsfw Tests
+    // ==========================================
+    console.log('\n--- 4. rateImageNsfw Tests ---');
 
     // Test 2a: Valid rating with mock LLMProvider
     let capturedQuestion: any = null;
@@ -150,7 +308,27 @@ async function runTests() {
         `Image should be downscaled within 768x768, got ${meta.width}x${meta.height}`
     );
 
-    // Test 2b: Provider timeout recovery
+    // Test 4b: Multi-frame animated GIF rateImageNsfw integration
+    capturedQuestion = null;
+    capturedOptions = null;
+    const multiFrameRating = await rateImageNsfw(fiveFrameGif, { provider: mockProvider });
+    assert(multiFrameRating === 7, `rateImageNsfw should return 7 for multi-frame GIF, got ${multiFrameRating}`);
+    assert(Array.isArray(capturedQuestion), 'capturedQuestion should be an array of Part');
+    assert(capturedQuestion.length === 2, 'capturedQuestion should contain 2 parts');
+    assert(capturedQuestion[0].text === NSFW_RATING_USER_PROMPT, 'Part 0 should be user prompt');
+    assert(
+        capturedQuestion[1].inlineData?.mimeType === 'image/jpeg',
+        'capturedQuestion[1].inlineData.mimeType should be image/jpeg'
+    );
+    const multiDecodedBuffer = Buffer.from(capturedQuestion[1].inlineData.data, 'base64');
+    const multiMeta = await sharp(multiDecodedBuffer).metadata();
+    assert(multiMeta.format === 'jpeg', 'Decoded multi-frame buffer should be jpeg');
+    assert(
+        multiMeta.width === 180 && multiMeta.height === 60,
+        `Decoded buffer should decode to a valid stitched JPEG containing 3 frames (180x60), got ${multiMeta.width}x${multiMeta.height}`
+    );
+
+    // Test 4c: Provider timeout recovery
     const slowProvider: LLMProvider = {
         name: () => 'slow-mock',
         chat: async (): Promise<LLMResult> => {

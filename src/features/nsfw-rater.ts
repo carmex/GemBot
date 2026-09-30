@@ -9,12 +9,14 @@ import { LLMProvider } from './llm/providers/types';
 import { createProvider, providerHealth } from './llm/provider-factory';
 
 export const NSFW_RATING_SYSTEM_PROMPT =
-    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10.';
+    'You are an objective content safety evaluation assistant that rates images strictly on an integer scale from 0 to 10. When multiple panels or animation frames are shown, rate according to the highest NSFW severity found in any frame.';
 
 export const NSFW_RATING_USER_PROMPT = `Evaluate this image on a NSFW (Not Safe For Work) scale from 0 to 10:
 0 = Safe (safe for work, general audience, everyday objects, animals, nature, non-suggestive people)
 1 = Borderline or mildly suggestive (revealing clothing, cleavage, swimwear, suggestive posing)
 10 = Completely unsafe (pornography, graphic violence, extreme adult content)
+
+If the image contains multiple frames or panels (e.g. from an animated GIF), evaluate all panels and rate based on the most severe or unsafe panel depicted.
 
 First provide a brief 1-sentence explanation of what is depicted and any safety concerns, then give the rating as "Rating: <number>".
 Format:
@@ -84,6 +86,86 @@ export function parseNsfwRating(text: string): number | null {
     return null;
 }
 
+/**
+ * Calculates key frame indices (first, middle, and last) for animated GIF evaluation.
+ */
+export function getFrameIndices(totalPages: number): number[] {
+    if (totalPages <= 1) {
+        return [0];
+    }
+    if (totalPages === 2) {
+        return [0, 1];
+    }
+    return [0, Math.floor((totalPages - 1) / 2), totalPages - 1];
+}
+
+/**
+ * Prepares an image buffer for LLM rating.
+ * For static images, resizes to fit within 768x768 JPEG.
+ * For animated images (e.g. multi-frame GIFs), extracts up to 3 key frames
+ * (first, middle, last), resizes each to fit proportionally, and stitches them
+ * side-by-side into a single composite JPEG.
+ */
+export async function prepareImageForRating(imageBuffer: Buffer): Promise<Buffer> {
+    const metadata = await sharp(imageBuffer, { animated: true }).metadata();
+    const isAnimated = Boolean(metadata.pages && metadata.pages > 1);
+
+    if (!isAnimated || !metadata.pages) {
+        return await sharp(imageBuffer)
+            .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+    }
+
+    try {
+        const frameIndices = getFrameIndices(metadata.pages);
+        const maxFrameWidth = Math.floor(768 / frameIndices.length);
+        const maxFrameHeight = 768;
+
+        const frameBuffers = await Promise.all(
+            frameIndices.map((page) =>
+                sharp(imageBuffer, { page })
+                    .resize(maxFrameWidth, maxFrameHeight, { fit: 'inside', withoutEnlargement: true })
+                    .png()
+                    .toBuffer()
+            )
+        );
+
+        const frameMetas = await Promise.all(frameBuffers.map((buf) => sharp(buf).metadata()));
+        const canvasHeight = Math.max(...frameMetas.map((m) => m.height || 0));
+        const totalWidth = frameMetas.reduce((sum, m) => sum + (m.width || 0), 0);
+
+        let currentLeft = 0;
+        const compositeList: sharp.OverlayOptions[] = [];
+        for (let i = 0; i < frameBuffers.length; i++) {
+            const top = Math.floor((canvasHeight - (frameMetas[i].height || 0)) / 2);
+            compositeList.push({ input: frameBuffers[i], left: currentLeft, top });
+            currentLeft += frameMetas[i].width || 0;
+        }
+
+        return await sharp({
+            create: {
+                width: totalWidth,
+                height: canvasHeight,
+                channels: 3,
+                background: { r: 0, g: 0, b: 0 },
+            },
+        })
+            .composite(compositeList)
+            .jpeg({ quality: 80 })
+            .toBuffer();
+    } catch (err) {
+        console.warn(
+            '[NSFW-Rater] Failed to extract/stitch animated frames, falling back to single frame:',
+            err
+        );
+        return await sharp(imageBuffer, { page: 0 })
+            .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+    }
+}
+
 export interface RateImageNsfwOptions {
     provider?: LLMProvider;
     timeoutMs?: number;
@@ -113,11 +195,8 @@ export async function rateImageNsfw(
             }
         }
 
-        // Preprocess image using sharp: resize to max 768x768 and convert to JPEG
-        const resizedJpegBuffer = await sharp(imageBuffer)
-            .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 80 })
-            .toBuffer();
+        // Preprocess image using sharp: resize to max 768x768 and convert to JPEG (stitches animated GIFs)
+        const resizedJpegBuffer = await prepareImageForRating(imageBuffer);
 
         const base64Data = resizedJpegBuffer.toString('base64');
 
