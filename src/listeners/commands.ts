@@ -985,7 +985,7 @@ ${formatInventory(character.inventory)}
             });
 
             try {
-                const tidbitText = await generateTidbits(n);
+                const tidbitText = await generateTidbits(n, message.user);
                 await client.chat.postMessage({
                     channel: message.user,
                     text: tidbitText,

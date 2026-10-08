@@ -11,7 +11,10 @@ import {
     getSubscription,
     getAllSubscriptions,
     removeSubscription,
-    updateLastSentDate
+    updateLastSentDate,
+    isTidbitDuplicate,
+    recordDeliveredTidbits,
+    clearTidbitHistory
 } from '../src/features/tidbit-db';
 import * as cron from 'node-cron';
 import { config } from '../src/config';
@@ -22,8 +25,13 @@ import {
     getHistoricalFact,
     getRecipeIdea,
     getInspirationalQuote,
-    FAMOUS_QUOTES
+    computeTidbitHash,
+    _setFetch,
+    _resetFetch,
+    _setFetchStockNews,
+    _resetFetchStockNews
 } from '../src/features/tidbit-generator';
+import fetch from 'node-fetch';
 import { getUserLocalDateTime, sendChannelTidbits } from '../src/features/tidbit-worker';
 
 async function runTidbitsTests() {
@@ -43,7 +51,7 @@ async function runTidbitsTests() {
 
     try {
         // --- 1. Database Unit & Concurrency Tests ---
-        console.log("\n1. Testing Database Operations (WAL Mode, CRUD)...");
+        console.log("\n1. Testing Database Operations (WAL Mode, CRUD, Deduplication Helpers)...");
         initTidbitDb();
 
         const testUser = 'U99999_TEST';
@@ -51,6 +59,7 @@ async function runTidbitsTests() {
 
         // Clean up pre-existing test record if any
         removeSubscription(testUser);
+        clearTidbitHistory(testUser);
 
         // Upsert new subscription
         upsertSubscription(testUser, testChannel, 3, 'America/New_York');
@@ -74,6 +83,24 @@ async function runTidbitsTests() {
         updateLastSentDate(testUser, todayStr);
         sub = getSubscription(testUser);
         assert(sub?.last_sent_date === todayStr, "last_sent_date updated successfully");
+
+        // Test Deduplication DB Helpers
+        const sampleHash1 = computeTidbitHash('recipe', 'Pasta Carbonara');
+        const sampleHash2 = computeTidbitHash('quote', 'Stay hungry, stay foolish.');
+        assert(!isTidbitDuplicate(testUser, sampleHash1), "isTidbitDuplicate returns false before recording");
+
+        recordDeliveredTidbits(testUser, [
+            { category: 'recipe', itemHash: sampleHash1 },
+            { category: 'quote', itemHash: sampleHash2 }
+        ]);
+
+        assert(isTidbitDuplicate(testUser, sampleHash1), "isTidbitDuplicate returns true for recorded recipe hash");
+        assert(isTidbitDuplicate(testUser, sampleHash2), "isTidbitDuplicate returns true for recorded quote hash");
+        assert(!isTidbitDuplicate(testUser, 'non_existent_hash'), "isTidbitDuplicate returns false for unrecorded hash");
+        assert(!isTidbitDuplicate('OTHER_RECIPIENT_123', sampleHash1), "isTidbitDuplicate respects recipient isolation");
+
+        clearTidbitHistory(testUser);
+        assert(!isTidbitDuplicate(testUser, sampleHash1), "clearTidbitHistory clears recipient history");
 
         // Remove subscription
         const removed = removeSubscription(testUser);
@@ -100,13 +127,27 @@ async function runTidbitsTests() {
         assert(isValidN(5), "n = 5 accepted");
 
 
-        // --- 3. Content Generator & Quotes Tests ---
-        console.log("\n3. Testing Content Generation & Famous Quotes Dataset...");
+        // --- 3. Content Generator, Static Dataset Removal & Live Web Sourcing Tests ---
+        console.log("\n3. Testing Content Generation, Dynamic Web Sourcing & Removal of Static Datasets...");
 
-        assert(FAMOUS_QUOTES.length >= 30, `Famous quotes dataset contains ${FAMOUS_QUOTES.length} items (>= 30 required)`);
-        for (const q of FAMOUS_QUOTES) {
-            assert(typeof q.text === 'string' && q.text.length > 0 && typeof q.author === 'string' && q.author.length > 0, `Quote valid: "${q.text.slice(0, 20)}..." — ${q.author}`);
-        }
+        // Verify static datasets are completely removed from module exports
+        const genModule = await import('../src/features/tidbit-generator');
+        assert((genModule as any).FAMOUS_QUOTES === undefined, "FAMOUS_QUOTES dataset removed from module");
+        assert((genModule as any).CURATED_RECIPES === undefined, "CURATED_RECIPES dataset removed from module");
+        assert((genModule as any).FALLBACK_TRIVIA === undefined, "FALLBACK_TRIVIA dataset removed from module");
+        assert((genModule as any).FALLBACK_NEWS === undefined, "FALLBACK_NEWS dataset removed from module");
+        assert((genModule as any).FALLBACK_HISTORY === undefined, "FALLBACK_HISTORY dataset removed from module");
+
+        // Verify getRecipeIdea() fetches from web and does not return static garlic butter shrimp pasta
+        const recipeTest = await getRecipeIdea();
+        assert(typeof recipeTest.text === 'string' && recipeTest.text.includes("Recipe Idea"), "getRecipeIdea fetches live dish information");
+        assert(!recipeTest.text.includes("Quick Garlic Butter Shrimp Pasta"), "getRecipeIdea does not reference static CURATED_RECIPES");
+        assert(typeof recipeTest.hash === 'string' && recipeTest.hash.length === 64, "getRecipeIdea returns deterministic sha256 hash");
+
+        // Verify getInspirationalQuote() fetches live quote
+        const quoteTest = await getInspirationalQuote();
+        assert(typeof quoteTest.text === 'string' && quoteTest.text.includes("Inspirational Quote"), "getInspirationalQuote fetches live quote");
+        assert(typeof quoteTest.hash === 'string' && quoteTest.hash.length === 64, "getInspirationalQuote returns deterministic sha256 hash");
 
         // Test generateTidbits(n) for n = 1..5
         for (let n = 1; n <= 5; n++) {
@@ -118,22 +159,27 @@ async function runTidbitsTests() {
 
 
         // --- 4. Category Handlers & Fallback Resilience ---
-        console.log("\n4. Testing Individual Category Handlers & Fallback Safety...");
+        console.log("\n4. Testing Individual Category Handlers & Web Sourcing...");
 
         const newsRes = await getTopNews();
-        assert(typeof newsRes === 'string' && newsRes.includes("Today's Top News"), "getTopNews returns valid formatted string");
+        assert(typeof newsRes.text === 'string' && newsRes.text.includes("Today's Top News"), "getTopNews returns valid formatted string");
+        assert(typeof newsRes.hash === 'string' && newsRes.hash.length === 64, "getTopNews returns valid sha256 hash");
 
         const factRes = await getFunFact();
-        assert(typeof factRes === 'string' && factRes.includes("Fun Factoid"), "getFunFact returns valid formatted string");
+        assert(typeof factRes.text === 'string' && factRes.text.includes("Fun Factoid"), "getFunFact returns valid formatted string");
+        assert(typeof factRes.hash === 'string' && factRes.hash.length === 64, "getFunFact returns valid sha256 hash");
 
         const historyRes = await getHistoricalFact();
-        assert(typeof historyRes === 'string' && historyRes.includes("Historical Fact on This Day"), "getHistoricalFact returns valid formatted string");
+        assert(typeof historyRes.text === 'string' && historyRes.text.includes("Historical Fact on This Day"), "getHistoricalFact returns valid formatted string");
+        assert(typeof historyRes.hash === 'string' && historyRes.hash.length === 64, "getHistoricalFact returns valid sha256 hash");
 
         const recipeRes = await getRecipeIdea();
-        assert(typeof recipeRes === 'string' && recipeRes.includes("Recipe Idea"), "getRecipeIdea returns valid formatted string");
+        assert(typeof recipeRes.text === 'string' && recipeRes.text.includes("Recipe Idea"), "getRecipeIdea returns valid formatted string");
+        assert(typeof recipeRes.hash === 'string' && recipeRes.hash.length === 64, "getRecipeIdea returns valid sha256 hash");
 
         const quoteRes = await getInspirationalQuote();
-        assert(typeof quoteRes === 'string' && quoteRes.includes("Inspirational Quote"), "getInspirationalQuote returns valid formatted string");
+        assert(typeof quoteRes.text === 'string' && quoteRes.text.includes("Inspirational Quote"), "getInspirationalQuote returns valid formatted string");
+        assert(typeof quoteRes.hash === 'string' && quoteRes.hash.length === 64, "getInspirationalQuote returns valid sha256 hash");
 
 
         // --- 5. Timezone & Worker Delivery Logic Tests ---
@@ -173,13 +219,14 @@ async function runTidbitsTests() {
         const subN = 2;
 
         removeSubscription(subUser);
+        clearTidbitHistory(subUser);
         upsertSubscription(subUser, subChannel, subN, subTz);
 
         // Simulate immediate delivery flow
-        const immediateTidbits = await generateTidbits(subN);
+        const immediateTidbits = await generateTidbits(subN, subUser);
         assert(typeof immediateTidbits === 'string' && immediateTidbits.includes("*Gembo's Tidbits of the Day* ☀️"), "Immediate delivery tidbit generation returns formatted string");
-        const bulletMatches = immediateTidbits.match(/• /g);
-        assert(bulletMatches !== null && bulletMatches.length === subN, `Immediate delivery generated exactly ${subN} tidbits`);
+        const immediateBulletMatches = immediateTidbits.match(/• /g);
+        assert(immediateBulletMatches !== null && immediateBulletMatches.length === subN, `Immediate delivery generated exactly ${subN} tidbits`);
 
         const { localDateString: immediateLocalDate } = getUserLocalDateTime(subTz);
         updateLastSentDate(subUser, immediateLocalDate);
@@ -247,6 +294,90 @@ async function runTidbitsTests() {
         // Validate cron schedule expression format
         assert(cron.validate(config.tidbitSchedule), `Cron schedule expression "${config.tidbitSchedule}" is valid according to node-cron`);
         assert(cron.validate('0 8 * * *'), "Default '0 8 * * *' cron expression is valid");
+
+
+        // --- 8. Deduplication History & Repeat Prevention Tests ---
+        console.log("\n8. Testing Deduplication History & Repeat Prevention...");
+
+        const dedupUser = 'TEST_DEDUP_USER';
+        clearTidbitHistory(dedupUser);
+
+        // Run 1: Deliver 3 tidbits to TEST_DEDUP_USER
+        const run1 = await generateTidbits(3, dedupUser);
+        const run1Bullets = run1.split('\n\n').filter(line => line.startsWith('• '));
+        assert(run1Bullets.length === 3, "Run 1 delivered 3 tidbits");
+
+        // Run 2: Deliver 3 tidbits to same user - should avoid duplicates
+        const run2 = await generateTidbits(3, dedupUser);
+        const run2Bullets = run2.split('\n\n').filter(line => line.startsWith('• '));
+        assert(run2Bullets.length === 3, "Run 2 delivered 3 tidbits");
+
+        // Verify zero overlap between run1 and run2 items
+        const repeatedBullets = run2Bullets.filter(item => run1Bullets.includes(item));
+        assert(repeatedBullets.length === 0, "Second call does not repeat any items delivered in the first call");
+
+        // Verify recipient isolation: another user gets fresh delivery
+        const otherUser = 'TEST_DEDUP_USER_2';
+        clearTidbitHistory(otherUser);
+        const otherRun = await generateTidbits(3, otherUser);
+        assert(typeof otherRun === 'string' && otherRun.includes("*Gembo's Tidbits of the Day* ☀️"), "Separate recipient receives independent delivery");
+
+        clearTidbitHistory(dedupUser);
+        clearTidbitHistory(otherUser);
+
+
+        // --- 9. Web Fallback Resilience Tests ---
+        console.log("\n9. Testing Web Fallback Resilience...");
+
+        // A. News: Finnhub failure -> Google News RSS fallback
+        _setFetchStockNews(async () => { throw new Error('Finnhub connection timed out'); });
+        const fallbackNews = await getTopNews();
+        assert(fallbackNews.text.includes("Today's Top News"), "Top News successfully falls back to Google News RSS when Finnhub fails");
+        _resetFetchStockNews();
+
+        // B. Fun Facts: UselessFacts failure -> Cat Facts fallback
+        _setFetch(async (url: string, opts: any) => {
+            if (url.includes('uselessfacts')) {
+                throw new Error('UselessFacts API 500 Internal Server Error');
+            }
+            return fetch(url, opts);
+        });
+        const fallbackFact = await getFunFact();
+        assert(fallbackFact.text.includes("Fun Factoid"), "Fun Fact successfully falls back to Cat Facts when UselessFacts fails");
+
+        // C. Recipes: TheMealDB failure -> DummyJSON Recipes fallback
+        _setFetch(async (url: string, opts: any) => {
+            if (url.includes('themealdb')) {
+                throw new Error('TheMealDB API rate limited');
+            }
+            return fetch(url, opts);
+        });
+        const fallbackRecipe = await getRecipeIdea();
+        assert(fallbackRecipe.text.includes("Recipe Idea"), "Recipe Idea successfully falls back to DummyJSON when TheMealDB fails");
+
+        // D. Quotes: ZenQuotes failure -> DummyJSON Quotes fallback
+        _setFetch(async (url: string, opts: any) => {
+            if (url.includes('zenquotes')) {
+                throw new Error('ZenQuotes API service unavailable');
+            }
+            return fetch(url, opts);
+        });
+        const fallbackQuote = await getInspirationalQuote();
+        assert(fallbackQuote.text.includes("Inspirational Quote"), "Inspirational Quote successfully falls back to DummyJSON when ZenQuotes fails");
+
+        // E. History: Wikipedia 'events' feed failure -> 'selected' feed fallback
+        _setFetch(async (url: string, opts: any) => {
+            if (url.includes('/feed/onthisday/events/')) {
+                throw new Error('Wikipedia events feed 404');
+            }
+            return fetch(url, opts);
+        });
+        const fallbackHistory = await getHistoricalFact();
+        assert(fallbackHistory.text.includes("Historical Fact on This Day"), "Historical Fact successfully falls back to selected feed when events feed fails");
+
+        // Reset fetch to native node-fetch
+        _resetFetch();
+        assert(true, "All web fallbacks successfully recovered and verified");
 
 
         console.log(`\n===================================`);

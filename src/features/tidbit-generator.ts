@@ -16,215 +16,440 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import crypto from 'crypto';
 import fetch from 'node-fetch';
 import { fetchStockNews } from './finnhub-api';
+import { isTidbitDuplicate, recordDeliveredTidbits } from './tidbit-db';
 
-// Curated static dataset of 30+ verified famous quotes with author attribution
-export const FAMOUS_QUOTES: { text: string; author: string }[] = [
-    { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
-    { text: "In the middle of difficulty lies opportunity.", author: "Albert Einstein" },
-    { text: "Success is not final, failure is not fatal: it is the courage to continue that counts.", author: "Winston Churchill" },
-    { text: "You will face many defeats in life, but never let yourself be defeated.", author: "Maya Angelou" },
-    { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
-    { text: "Be yourself; everyone else is already taken.", author: "Oscar Wilde" },
-    { text: "It always seems impossible until it's done.", author: "Nelson Mandela" },
-    { text: "Do what you can, with what you have, where you are.", author: "Theodore Roosevelt" },
-    { text: "Life is what happens when you're busy making other plans.", author: "John Lennon" },
-    { text: "Spread love everywhere you go. Let no one ever come to you without leaving happier.", author: "Mother Teresa" },
-    { text: "The future belongs to those who believe in the beauty of their dreams.", author: "Eleanor Roosevelt" },
-    { text: "Tell me and I forget. Teach me and I remember. Involve me and I learn.", author: "Benjamin Franklin" },
-    { text: "It is during our darkest moments that we must focus to see the light.", author: "Aristotle" },
-    { text: "Whoever is happy will make others happy too.", author: "Anne Frank" },
-    { text: "Do not go where the path may lead, go instead where there is no path and leave a trail.", author: "Ralph Waldo Emerson" },
-    { text: "You miss 100% of the shots you don't take.", author: "Wayne Gretzky" },
-    { text: "Whether you think you can or you think you can't, you're right.", author: "Henry Ford" },
-    { text: "I have learned over the years that when one's mind is made up, this diminishes fear.", author: "Rosa Parks" },
-    { text: "I alone cannot change the world, but I can cast a stone across the waters to create many ripples.", author: "Mother Teresa" },
-    { text: "Strive not to be a success, but rather to be of value.", author: "Albert Einstein" },
-    { text: "Two roads diverged in a wood, and I—I took the one less traveled by, And that has made all the difference.", author: "Robert Frost" },
-    { text: "I attribute my success to this: I never gave or took any excuse.", author: "Florence Nightingale" },
-    { text: "The most difficult thing is the decision to act, the rest is merely tenacity.", author: "Amelia Earhart" },
-    { text: "Everything you've ever wanted is on the other side of fear.", author: "George Addair" },
-    { text: "We become what we think about.", author: "Earl Nightingale" },
-    { text: "An unexamined life is not worth living.", author: "Socrates" },
-    { text: "Eighty percent of success is showing up.", author: "Woody Allen" },
-    { text: "Your time is limited, so don't waste it living someone else's life.", author: "Steve Jobs" },
-    { text: "Winning isn't everything, but wanting to win is.", author: "Vince Lombardi" },
-    { text: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
-    { text: "Everything has beauty, but not everyone sees it.", author: "Confucius" },
-    { text: "Happiness is not something ready made. It comes from your own actions.", author: "Dalai Lama" }
-];
+export interface TidbitItem {
+    text: string;
+    hash: string;
+    category: string;
+}
 
-// Offline fallback trivia dataset
-export const FALLBACK_TRIVIA: string[] = [
-    "Honey never spoils. Archaeologists have found pots of honey in ancient Egyptian tombs that are over 3,000 years old and still edible.",
-    "A day on Venus is longer than a year on Venus.",
-    "Bananas are berries, but strawberries are not.",
-    "Octopuses have three hearts and blue blood.",
-    "Wombat poop is cube-shaped, which stops it from rolling away.",
-    "The shortest war in history lasted 38 minutes, between Britain and Zanzibar in 1896.",
-    "A flock of crows is known as a murder.",
-    "Sea otters hold hands while sleeping to keep from drifting apart.",
-    "Cowboy hats were originally designed to scoops up water for drinking.",
-    "The Eiffel Tower can be 15 cm taller during the summer due to thermal expansion."
-];
+const DEFAULT_FETCH_HEADERS = {
+    'User-Agent': 'GemBot/1.0 (https://github.com/carmex/GemBot)',
+    'Accept': 'application/json, text/xml, */*',
+};
 
-// Offline fallback news headlines
-export const FALLBACK_NEWS: string[] = [
-    "Tech Sector Resilience: AI and cloud computing investments continue to drive market innovation.",
-    "Global Clean Energy Adoption Reaches Record Highs Across Major Economies.",
-    "Market Outlook: Central banks signal steady interest rate trajectory amid stabilizing inflation.",
-    "Space Exploration Milestone: Commercial satellites launch next-generation Earth observation network.",
-    "Quantum Computing Advancement: Breakthrough reported in error-mitigation quantum algorithms."
-];
+// Internal reference for fetch and fetchStockNews to allow test mocking of web fallbacks
+export let _fetch = fetch;
+export function _setFetch(fn: any) { _fetch = fn; }
+export function _resetFetch() { _fetch = fetch; }
 
-// Offline fallback historical events
-export const FALLBACK_HISTORY: { year: number; event: string }[] = [
-    { year: 1969, event: "Apollo 11 astronaut Neil Armstrong became the first human to walk on the Moon." },
-    { year: 1981, event: "IBM introduced the IBM Personal Computer (Model 5150), ushering in the PC era." },
-    { year: 1908, event: "Henry Ford's Model T was produced for the first time, revolutionizing transport." },
-    { year: 1991, event: "The World Wide Web became publicly available on the internet." },
-    { year: 1928, event: "Alexander Fleming discovered penicillin, founding modern antibiotics." }
-];
-
-// Curated daily recipes dataset
-export const CURATED_RECIPES: { name: string; description: string; steps: string }[] = [
-    {
-        name: "Quick Garlic Butter Shrimp Pasta",
-        description: "A savory 15-minute pasta dish with garlic, butter, and juicy shrimp.",
-        steps: "Boil pasta. Sauté minced garlic and shrimp in butter for 3 mins. Toss pasta in garlic butter with parmesan & parsley."
-    },
-    {
-        name: "Avocado & Poached Egg Toast",
-        description: "Classic nutritious breakfast with creamy mashed avocado and runny egg.",
-        steps: "Toast sourdough bread. Mash avocado with lemon juice, salt, and pepper. Top with a 4-minute poached egg and chili flakes."
-    },
-    {
-        name: "Mediterranean Chickpea Salad",
-        description: "Refreshing, protein-packed salad with cucumbers, tomatoes, and feta.",
-        steps: "Combine canned chickpeas, diced cucumber, cherry tomatoes, and kalamata olives. Toss with olive oil, lemon, and crumbled feta."
-    },
-    {
-        name: "Honey Soy Glazed Salmon",
-        description: "Sweet and savory pan-seared salmon fillet.",
-        steps: "Whisk soy sauce, honey, minced ginger, and garlic. Sear salmon in a hot skillet 4 mins per side, glaze with sauce until sticky."
-    },
-    {
-        name: "10-Minute Peanut Noodle Bowl",
-        description: "Rich and creamy Asian-inspired cold noodles.",
-        steps: "Whisk peanut butter, soy sauce, lime juice, and hot water. Toss with cooked ramen or udon noodles and sliced scallions."
-    }
-];
+export let _fetchStockNews = fetchStockNews;
+export function _setFetchStockNews(fn: any) { _fetchStockNews = fn; }
+export function _resetFetchStockNews() { _fetchStockNews = fetchStockNews; }
 
 /**
- * Executes a promise with a maximum timeout (default 3 seconds).
- * Returns fallback value if timeout occurs or exception is thrown.
+ * Computes a deterministic SHA-256 hash for a tidbit item to prevent repetitive deliveries.
  */
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-    let timer: NodeJS.Timeout;
-    const timeoutPromise = new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(fallback), timeoutMs);
-    });
+export function computeTidbitHash(category: string, contentIdentifier: string): string {
+    const normalized = `${category}:${contentIdentifier.trim().toLowerCase()}`;
+    return crypto.createHash('sha256').update(normalized).digest('hex');
+}
 
-    try {
-        const result = await Promise.race([promise, timeoutPromise]);
-        clearTimeout(timer!);
-        return result;
-    } catch {
-        clearTimeout(timer!);
-        return fallback;
-    }
+/**
+ * Decodes common XML/HTML entities found in RSS feeds and web APIs.
+ */
+function decodeHtmlEntities(str: string): string {
+    return str
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&apos;/g, "'")
+        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
 }
 
 /**
  * Category 1: Today's Top News
+ * Dynamically sources from Finnhub Stock News with live Google News RSS fallback.
  */
-export async function getTopNews(): Promise<string> {
-    const fetchNewsTask = (async () => {
-        const news = await fetchStockNews();
+export async function getTopNews(recipientId?: string): Promise<TidbitItem> {
+    // Primary: Finnhub General Stock News
+    try {
+        const news = await _fetchStockNews();
         if (news && news.length > 0) {
-            const article = news[Math.floor(Math.random() * Math.min(news.length, 5))];
-            return `📰 *Today's Top News*: ${article.headline} - _${article.source}_ (<${article.url}|Read More>)`;
+            const unusedArticles = recipientId
+                ? news.filter(a => !isTidbitDuplicate(recipientId, computeTidbitHash('news', a.headline)))
+                : news;
+
+            const pool = unusedArticles.length > 0 ? unusedArticles : news;
+            const article = pool[Math.floor(Math.random() * pool.length)];
+            const headline = decodeHtmlEntities(article.headline.trim());
+            const source = decodeHtmlEntities(article.source?.trim() || 'Finnhub');
+            const url = article.url?.trim() || 'https://finnhub.io';
+            const hash = computeTidbitHash('news', article.headline);
+
+            return {
+                text: `📰 *Today's Top News*: ${headline} - _${source}_ (<${url}|Read More>)`,
+                hash,
+                category: 'news',
+            };
         }
-        throw new Error('No news fetched');
-    })();
+    } catch (err) {
+        console.warn('[TidbitGenerator] Finnhub news fetch failed, trying Google News RSS fallback:', err);
+    }
 
-    const fallbackArticle = FALLBACK_NEWS[Math.floor(Math.random() * FALLBACK_NEWS.length)];
-    const fallbackText = `📰 *Today's Top News*: ${fallbackArticle}`;
+    // Web Fallback: Google News RSS
+    try {
+        const response = await _fetch('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en', {
+            signal: AbortSignal.timeout(6000),
+            headers: DEFAULT_FETCH_HEADERS,
+        });
 
-    return withTimeout(fetchNewsTask, 3000, fallbackText);
+        if (response.ok) {
+            const xml = await response.text();
+            const itemMatches = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+            const parsedItems: { headline: string; source: string; link: string }[] = [];
+
+            for (const item of itemMatches) {
+                const rawTitle = (item.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '';
+                const rawLink = (item.match(/<link>([\s\S]*?)<\/link>/) || [])[1] || '';
+                const rawSource = (item.match(/<source[^>]*>([\s\S]*?)<\/source>/) || [])[1] || '';
+
+                if (rawTitle) {
+                    let headline = decodeHtmlEntities(rawTitle.trim());
+                    let source = decodeHtmlEntities(rawSource.trim());
+
+                    if (!source && headline.includes(' - ')) {
+                        const parts = headline.split(' - ');
+                        source = parts.pop()!.trim();
+                        headline = parts.join(' - ').trim();
+                    }
+                    if (!source) source = 'Google News';
+
+                    parsedItems.push({
+                        headline,
+                        source,
+                        link: rawLink.trim() || 'https://news.google.com',
+                    });
+                }
+            }
+
+            if (parsedItems.length > 0) {
+                const candidates = recipientId
+                    ? parsedItems.filter(item => !isTidbitDuplicate(recipientId, computeTidbitHash('news', item.headline)))
+                    : parsedItems;
+
+                const pool = candidates.length > 0 ? candidates : parsedItems;
+                const chosen = pool[Math.floor(Math.random() * pool.length)];
+                const hash = computeTidbitHash('news', chosen.headline);
+
+                return {
+                    text: `📰 *Today's Top News*: ${chosen.headline} - _${chosen.source}_ (<${chosen.link}|Read More>)`,
+                    hash,
+                    category: 'news',
+                };
+            }
+        }
+    } catch (err) {
+        console.warn('[TidbitGenerator] Google News RSS fetch failed:', err);
+    }
+
+    throw new Error('All top news sources failed');
 }
 
 /**
  * Category 2: Fun Factoid
+ * Sourced dynamically from UselessFacts API with live Cat Facts API fallback.
  */
-export async function getFunFact(): Promise<string> {
-    const fetchFactTask = (async () => {
-        const response = await fetch('https://uselessfacts.jsph.pl/api/v2/facts/random');
+export async function getFunFact(recipientId?: string): Promise<TidbitItem> {
+    let lastUselessFact: { text: string; hash: string } | null = null;
+
+    // Primary: UselessFacts API (retry up to 3 times if duplicate)
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const response = await _fetch('https://uselessfacts.jsph.pl/api/v2/facts/random', {
+                signal: AbortSignal.timeout(6000),
+                headers: DEFAULT_FETCH_HEADERS,
+            });
+            if (response.ok) {
+                const data = (await response.json()) as { text?: string };
+                if (data?.text) {
+                    const factText = decodeHtmlEntities(data.text.trim());
+                    const hash = computeTidbitHash('fact', factText);
+                    lastUselessFact = { text: factText, hash };
+
+                    if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                        return {
+                            text: `💡 *Fun Factoid*: ${factText}`,
+                            hash,
+                            category: 'fact',
+                        };
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`[TidbitGenerator] UselessFacts attempt ${attempt + 1} failed:`, err);
+            break;
+        }
+    }
+
+    // Web Fallback: Cat Facts API
+    try {
+        const response = await _fetch('https://catfact.ninja/fact', {
+            signal: AbortSignal.timeout(6000),
+            headers: DEFAULT_FETCH_HEADERS,
+        });
         if (response.ok) {
-            const data = (await response.json()) as { text?: string };
-            if (data?.text) {
-                return `💡 *Fun Factoid*: ${data.text}`;
+            const data = (await response.json()) as { fact?: string };
+            if (data?.fact) {
+                const factText = decodeHtmlEntities(data.fact.trim());
+                const hash = computeTidbitHash('fact', factText);
+                return {
+                    text: `💡 *Fun Factoid*: ${factText}`,
+                    hash,
+                    category: 'fact',
+                };
             }
         }
-        throw new Error('Trivia API request failed');
-    })();
+    } catch (err) {
+        console.warn('[TidbitGenerator] Cat Facts fallback failed:', err);
+    }
 
-    const fallbackTrivia = FALLBACK_TRIVIA[Math.floor(Math.random() * FALLBACK_TRIVIA.length)];
-    const fallbackText = `💡 *Fun Factoid*: ${fallbackTrivia}`;
+    if (lastUselessFact) {
+        return {
+            text: `💡 *Fun Factoid*: ${lastUselessFact.text}`,
+            hash: lastUselessFact.hash,
+            category: 'fact',
+        };
+    }
 
-    return withTimeout(fetchFactTask, 3000, fallbackText);
+    throw new Error('All fun fact sources failed');
 }
 
 /**
  * Category 3: Historical Fact on This Day
+ * Sourced dynamically from Wikipedia On This Day API with selected feed fallback.
  */
-export async function getHistoricalFact(): Promise<string> {
-    const fetchHistoryTask = (async () => {
-        const now = new Date();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
-        const response = await fetch(`https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}`);
-        
-        if (response.ok) {
-            const data = (await response.json()) as { events?: { text: string; year: number }[] };
-            if (data.events && data.events.length > 0) {
-                const event = data.events[Math.floor(Math.random() * data.events.length)];
-                return `📜 *Historical Fact on This Day*: In ${event.year}, ${event.text}`;
+export async function getHistoricalFact(recipientId?: string): Promise<TidbitItem> {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+
+    const fetchWikipediaFeed = async (endpoint: 'events' | 'selected'): Promise<{ year: number; text: string }[] | null> => {
+        try {
+            const url = `https://en.wikipedia.org/api/rest_v1/feed/onthisday/${endpoint}/${month}/${day}`;
+            const response = await _fetch(url, {
+                signal: AbortSignal.timeout(6000),
+                headers: DEFAULT_FETCH_HEADERS,
+            });
+            if (response.ok) {
+                const data = (await response.json()) as { events?: { text: string; year: number }[]; selected?: { text: string; year: number }[] };
+                const list = endpoint === 'events' ? data.events : data.selected;
+                if (list && list.length > 0) {
+                    return list;
+                }
             }
+        } catch (err) {
+            console.warn(`[TidbitGenerator] Wikipedia feed/${endpoint} failed:`, err);
         }
-        throw new Error('Wikipedia API failed');
-    })();
+        return null;
+    };
 
-    const fallbackItem = FALLBACK_HISTORY[Math.floor(Math.random() * FALLBACK_HISTORY.length)];
-    const fallbackText = `📜 *Historical Fact on This Day*: In ${fallbackItem.year}, ${fallbackItem.event}`;
+    let events = await fetchWikipediaFeed('events');
+    if (!events || events.length === 0) {
+        events = await fetchWikipediaFeed('selected');
+    }
 
-    return withTimeout(fetchHistoryTask, 3000, fallbackText);
+    if (events && events.length > 0) {
+        const unused = recipientId
+            ? events.filter(e => !isTidbitDuplicate(recipientId, computeTidbitHash('history', `${e.year}:${e.text}`)))
+            : events;
+
+        const pool = unused.length > 0 ? unused : events;
+        const chosen = pool[Math.floor(Math.random() * pool.length)];
+        const eventText = decodeHtmlEntities(chosen.text.trim());
+        const hash = computeTidbitHash('history', `${chosen.year}:${chosen.text}`);
+
+        return {
+            text: `📜 *Historical Fact on This Day*: In ${chosen.year}, ${eventText}`,
+            hash,
+            category: 'history',
+        };
+    }
+
+    throw new Error('All historical fact sources failed');
 }
 
 /**
  * Category 4: Recipe Ideas
+ * Sourced dynamically from TheMealDB API with live DummyJSON Recipes fallback.
  */
-export async function getRecipeIdea(): Promise<string> {
-    const recipe = CURATED_RECIPES[Math.floor(Math.random() * CURATED_RECIPES.length)];
-    return `🍳 *Recipe Idea*: *${recipe.name}* - ${recipe.description} _Prep: ${recipe.steps}_`;
+export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
+    let lastMeal: { name: string; cuisine: string; snippet: string; sourceUrl: string; hash: string } | null = null;
+
+    // Primary: TheMealDB random meal (retry up to 3 times if duplicate)
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const response = await _fetch('https://www.themealdb.com/api/json/v1/1/random.php', {
+                signal: AbortSignal.timeout(6000),
+                headers: DEFAULT_FETCH_HEADERS,
+            });
+            if (response.ok) {
+                const data = (await response.json()) as { meals?: any[] };
+                const meal = data?.meals?.[0];
+                if (meal?.strMeal) {
+                    const name = decodeHtmlEntities(meal.strMeal.trim());
+                    const cuisine = decodeHtmlEntities(
+                        meal.strArea?.trim() && meal.strArea !== 'Unknown'
+                            ? meal.strArea.trim()
+                            : meal.strCategory?.trim() || 'Delicious'
+                    );
+                    const cleanInstructions = decodeHtmlEntities(
+                        meal.strInstructions?.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim() || ''
+                    );
+                    const snippet = cleanInstructions.length > 140
+                        ? cleanInstructions.slice(0, 140).trim() + '...'
+                        : cleanInstructions;
+                    const sourceUrl = meal.strSource?.trim() || meal.strYoutube?.trim() || `https://www.themealdb.com/meal/${meal.idMeal}`;
+                    const hash = computeTidbitHash('recipe', name);
+
+                    lastMeal = { name, cuisine, snippet, sourceUrl, hash };
+
+                    if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                        return {
+                            text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
+                            hash,
+                            category: 'recipe',
+                        };
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`[TidbitGenerator] TheMealDB attempt ${attempt + 1} failed:`, err);
+            break;
+        }
+    }
+
+    // Web Fallback: DummyJSON Recipes API
+    try {
+        const response = await _fetch('https://dummyjson.com/recipes', {
+            signal: AbortSignal.timeout(6000),
+            headers: DEFAULT_FETCH_HEADERS,
+        });
+        if (response.ok) {
+            const data = (await response.json()) as { recipes?: any[] };
+            if (data?.recipes && data.recipes.length > 0) {
+                const candidates = recipientId
+                    ? data.recipes.filter(r => !isTidbitDuplicate(recipientId, computeTidbitHash('recipe', r.name)))
+                    : data.recipes;
+
+                const pool = candidates.length > 0 ? candidates : data.recipes;
+                const chosen = pool[Math.floor(Math.random() * pool.length)];
+                const name = decodeHtmlEntities(chosen.name.trim());
+                const cuisine = decodeHtmlEntities(chosen.cuisine?.trim() || 'General');
+                const rawInstructions = Array.isArray(chosen.instructions) ? chosen.instructions.join(' ') : String(chosen.instructions || '');
+                const cleanInstructions = decodeHtmlEntities(rawInstructions.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim());
+                const snippet = cleanInstructions.length > 140 ? cleanInstructions.slice(0, 140).trim() + '...' : cleanInstructions;
+                const sourceUrl = `https://dummyjson.com/recipes/${chosen.id}`;
+                const hash = computeTidbitHash('recipe', name);
+
+                return {
+                    text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
+                    hash,
+                    category: 'recipe',
+                };
+            }
+        }
+    } catch (err) {
+        console.warn('[TidbitGenerator] DummyJSON recipes fallback failed:', err);
+    }
+
+    if (lastMeal) {
+        return {
+            text: `🍳 *Recipe Idea*: *${lastMeal.name}* (${lastMeal.cuisine}) - ${lastMeal.snippet} (<${lastMeal.sourceUrl}|Recipe>)`,
+            hash: lastMeal.hash,
+            category: 'recipe',
+        };
+    }
+
+    throw new Error('All recipe sources failed');
 }
 
 /**
- * Category 5: Inspirational Quote (Strictly non-AI static dataset)
+ * Category 5: Inspirational Quotes
+ * Sourced dynamically from ZenQuotes API with live DummyJSON Quotes fallback.
  */
-export async function getInspirationalQuote(): Promise<string> {
-    const quote = FAMOUS_QUOTES[Math.floor(Math.random() * FAMOUS_QUOTES.length)];
-    return `💬 *Inspirational Quote*: "${quote.text}" — *${quote.author}*`;
+export async function getInspirationalQuote(recipientId?: string): Promise<TidbitItem> {
+    let lastQuote: { quote: string; author: string; hash: string } | null = null;
+
+    // Primary: ZenQuotes API (retry up to 3 times if duplicate)
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const response = await _fetch('https://zenquotes.io/api/random', {
+                signal: AbortSignal.timeout(6000),
+                headers: DEFAULT_FETCH_HEADERS,
+            });
+            if (response.ok) {
+                const data = (await response.json()) as { q?: string; a?: string }[];
+                const first = data?.[0];
+                if (first?.q && first?.a) {
+                    const quoteText = decodeHtmlEntities(first.q.trim());
+                    const author = decodeHtmlEntities(first.a.trim());
+                    const hash = computeTidbitHash('quote', quoteText);
+                    lastQuote = { quote: quoteText, author, hash };
+
+                    if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                        return {
+                            text: `💬 *Inspirational Quote*: "${quoteText}" — *${author}*`,
+                            hash,
+                            category: 'quote',
+                        };
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`[TidbitGenerator] ZenQuotes attempt ${attempt + 1} failed:`, err);
+            break;
+        }
+    }
+
+    // Web Fallback: DummyJSON Quotes API
+    try {
+        const response = await _fetch('https://dummyjson.com/quotes/random', {
+            signal: AbortSignal.timeout(6000),
+            headers: DEFAULT_FETCH_HEADERS,
+        });
+        if (response.ok) {
+            const data = (await response.json()) as { quote?: string; author?: string };
+            if (data?.quote && data?.author) {
+                const quoteText = decodeHtmlEntities(data.quote.trim());
+                const author = decodeHtmlEntities(data.author.trim());
+                const hash = computeTidbitHash('quote', quoteText);
+                return {
+                    text: `💬 *Inspirational Quote*: "${quoteText}" — *${author}*`,
+                    hash,
+                    category: 'quote',
+                };
+            }
+        }
+    } catch (err) {
+        console.warn('[TidbitGenerator] DummyJSON quotes fallback failed:', err);
+    }
+
+    if (lastQuote) {
+        return {
+            text: `💬 *Inspirational Quote*: "${lastQuote.quote}" — *${lastQuote.author}*`,
+            hash: lastQuote.hash,
+            category: 'quote',
+        };
+    }
+
+    throw new Error('All inspirational quote sources failed');
 }
 
 /**
- * Generates `n` random tidbit items (1 <= n <= 5) sampled from 5 categories.
+ * Generates `n` random tidbit items (1 <= n <= 5) sampled from 5 dynamically sourced categories.
+ * Records delivered items to the database if recipientId is supplied.
  */
-export async function generateTidbits(n: number): Promise<string> {
+export async function generateTidbits(n: number, recipientId?: string): Promise<string> {
     const validN = Math.max(1, Math.min(5, Math.floor(n)));
 
-    const categoryHandlers: { [key: string]: () => Promise<string> } = {
+    const categoryHandlers: { [key: string]: (recipient?: string) => Promise<TidbitItem> } = {
         news: getTopNews,
         fact: getFunFact,
         history: getHistoricalFact,
@@ -241,10 +466,17 @@ export async function generateTidbits(n: number): Promise<string> {
     }
 
     const selectedKeys = keys.slice(0, validN);
-    const results = await Promise.all(selectedKeys.map(k => categoryHandlers[k]()));
+    const results = await Promise.all(selectedKeys.map(k => categoryHandlers[k](recipientId)));
+
+    if (recipientId && results.length > 0) {
+        recordDeliveredTidbits(
+            recipientId,
+            results.map(r => ({ category: r.category, itemHash: r.hash }))
+        );
+    }
 
     const header = `*Gembo's Tidbits of the Day* ☀️\n\n`;
-    const body = results.map(item => `• ${item}`).join('\n\n');
+    const body = results.map(item => `• ${item.text}`).join('\n\n');
 
     return `${header}${body}`;
 }
