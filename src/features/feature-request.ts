@@ -1,5 +1,5 @@
 import { App, SayFn } from '@slack/bolt';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as cron from 'node-cron';
@@ -27,6 +27,7 @@ interface FeatureRequestSession {
     username?: string;
     channelId?: string;
     prUrl?: string;
+    activeProcess?: ChildProcess;
 }
 
 export class FeatureRequestHandler {
@@ -148,6 +149,22 @@ export class FeatureRequestHandler {
         return this.sessions.has(threadTs);
     }
 
+    public isCancelCommand(text: string): boolean {
+        if (!text) return false;
+        const cancelKeywords = [
+            'nevermind',
+            'never mind',
+            'nvm',
+            'cancel',
+            'abort',
+            'stop',
+            'quit',
+            'exit'
+        ];
+        const normalized = text.trim().toLowerCase().replace(/[.!?]+$/, '').trim();
+        return cancelKeywords.includes(normalized);
+    }
+
     public async handleRequest(event: any, client: any, say: SayFn) {
         const threadTs = event.thread_ts || event.ts;
         const channelId = event.channel;
@@ -185,7 +202,7 @@ export class FeatureRequestHandler {
         });
 
         await say({
-            text: "Sure, I can help with that. Auto-selected repository: `gembot`. What is your feature request?",
+            text: "Sure, I can help with that. Auto-selected repository: `gembot`. What is your feature request? (Reply with 'nevermind' or 'cancel' to abort)",
             thread_ts: event.ts,
         });
     }
@@ -210,6 +227,16 @@ export class FeatureRequestHandler {
 
         switch (session.state) {
             case FeatureRequestState.AWAITING_REQUEST:
+                if (this.isCancelCommand(text)) {
+                    session.state = FeatureRequestState.ABORTED;
+                    updateFeatureRequest(threadTs, { state: FeatureRequestState.ABORTED });
+                    this.sessions.delete(threadTs);
+                    await say({
+                        text: "No problem, feature request workflow cancelled.",
+                        thread_ts: threadTs
+                    });
+                    return;
+                }
                 this.handleFeatureRequestText(session, text, threadTs, say);
                 break;
             case FeatureRequestState.AWAITING_APPROVAL:
@@ -224,7 +251,41 @@ export class FeatureRequestHandler {
             case FeatureRequestState.IMPLEMENTING:
             case FeatureRequestState.REVISING:
             case FeatureRequestState.FINALIZING:
-                await say({ text: "I'm currently running a command, please wait...", thread_ts: threadTs });
+                if (this.isCancelCommand(text)) {
+                    if (session.activeProcess) {
+                        try {
+                            const proc = session.activeProcess;
+                            proc.kill('SIGTERM');
+                            const killTimeout = setTimeout(() => {
+                                try {
+                                    if (!proc.killed) {
+                                        proc.kill('SIGKILL');
+                                    }
+                                } catch (e) {
+                                    // ignore
+                                }
+                            }, 2000);
+                            if (killTimeout && typeof killTimeout.unref === 'function') {
+                                killTimeout.unref();
+                            }
+                        } catch (e) {
+                            console.error(`[FeatureRequest] Error killing active process:`, e);
+                        }
+                        session.activeProcess = undefined;
+                    }
+                    session.state = FeatureRequestState.ABORTED;
+                    updateFeatureRequest(threadTs, { state: FeatureRequestState.ABORTED });
+                    this.sessions.delete(threadTs);
+                    await say({
+                        text: "Running operation terminated. Feature request workflow has been aborted.",
+                        thread_ts: threadTs
+                    });
+                    return;
+                }
+                await say({ 
+                    text: "I'm currently running a command, please wait... (Reply with 'nevermind' or 'abort' to cancel)", 
+                    thread_ts: threadTs 
+                });
                 break;
             default:
                 // Workflow ended
@@ -284,10 +345,10 @@ export class FeatureRequestHandler {
             });
 
             say({
-                text: `Implementation Request Complete. Output:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed to the next step (merging/PR logic), "abort" to cancel the request, or provide feedback to revise the plan.`,
+                text: `Implementation Request Complete. Output:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with 'approve' to proceed, 'nevermind' or 'abort' to cancel, or provide feedback to revise the plan.`,
                 thread_ts: threadTs
             });
-        });
+        }, session);
     }
 
     private async handlePlanAction(session: FeatureRequestSession, userId: string, text: string, threadTs: string, say: SayFn) {
@@ -388,9 +449,10 @@ ${planText}`
                         thread_ts: threadTs
                     });
                 }
-            });
+            }, session);
 
-        } else if (lowerText === 'abort') {
+        } else if (this.isCancelCommand(text)) {
+            session.state = FeatureRequestState.ABORTED;
             updateFeatureRequest(threadTs, { state: FeatureRequestState.ABORTED });
             this.sessions.delete(threadTs);
             await say({
@@ -455,10 +517,10 @@ Follow the same format as before: perform any necessary investigation without ch
                 });
 
                 say({
-                    text: `Revised Implementation Plan:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with "approve" to proceed, "abort" to cancel, or provide further feedback to revise the plan again.`,
+                    text: `Revised Implementation Plan:\n\`\`\`${finalPlan}\`\`\`\n\nPlease reply with 'approve' to proceed, 'nevermind' or 'abort' to cancel, or provide feedback to revise the plan.`,
                     thread_ts: threadTs
                 });
-            });
+            }, session);
         }
     }
 
@@ -469,7 +531,7 @@ Follow the same format as before: perform any necessary investigation without ch
         return match ? match[0] : undefined;
     }
 
-    private runShellCommand(command: string, args: string[], cwd: string, threadTs: string, say: SayFn, onComplete: (output: string) => void) {
+    private runShellCommand(command: string, args: string[], cwd: string, threadTs: string, say: SayFn, onComplete: (output: string) => void, session?: FeatureRequestSession) {
         // Sanitize input to avoid shell syntax errors if shell=true, but better to use shell=false if possible.
         // On Windows, 'agy' might be a batch file, so shell=true is often needed unless we call 'agy.cmd'.
         // Assuming 'agy' is in PATH.
@@ -505,18 +567,31 @@ Follow the same format as before: perform any necessary investigation without ch
             env: env // Use the filtered environment
         });
 
+        if (session) {
+            session.activeProcess = child;
+        }
+
         let stdoutData = '';
         let stderrData = '';
 
-        child.stdout.on('data', (data) => {
+        child.stdout?.on('data', (data) => {
             stdoutData += data.toString();
         });
 
-        child.stderr.on('data', (data) => {
+        child.stderr?.on('data', (data) => {
             stderrData += data.toString();
         });
 
         child.on('close', (code) => {
+            if (session) {
+                session.activeProcess = undefined;
+            }
+
+            if (session?.state === FeatureRequestState.ABORTED || !this.sessions.has(threadTs)) {
+                console.log(`[FeatureRequest] Command finished after session ${threadTs} was aborted, ignoring.`);
+                return;
+            }
+
             console.log(`[FeatureRequest] Command finished with code ${code}`);
             const output = (stdoutData + '\n' + stderrData).trim();
 
@@ -531,6 +606,15 @@ Follow the same format as before: perform any necessary investigation without ch
         });
 
         child.on('error', (err) => {
+            if (session) {
+                session.activeProcess = undefined;
+            }
+
+            if (session?.state === FeatureRequestState.ABORTED || !this.sessions.has(threadTs)) {
+                console.log(`[FeatureRequest] Command error after session ${threadTs} was aborted, ignoring:`, err);
+                return;
+            }
+
             console.error(`[FeatureRequest] Spawn error:`, err);
             say({
                 text: `Failed to spawn command: ${err.message}`,
