@@ -29,7 +29,7 @@ import { registerWatchlistCommands } from '../commands/watchlist';
 import { registerFinancialCommands } from '../commands/financial';
 import { registerMemeCommands } from '../commands/meme';
 import { registerGisCommands } from '../commands/gis';
-import { rateImageNsfw } from './nsfw-rater';
+import { rateImageNsfw, NsfwRatingResult } from './nsfw-rater';
 import { registerPollenCommands } from '../commands/pollen';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
@@ -159,7 +159,7 @@ export class AIHandler {
         return this.imageGenerator!.processImageFromUrl(url);
     }
 
-    public async rateImageNsfw(imageBuffer: Buffer): Promise<number | null> {
+    public async rateImageNsfw(imageBuffer: Buffer): Promise<NsfwRatingResult> {
         return rateImageNsfw(imageBuffer, { provider: this.provider });
     }
 

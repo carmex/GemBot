@@ -22,7 +22,7 @@ import { App } from '@slack/bolt';
 import { config } from '../config';
 import fetch from 'node-fetch';
 import sharp from 'sharp';
-import { rateImageNsfw } from '../features/nsfw-rater';
+import { rateImageNsfw, NsfwRatingResult } from '../features/nsfw-rater';
 import { AIHandler } from '../features/ai-handler';
 import { getBotSetting, setBotSetting } from '../features/thread-db';
 
@@ -214,7 +214,7 @@ export interface FetchAndUploadImageOptions {
     imageUrl: string;
     query: string;
     initialComment: string;
-    nsfwRater?: (buffer: Buffer) => Promise<number | null>;
+    nsfwRater?: (buffer: Buffer) => Promise<number | null | NsfwRatingResult>;
     aiHandler?: any;
     say?: (args: any) => Promise<any>;
 }
@@ -320,12 +320,24 @@ export async function fetchAndUploadImage({
 
         let finalComment = initialComment;
         let rating: number | null = null;
+        let explanation: string | null = null;
         try {
             const rater = nsfwRater || (aiHandler?.rateImageNsfw ? (buf: Buffer) => aiHandler.rateImageNsfw(buf) : rateImageNsfw);
-            rating = await rater(uploadBuffer);
+            const raterResult = await rater(uploadBuffer);
+
+            if (typeof raterResult === 'number') {
+                rating = raterResult;
+            } else if (raterResult && typeof raterResult === 'object') {
+                rating = raterResult.rating;
+                explanation = raterResult.explanation ?? null;
+            }
+
             if (typeof rating === 'number' && rating >= 0 && rating <= 10) {
                 const scoreTag = `[${rating}/10 ${getNsfwScoreEmoji(rating)}]`;
                 finalComment = `${initialComment} ${scoreTag}`;
+                if (explanation) {
+                    finalComment = `${finalComment}\n> ${explanation}`;
+                }
             }
         } catch (err) {
             console.warn(`[GIS] NSFW rating error for ${imageUrl}:`, err);
