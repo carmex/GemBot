@@ -49,6 +49,17 @@ export function initTidbitDb(): void {
                 created_at DATETIME DEFAULT (datetime('now')),
                 updated_at DATETIME DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS tidbit_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipient_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                item_hash TEXT NOT NULL,
+                delivered_at DATETIME DEFAULT (datetime('now')),
+                UNIQUE(recipient_id, item_hash)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tidbit_history_recipient ON tidbit_history(recipient_id);
+            CREATE INDEX IF NOT EXISTS idx_tidbit_history_lookup ON tidbit_history(recipient_id, item_hash);
         `);
         console.log('[TidbitDB] Database initialized successfully with WAL mode.');
     } catch (error) {
@@ -90,6 +101,9 @@ export function removeSubscription(userId: string): boolean {
         `);
         const result = stmt.run(userId);
         const removed = result.changes > 0;
+        if (removed) {
+            clearTidbitHistory(userId);
+        }
         console.log(`[TidbitDB] Removed subscription for user ${userId}: ${removed}`);
         return removed;
     } catch (error) {
@@ -149,3 +163,57 @@ export function updateLastSentDate(userId: string, dateStr: string): void {
         throw error;
     }
 }
+
+/**
+ * Checks if a specific content hash has already been delivered to this recipient.
+ */
+export function isTidbitDuplicate(recipientId: string, itemHash: string): boolean {
+    try {
+        const stmt = db.prepare(`
+            SELECT 1 FROM tidbit_history
+            WHERE recipient_id = ? AND item_hash = ?
+            LIMIT 1
+        `);
+        const row = stmt.get(recipientId, itemHash);
+        return !!row;
+    } catch (error) {
+        console.error(`[TidbitDB] Error checking duplicate for recipient ${recipientId}:`, error);
+        return false;
+    }
+}
+
+/**
+ * Records delivered tidbits for a recipient using a batch INSERT OR IGNORE transaction.
+ */
+export function recordDeliveredTidbits(recipientId: string, items: { category: string; itemHash: string }[]): void {
+    if (!items || items.length === 0) return;
+    try {
+        const insertStmt = db.prepare(`
+            INSERT OR IGNORE INTO tidbit_history (recipient_id, category, item_hash)
+            VALUES (?, ?, ?)
+        `);
+        const insertMany = db.transaction((tidbitItems: { category: string; itemHash: string }[]) => {
+            for (const item of tidbitItems) {
+                insertStmt.run(recipientId, item.category, item.itemHash);
+            }
+        });
+        insertMany(items);
+        console.log(`[TidbitDB] Recorded ${items.length} delivered tidbit(s) for recipient ${recipientId}`);
+    } catch (error) {
+        console.error(`[TidbitDB] Error recording delivered tidbits for recipient ${recipientId}:`, error);
+    }
+}
+
+/**
+ * Clears tidbit delivery history for a specific recipient.
+ */
+export function clearTidbitHistory(recipientId: string): void {
+    try {
+        const stmt = db.prepare(`DELETE FROM tidbit_history WHERE recipient_id = ?`);
+        const result = stmt.run(recipientId);
+        console.log(`[TidbitDB] Cleared ${result.changes} tidbit history item(s) for recipient ${recipientId}`);
+    } catch (error) {
+        console.error(`[TidbitDB] Error clearing tidbit history for recipient ${recipientId}:`, error);
+    }
+}
+

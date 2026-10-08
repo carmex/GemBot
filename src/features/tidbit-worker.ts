@@ -69,7 +69,7 @@ export async function sendChannelTidbits(
 ): Promise<void> {
     try {
         console.log(`[TidbitWorker] Generating ${n} tidbits for channel ${channelId}...`);
-        const tidbitText = await generateTidbits(n);
+        const tidbitText = await generateTidbits(n, channelId);
         await app.client.chat.postMessage({
             channel: channelId,
             text: tidbitText,
@@ -112,7 +112,7 @@ export function startTidbitWorker(app: App): void {
                     // Trigger at 8:00 AM local time if not already sent today
                     if (localHour === 8 && sub.last_sent_date !== localDateString) {
                         console.log(`[TidbitWorker] Generating and sending ${sub.n} tidbit(s) to user ${sub.user_id} (${sub.timezone})...`);
-                        const tidbitText = await generateTidbits(sub.n);
+                        const tidbitText = await generateTidbits(sub.n, sub.user_id);
 
                         await app.client.chat.postMessage({
                             channel: sub.user_id,
