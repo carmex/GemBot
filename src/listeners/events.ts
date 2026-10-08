@@ -95,6 +95,11 @@ export const registerEventListeners = (app: App, aiHandler: AIHandler) => {
 
         // Mentioned in a thread
         if (event.thread_ts) {
+            if (featureRequest.isFeatureRequestThread(event.thread_ts)) {
+                await featureRequest.handleMessage({ ...event, text: prompt }, client, say);
+                return;
+            }
+
             try {
                 const history = await aiHandler.historyBuilder!.buildHistoryFromThread(event.channel, event.thread_ts, event.ts, client, context.botUserId);
                 const userPrompt = buildUserPrompt({ channel: event.channel, user: event.user, userName, text: prompt });
