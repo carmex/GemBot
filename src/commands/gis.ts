@@ -335,7 +335,7 @@ export async function fetchAndUploadImage({
             if (typeof rating === 'number' && rating >= 0 && rating <= 10) {
                 const scoreTag = `[${rating}/10 ${getNsfwScoreEmoji(rating)}]`;
                 finalComment = `${initialComment} ${scoreTag}`;
-                if (explanation) {
+                if (explanation && rating > 0) {
                     finalComment = `${finalComment}\n> ${explanation}`;
                 }
             }

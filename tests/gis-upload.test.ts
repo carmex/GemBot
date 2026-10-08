@@ -848,7 +848,7 @@ async function runTests() {
             `Rating 7 should format as [7/10 :_charles_red3:], got: '${chatPostCall.text}'`
         );
 
-        // Test 6i: Safe rating with explanation (rating 0) -> files.uploadV2 with initial_comment including blockquote explanation
+        // Test 6i: Safe rating with explanation (rating 0) -> files.uploadV2 with initial_comment omitting explanation
         uploadCalls.length = 0;
         lastMessageSaid = null;
         const rating0WithExpSuccess = await fetchAndUploadImage({
@@ -864,10 +864,31 @@ async function runTests() {
         assert(rating0WithExpSuccess === true, 'Upload succeeded for rating 0 with explanation');
         assert(uploadCalls.length === 1, 'files.uploadV2 called once for rating 0 with explanation');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/mug.png (0.25 sec) [0/10 :_charles_green5:]\n> Everyday household coffee mug.',
-            `initial_comment should include score tag and explanation quote, got: '${uploadCalls[0].initial_comment}'`
+            uploadCalls[0].initial_comment === 'https://example.com/mug.png (0.25 sec) [0/10 :_charles_green5:]',
+            `initial_comment should include score tag and omit explanation for score 0, got: '${uploadCalls[0].initial_comment}'`
         );
         assert(lastMessageSaid === null, 'say() should NOT be called when safe image with explanation is uploaded');
+
+        // Test 6i-b: Boundary rating 1 with explanation -> files.uploadV2 NOT called, say called with URL, score, and blockquote
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const rating1WithExpSuccess = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            threadTs: 'T1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'revealing clothing',
+            initialComment: 'https://example.com/clothing.png (0.25 sec)',
+            nsfwRater: async () => ({ rating: 1, explanation: 'Revealing clothing.' }),
+            say: testSay,
+        });
+        assert(rating1WithExpSuccess === true, 'Handler returned true for gated rating 1 with explanation');
+        assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 1 with explanation');
+        assert(lastMessageSaid !== null, 'Message should be sent via say for rating 1 with explanation');
+        assert(
+            lastMessageSaid.text === 'https://example.com/clothing.png (0.25 sec) [1/10 :_charles_green4:]\n> Revealing clothing.',
+            `Gated message should include URL, score [1/10 :_charles_green4:], and explanation quote, got: '${lastMessageSaid.text}'`
+        );
 
         // Test 6j: Gated rating with explanation (rating 3) -> files.uploadV2 NOT called, say called with URL, score, and blockquote
         uploadCalls.length = 0;
