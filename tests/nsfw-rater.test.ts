@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import { Part } from '@google/generative-ai';
 import {
     parseNsfwRating,
+    parseNsfwExplanation,
     getFrameIndices,
     prepareImageForRating,
     rateImageNsfw,
@@ -95,6 +96,56 @@ async function runTests() {
     // Prompt verification
     assert(NSFW_RATING_USER_PROMPT.includes('0 to 10'), 'NSFW_RATING_USER_PROMPT should mention 0 to 10');
     assert(NSFW_RATING_SYSTEM_PROMPT.includes('0 to 10'), 'NSFW_RATING_SYSTEM_PROMPT should mention 0 to 10');
+
+    // ==========================================
+    // 1b. parseNsfwExplanation Unit Tests
+    // ==========================================
+    console.log('\n--- 1b. parseNsfwExplanation Tests ---');
+
+    // Plain explanation
+    assert(
+        parseNsfwExplanation('Explanation: Fluffy white rabbit in a meadow.\nRating: 0') === 'Fluffy white rabbit in a meadow.',
+        'Plain explanation should parse correctly'
+    );
+
+    // Markdown formatted
+    assert(
+        parseNsfwExplanation('**Explanation:** Two women in revealing swimwear.\n**Rating:** 2') === 'Two women in revealing swimwear.',
+        'Markdown formatted explanation should strip markdown and parse'
+    );
+
+    // Alternative label
+    assert(
+        parseNsfwExplanation('Reason: Graphic violence depicted.\nScore: 9/10') === 'Graphic violence depicted.',
+        'Alternative label "Reason" should parse correctly'
+    );
+
+    // Leading text without label
+    assert(
+        parseNsfwExplanation('A sunset over the mountains.\nRating: 0') === 'A sunset over the mountains.',
+        'Leading text without label should parse as fallback explanation'
+    );
+
+    // Multiline explanation collapsed to single space
+    assert(
+        parseNsfwExplanation('Explanation: A small dog is playing in the park.\nIt has a ball in its mouth.\nRating: 0') === 'A small dog is playing in the park. It has a ball in its mouth.',
+        'Multiline explanation should collapse newlines to spaces'
+    );
+
+    // Pure score response
+    assert(parseNsfwExplanation('7') === null, 'Pure score "7" should return null explanation');
+
+    // Score only response
+    assert(parseNsfwExplanation('Rating: 4') === null, '"Rating: 4" should return null explanation');
+    assert(parseNsfwExplanation('Score: 3') === null, '"Score: 3" should return null explanation');
+
+    // Empty/whitespace/null strings
+    assert(parseNsfwExplanation('') === null, 'Empty string should return null explanation');
+    assert(parseNsfwExplanation('   ') === null, 'Whitespace string should return null explanation');
+    assert(parseNsfwExplanation(null as any) === null, 'null input should return null explanation');
+    assert(parseNsfwExplanation(undefined as any) === null, 'undefined input should return null explanation');
+    assert(parseNsfwExplanation('Explanation: \nRating: 0') === null, 'Empty explanation field should return null');
+    assert(parseNsfwExplanation('Rating: 0\nScore: 0') === null, 'Rating followed by Score should return null');
 
     // ==========================================
     // 2. getFrameIndices Unit Tests
@@ -266,7 +317,7 @@ async function runTests() {
         chat: async (question: string | Part[], options: LLMChatOptions): Promise<LLMResult> => {
             capturedQuestion = question;
             capturedOptions = options;
-            return { text: '7' };
+            return { text: 'Explanation: Test image showing red square.\nRating: 7' };
         },
         countTokens: async () => 10,
     };
@@ -283,8 +334,12 @@ async function runTests() {
         .png()
         .toBuffer();
 
-    const rating = await rateImageNsfw(largePngBuffer, { provider: mockProvider });
-    assert(rating === 7, `rateImageNsfw should return 7, got ${rating}`);
+    const result = await rateImageNsfw(largePngBuffer, { provider: mockProvider });
+    assert(result.rating === 7, `rateImageNsfw should return 7, got ${result.rating}`);
+    assert(
+        result.explanation === 'Test image showing red square.',
+        `rateImageNsfw should return explanation, got "${result.explanation}"`
+    );
     assert(Array.isArray(capturedQuestion), 'capturedQuestion should be an array of Part');
     assert(capturedQuestion.length === 2, 'capturedQuestion should contain 2 parts');
     assert(capturedQuestion[0].text === NSFW_RATING_USER_PROMPT, 'Part 0 should be user prompt');
@@ -311,8 +366,12 @@ async function runTests() {
     // Test 4b: Multi-frame animated GIF rateImageNsfw integration
     capturedQuestion = null;
     capturedOptions = null;
-    const multiFrameRating = await rateImageNsfw(fiveFrameGif, { provider: mockProvider });
-    assert(multiFrameRating === 7, `rateImageNsfw should return 7 for multi-frame GIF, got ${multiFrameRating}`);
+    const multiFrameResult = await rateImageNsfw(fiveFrameGif, { provider: mockProvider });
+    assert(multiFrameResult.rating === 7, `rateImageNsfw should return 7 for multi-frame GIF, got ${multiFrameResult.rating}`);
+    assert(
+        multiFrameResult.explanation === 'Test image showing red square.',
+        `rateImageNsfw should return explanation for multi-frame GIF, got "${multiFrameResult.explanation}"`
+    );
     assert(Array.isArray(capturedQuestion), 'capturedQuestion should be an array of Part');
     assert(capturedQuestion.length === 2, 'capturedQuestion should contain 2 parts');
     assert(capturedQuestion[0].text === NSFW_RATING_USER_PROMPT, 'Part 0 should be user prompt');
@@ -338,11 +397,14 @@ async function runTests() {
         countTokens: async () => 10,
     };
 
-    const timeoutRating = await rateImageNsfw(PNG_1x1, {
+    const timeoutResult = await rateImageNsfw(PNG_1x1, {
         provider: slowProvider,
         timeoutMs: 25,
     });
-    assert(timeoutRating === null, 'rateImageNsfw should return null on timeout');
+    assert(
+        timeoutResult.rating === null && timeoutResult.explanation === null,
+        'rateImageNsfw should return null rating and explanation on timeout'
+    );
 
     // Test 2c: Provider rejection / error recovery
     const errorProvider: LLMProvider = {
@@ -353,19 +415,25 @@ async function runTests() {
         countTokens: async () => 10,
     };
 
-    const errorRating = await rateImageNsfw(PNG_1x1, { provider: errorProvider });
-    assert(errorRating === null, 'rateImageNsfw should return null when provider throws');
+    const errorResult = await rateImageNsfw(PNG_1x1, { provider: errorProvider });
+    assert(
+        errorResult.rating === null && errorResult.explanation === null,
+        'rateImageNsfw should return null rating and explanation when provider throws'
+    );
 
     // Test 2d: Corrupt image buffer handling
     const corruptBuffer = Buffer.from('this is not an image');
-    const corruptRating = await rateImageNsfw(corruptBuffer, { provider: mockProvider });
-    assert(corruptRating === null, 'rateImageNsfw should return null on corrupt image buffer');
+    const corruptResult = await rateImageNsfw(corruptBuffer, { provider: mockProvider });
+    assert(
+        corruptResult.rating === null && corruptResult.explanation === null,
+        'rateImageNsfw should return null rating and explanation on corrupt image buffer'
+    );
 
     // Test 2e: Unconfigured provider in test environment
-    const unconfiguredRating = await rateImageNsfw(PNG_1x1);
+    const unconfiguredResult = await rateImageNsfw(PNG_1x1);
     assert(
-        unconfiguredRating === null,
-        'rateImageNsfw should return null when no provider configured without throwing'
+        unconfiguredResult.rating === null && unconfiguredResult.explanation === null,
+        'rateImageNsfw should return null rating and explanation when no provider configured without throwing'
     );
 
     console.log('\nAll NSFW Rater tests passed successfully!');

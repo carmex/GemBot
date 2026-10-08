@@ -26,6 +26,11 @@ Format:
 Explanation: <1 sentence>
 Rating: <single integer 0-10>`;
 
+export interface NsfwRatingResult {
+    rating: number | null;
+    explanation: string | null;
+}
+
 /**
  * Parses a 0-10 NSFW integer rating from LLM text response.
  * Returns null if unparseable, out of range, or invalid.
@@ -87,6 +92,60 @@ export function parseNsfwRating(text: string): number | null {
     }
 
     return null;
+}
+
+/**
+ * Parses a 1-sentence explanation of what is depicted and safety concerns from LLM text response.
+ * Returns null if missing, empty, or unparseable.
+ */
+export function parseNsfwExplanation(text: string): string | null {
+    if (!text || typeof text !== 'string') {
+        return null;
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    // Regex 1: Labeled match (e.g. "Explanation: ...", "**Explanation:** ...", "Reason: ...", "Description: ...")
+    // stopping before a rating line (e.g. "\nRating: ...", "\n**Rating:** ...", "\nScore: ...") or end of string
+    const labeledMatch = trimmed.match(
+        /(?:^|\r?\n)\s*(?:\*\*)?(?:explanation|reason|description)\s*(?:\*\*)?\s*[:\-]\s*([\s\S]+?)(?=(?:\r?\n\s*(?:\*\*)?(?:rating|score|nsfw|scale)\b)|$)/i
+    );
+
+    let explanation: string | null = null;
+    if (labeledMatch && labeledMatch[1]) {
+        explanation = labeledMatch[1];
+    } else {
+        // Regex 2 (Leading Text Fallback): If no explicit label is found, capture any text preceding a rating line
+        const fallbackMatch = trimmed.match(
+            /^([\s\S]+?)(?=\r?\n\s*(?:\*\*)?(?:rating|score|nsfw|scale)\s*[:=\-]?\s*\d+)/i
+        );
+        if (fallbackMatch && fallbackMatch[1]) {
+            explanation = fallbackMatch[1];
+        }
+    }
+
+    if (!explanation) {
+        return null;
+    }
+
+    // Strip markdown formatting characters (like ** or _ or `) and collapse whitespace/newlines
+    const cleaned = explanation.replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) {
+        return null;
+    }
+
+    // Reject if the parsed text is itself just a rating or fraction
+    if (/^(?:rating|score|nsfw|scale)\b/i.test(cleaned)) {
+        return null;
+    }
+    if (/^\d+(\s*\/\s*\d+)?$/.test(cleaned)) {
+        return null;
+    }
+
+    return cleaned;
 }
 
 /**
@@ -181,20 +240,20 @@ export interface RateImageNsfwOptions {
 export async function rateImageNsfw(
     imageBuffer: Buffer,
     options?: RateImageNsfwOptions
-): Promise<number | null> {
+): Promise<NsfwRatingResult> {
     try {
         let provider = options?.provider;
         if (!provider) {
             const health = providerHealth();
             if (!health.ok) {
                 console.warn(`[NSFW-Rater] Provider is not healthy: ${health.reason}`);
-                return null;
+                return { rating: null, explanation: null };
             }
             try {
                 provider = createProvider();
             } catch (e) {
                 console.warn('[NSFW-Rater] Failed to create provider:', e);
-                return null;
+                return { rating: null, explanation: null };
             }
         }
 
@@ -224,9 +283,10 @@ export async function rateImageNsfw(
 
             const result = await Promise.race([chatPromise, timeoutPromise]);
             const rating = parseNsfwRating(result.text);
+            const explanation = parseNsfwExplanation(result.text);
             const cleanText = (result.text || '').trim().replace(/\r?\n/g, ' | ');
-            console.log(`[NSFW-Rater] LLM evaluation: "${cleanText}" -> Parsed score: ${rating}`);
-            return rating;
+            console.log(`[NSFW-Rater] LLM evaluation: "${cleanText}" -> Parsed score: ${rating}, explanation: "${explanation ?? 'none'}"`);
+            return { rating, explanation };
         } finally {
             if (timeoutId) {
                 clearTimeout(timeoutId);
@@ -234,6 +294,6 @@ export async function rateImageNsfw(
         }
     } catch (error) {
         console.warn('[NSFW-Rater] Rating failed:', error);
-        return null;
+        return { rating: null, explanation: null };
     }
 }

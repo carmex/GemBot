@@ -848,6 +848,104 @@ async function runTests() {
             `Rating 7 should format as [7/10 :_charles_red3:], got: '${chatPostCall.text}'`
         );
 
+        // Test 6i: Safe rating with explanation (rating 0) -> files.uploadV2 with initial_comment including blockquote explanation
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const rating0WithExpSuccess = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            threadTs: 'T1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'coffee mug',
+            initialComment: 'https://example.com/mug.png (0.25 sec)',
+            nsfwRater: async () => ({ rating: 0, explanation: 'Everyday household coffee mug.' }),
+            say: testSay,
+        });
+        assert(rating0WithExpSuccess === true, 'Upload succeeded for rating 0 with explanation');
+        assert(uploadCalls.length === 1, 'files.uploadV2 called once for rating 0 with explanation');
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/mug.png (0.25 sec) [0/10 :_charles_green5:]\n> Everyday household coffee mug.',
+            `initial_comment should include score tag and explanation quote, got: '${uploadCalls[0].initial_comment}'`
+        );
+        assert(lastMessageSaid === null, 'say() should NOT be called when safe image with explanation is uploaded');
+
+        // Test 6j: Gated rating with explanation (rating 3) -> files.uploadV2 NOT called, say called with URL, score, and blockquote
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const rating3WithExpSuccess = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            threadTs: 'T1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'swimwear at pool',
+            initialComment: 'https://example.com/swimwear.png (0.25 sec)',
+            nsfwRater: async () => ({ rating: 3, explanation: 'Revealing swimwear at a pool.' }),
+            say: testSay,
+        });
+        assert(rating3WithExpSuccess === true, 'Handler returned true for gated rating 3 with explanation');
+        assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 3 with explanation');
+        assert(lastMessageSaid !== null, 'Message should be sent via say for rating 3 with explanation');
+        assert(
+            lastMessageSaid.text === 'https://example.com/swimwear.png (0.25 sec) [3/10 :_charles_green2:]\n> Revealing swimwear at a pool.',
+            `Gated message should include URL, score, and explanation quote, got: '${lastMessageSaid.text}'`
+        );
+
+        // Test 6k: Object result with null explanation -> no trailing newline or blockquote (backwards compatibility)
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const rating0NullExpSuccess = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'cat',
+            initialComment: 'https://example.com/cat.png (0.25 sec)',
+            nsfwRater: async () => ({ rating: 0, explanation: null }),
+            say: testSay,
+        });
+        assert(uploadCalls.length === 1, 'files.uploadV2 called for object with null explanation');
+        assert(
+            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [0/10 :_charles_green5:]',
+            `Rating 0 with null explanation should not have trailing newline, got: '${uploadCalls[0].initial_comment}'`
+        );
+
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const rating3NullExpSuccess = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'questionable',
+            initialComment: 'https://example.com/questionable.png (0.25 sec)',
+            nsfwRater: async () => ({ rating: 3, explanation: null }),
+            say: testSay,
+        });
+        assert(uploadCalls.length === 0, 'files.uploadV2 NOT called for rating 3 with null explanation');
+        assert(
+            lastMessageSaid.text === 'https://example.com/questionable.png (0.25 sec) [3/10 :_charles_green2:]',
+            `Rating 3 with null explanation should not have trailing newline, got: '${lastMessageSaid.text}'`
+        );
+
+        // Test 6l: aiHandler returning NsfwRatingResult with explanation
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const mockAiHandlerWithExp = {
+            rateImageNsfw: async (buf: Buffer) => ({ rating: 2, explanation: 'Suggestive bikini pose on beach.' }),
+        };
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'ai suggestive image',
+            initialComment: 'https://example.com/beach.png (0.10 sec)',
+            aiHandler: mockAiHandlerWithExp,
+            say: testSay,
+        });
+        assert(uploadCalls.length === 0, 'files.uploadV2 NOT called for aiHandler rating 2');
+        assert(
+            lastMessageSaid.text === 'https://example.com/beach.png (0.10 sec) [2/10 :_charles_green3:]\n> Suggestive bikini pose on beach.',
+            `Rating 2 from aiHandler should format with green3 emoji and explanation blockquote, got: '${lastMessageSaid.text}'`
+        );
+
         // Close mock server
         await new Promise<void>((resolve) => server.close(() => resolve()));
         console.log('Mock server closed.');
