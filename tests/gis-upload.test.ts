@@ -340,7 +340,7 @@ async function runTests() {
         assert(uploadCalls[0].channel_id === 'C_CHANNEL_1', 'channel_id should match');
         assert(uploadCalls[0].thread_ts === 'T_THREAD_1', 'thread_ts should match');
         assert(uploadCalls[0].filename === 'cute_puppy.png', 'filename should be cute_puppy.png');
-        assert(uploadCalls[0].initial_comment === 'https://example.com/image.png (0.42 sec) [0/10]', 'initial_comment should match');
+        assert(uploadCalls[0].initial_comment === 'https://example.com/image.png (0.42 sec) [0/10 :+1:]', 'initial_comment should match');
         assert(Buffer.isBuffer(uploadCalls[0].file), 'file should be a Buffer');
         assert(uploadCalls[0].file.equals(PNG_BYTES), 'file buffer should match source PNG bytes');
 
@@ -681,12 +681,12 @@ async function runTests() {
         assert(rating0Success === true, 'Upload succeeded for rating 0');
         assert(uploadCalls.length === 1, 'files.uploadV2 called once for rating 0');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [0/10]',
-            `Rating 0 comment should end with [0/10], got: '${uploadCalls[0].initial_comment}'`
+            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [0/10 :+1:]',
+            `Rating 0 comment should end with [0/10 :+1:], got: '${uploadCalls[0].initial_comment}'`
         );
         assert(lastMessageSaid === null, 'say() should NOT be called when image is uploaded');
 
-        // Test 6b: Rating 3 -> Upload gated (files.uploadV2 NOT called), URL + [3/10] sent via say
+        // Test 6b: Rating 3 -> Upload gated (files.uploadV2 NOT called), URL + [3/10 :_charles_green3:] sent via say
         uploadCalls.length = 0;
         lastMessageSaid = null;
         let rating3Success = await fetchAndUploadImage({
@@ -703,12 +703,12 @@ async function runTests() {
         assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 3');
         assert(lastMessageSaid !== null, 'Message should be sent via say for rating 3');
         assert(
-            lastMessageSaid.text === 'https://example.com/questionable.png (0.25 sec) [3/10]',
-            `Gated message should include URL and [3/10], got: '${lastMessageSaid.text}'`
+            lastMessageSaid.text === 'https://example.com/questionable.png (0.25 sec) [3/10 :_charles_green3:]',
+            `Gated message should include URL and [3/10 :_charles_green3:], got: '${lastMessageSaid.text}'`
         );
         assert(lastMessageSaid.thread_ts === 'T1', 'Thread timestamp preserved');
 
-        // Test 6c: Boundary rating 10 -> Upload gated, URL + [10/10] sent via message
+        // Test 6c: Boundary rating 10 -> Upload gated, URL + [10/10 :_charles_red5:] sent via message
         uploadCalls.length = 0;
         lastMessageSaid = null;
         const uploadRating10 = await fetchAndUploadImage({
@@ -725,8 +725,8 @@ async function runTests() {
         assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 10');
         assert(lastMessageSaid !== null, 'Message should be sent via say for rating 10');
         assert(
-            lastMessageSaid.text === 'https://example.com/extreme.png (0.45 sec) [10/10]',
-            `Boundary rating 10 message should end with [10/10], got: '${lastMessageSaid.text}'`
+            lastMessageSaid.text === 'https://example.com/extreme.png (0.45 sec) [10/10 :_charles_red5:]',
+            `Boundary rating 10 message should end with [10/10 :_charles_red5:], got: '${lastMessageSaid.text}'`
         );
 
         // Test 6d: Rating failure / exception gates upload (better safe than sorry)
@@ -787,7 +787,7 @@ async function runTests() {
         });
         assert(uploadCalls.length === 1, 'files.uploadV2 called for aiHandler rating 0');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/safe.png (0.10 sec) [0/10]',
+            uploadCalls[0].initial_comment === 'https://example.com/safe.png (0.10 sec) [0/10 :+1:]',
             `Rating 0 from aiHandler should be appended, got: '${uploadCalls[0].initial_comment}'`
         );
 
@@ -808,8 +808,8 @@ async function runTests() {
         });
         assert(uploadCalls.length === 0, 'files.uploadV2 NOT called for aiHandler rating 5');
         assert(
-            lastMessageSaid.text === 'https://example.com/unsafe.png (0.10 sec) [5/10]',
-            `Rating 5 from aiHandler should be gated, got: '${lastMessageSaid.text}'`
+            lastMessageSaid.text === 'https://example.com/unsafe.png (0.10 sec) [5/10 :_charles_green1:]',
+            `Rating 5 from aiHandler should be gated with green1 emoji, got: '${lastMessageSaid.text}'`
         );
 
         // Test 6h: client.chat.postMessage fallback when say is not provided
@@ -843,8 +843,8 @@ async function runTests() {
         assert(chatPostCall.channel === 'C_CHAT', 'channel passed to chat.postMessage');
         assert(chatPostCall.thread_ts === 'T_CHAT', 'thread_ts passed to chat.postMessage');
         assert(
-            chatPostCall.text === 'https://example.com/chat.png (0.10 sec) [7/10]',
-            `Rating 7 should format as [7/10], got: '${chatPostCall.text}'`
+            chatPostCall.text === 'https://example.com/chat.png (0.10 sec) [7/10 :_charles_red2:]',
+            `Rating 7 should format as [7/10 :_charles_red2:], got: '${chatPostCall.text}'`
         );
 
         // Test 6i: Safe rating with explanation (rating 0) -> files.uploadV2 with initial_comment omitting explanation
@@ -863,7 +863,7 @@ async function runTests() {
         assert(rating0WithExpSuccess === true, 'Upload succeeded for rating 0 with explanation');
         assert(uploadCalls.length === 1, 'files.uploadV2 called once for rating 0 with explanation');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/mug.png (0.25 sec) [0/10]',
+            uploadCalls[0].initial_comment === 'https://example.com/mug.png (0.25 sec) [0/10 :+1:]',
             `initial_comment should include score tag and omit explanation for score 0, got: '${uploadCalls[0].initial_comment}'`
         );
         assert(lastMessageSaid === null, 'say() should NOT be called when safe image with explanation is uploaded');
@@ -885,8 +885,8 @@ async function runTests() {
         assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 1 with explanation');
         assert(lastMessageSaid !== null, 'Message should be sent via say for rating 1 with explanation');
         assert(
-            lastMessageSaid.text === 'https://example.com/clothing.png (0.25 sec) [1/10]\n> Revealing clothing.',
-            `Gated message should include URL, score [1/10], and explanation quote, got: '${lastMessageSaid.text}'`
+            lastMessageSaid.text === 'https://example.com/clothing.png (0.25 sec) [1/10 :_charles_green5:]\n> Revealing clothing.',
+            `Gated message should include URL, score [1/10 :_charles_green5:], and explanation quote, got: '${lastMessageSaid.text}'`
         );
 
         // Test 6j: Gated rating with explanation (rating 3) -> files.uploadV2 NOT called, say called with URL, score, and blockquote
@@ -906,7 +906,7 @@ async function runTests() {
         assert(uploadCalls.length === 0, 'files.uploadV2 must NOT be called for rating 3 with explanation');
         assert(lastMessageSaid !== null, 'Message should be sent via say for rating 3 with explanation');
         assert(
-            lastMessageSaid.text === 'https://example.com/swimwear.png (0.25 sec) [3/10]\n> Revealing swimwear at a pool.',
+            lastMessageSaid.text === 'https://example.com/swimwear.png (0.25 sec) [3/10 :_charles_green3:]\n> Revealing swimwear at a pool.',
             `Gated message should include URL, score, and explanation quote, got: '${lastMessageSaid.text}'`
         );
 
@@ -924,7 +924,7 @@ async function runTests() {
         });
         assert(uploadCalls.length === 1, 'files.uploadV2 called for object with null explanation');
         assert(
-            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [0/10]',
+            uploadCalls[0].initial_comment === 'https://example.com/cat.png (0.25 sec) [0/10 :+1:]',
             `Rating 0 with null explanation should not have trailing newline, got: '${uploadCalls[0].initial_comment}'`
         );
 
@@ -941,7 +941,7 @@ async function runTests() {
         });
         assert(uploadCalls.length === 0, 'files.uploadV2 NOT called for rating 3 with null explanation');
         assert(
-            lastMessageSaid.text === 'https://example.com/questionable.png (0.25 sec) [3/10]',
+            lastMessageSaid.text === 'https://example.com/questionable.png (0.25 sec) [3/10 :_charles_green3:]',
             `Rating 3 with null explanation should not have trailing newline, got: '${lastMessageSaid.text}'`
         );
 
@@ -962,8 +962,8 @@ async function runTests() {
         });
         assert(uploadCalls.length === 0, 'files.uploadV2 NOT called for aiHandler rating 2');
         assert(
-            lastMessageSaid.text === 'https://example.com/beach.png (0.10 sec) [2/10]\n> Suggestive bikini pose on beach.',
-            `Rating 2 from aiHandler should format with score and explanation blockquote, got: '${lastMessageSaid.text}'`
+            lastMessageSaid.text === 'https://example.com/beach.png (0.10 sec) [2/10 :_charles_green4:]\n> Suggestive bikini pose on beach.',
+            `Rating 2 from aiHandler should format with green4 emoji and explanation blockquote, got: '${lastMessageSaid.text}'`
         );
 
         // Close mock server

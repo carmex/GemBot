@@ -2,7 +2,7 @@
  * GemBot: GIS Command Test Suite
  */
 
-import { isGifUrl, isGifResult, buildGoogleSearchParams } from '../src/commands/gis';
+import { isGifUrl, isGifResult, buildGoogleSearchParams, getNsfwScoreEmoji } from '../src/commands/gis';
 
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
@@ -254,6 +254,49 @@ async function runTests() {
     assert(paramsGif.num === "10", "num should be 10 for 'a' mod search");
     assert(paramsGif.fileType === "gif", "fileType should be 'gif' for 'a' mod");
     assert(paramsGif.imgType === "animated", "imgType should be 'animated' for 'a' mod");
+
+    console.log("\nRunning GIS NSFW Score Emoji Tests...");
+    // Score 0 -> :+1:
+    assert(getNsfwScoreEmoji(0) === ':+1:', "getNsfwScoreEmoji(0) should return ':+1:'");
+
+    // Score 1 -> least urgent colored box (:_charles_green5:)
+    assert(getNsfwScoreEmoji(1) === ':_charles_green5:', "getNsfwScoreEmoji(1) should return least urgent colored box ':_charles_green5:'");
+
+    // Score 10 -> bright red box (:_charles_red5:)
+    assert(getNsfwScoreEmoji(10) === ':_charles_red5:', "getNsfwScoreEmoji(10) should return ':_charles_red5:'");
+
+    // Individual score checks for 1-10
+    assert(getNsfwScoreEmoji(2) === ':_charles_green4:', "getNsfwScoreEmoji(2) should return ':_charles_green4:'");
+    assert(getNsfwScoreEmoji(3) === ':_charles_green3:', "getNsfwScoreEmoji(3) should return ':_charles_green3:'");
+    assert(getNsfwScoreEmoji(4) === ':_charles_green2:', "getNsfwScoreEmoji(4) should return ':_charles_green2:'");
+    assert(getNsfwScoreEmoji(5) === ':_charles_green1:', "getNsfwScoreEmoji(5) should return ':_charles_green1:'");
+    assert(getNsfwScoreEmoji(6) === ':_charles_red1:', "getNsfwScoreEmoji(6) should return ':_charles_red1:'");
+    assert(getNsfwScoreEmoji(7) === ':_charles_red2:', "getNsfwScoreEmoji(7) should return ':_charles_red2:'");
+    assert(getNsfwScoreEmoji(8) === ':_charles_red3:', "getNsfwScoreEmoji(8) should return ':_charles_red3:'");
+    assert(getNsfwScoreEmoji(9) === ':_charles_red4:', "getNsfwScoreEmoji(9) should return ':_charles_red4:'");
+
+    // Scores 1 through 10 decrease monotonically in urgency
+    const expectedUrgencyScale = [
+        ':_charles_green5:',
+        ':_charles_green4:',
+        ':_charles_green3:',
+        ':_charles_green2:',
+        ':_charles_green1:',
+        ':_charles_red1:',
+        ':_charles_red2:',
+        ':_charles_red3:',
+        ':_charles_red4:',
+        ':_charles_red5:',
+    ];
+    for (let s = 1; s <= 10; s++) {
+        assert(getNsfwScoreEmoji(s) === expectedUrgencyScale[s - 1], `Score ${s} should match expected urgency scale emoji '${expectedUrgencyScale[s - 1]}'`);
+    }
+
+    // Fallback for unknown / boundary scores defaults to :_charles_red5:
+    assert(getNsfwScoreEmoji(-1) === ':_charles_red5:', "Score -1 fallback should return ':_charles_red5:'");
+    assert(getNsfwScoreEmoji(11) === ':_charles_red5:', "Score 11 fallback should return ':_charles_red5:'");
+    assert(getNsfwScoreEmoji(999) === ':_charles_red5:', "Unknown score 999 fallback should return ':_charles_red5:'");
+    assert(getNsfwScoreEmoji(NaN) === ':_charles_red5:', "NaN score fallback should return ':_charles_red5:'");
 
     console.log("\nAll GIS tests passed!");
 }
