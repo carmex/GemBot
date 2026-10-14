@@ -266,6 +266,14 @@ async function runTests() {
     }
     assert(giphyErrorThrown, "searchGiphy should throw when no API key provided");
 
+    if (process.env.GIPHY_API_KEY) {
+        console.log("Testing live GIPHY search with configured GIPHY_API_KEY...");
+        const liveResults = await searchGiphy("dancing", 2);
+        assert(Array.isArray(liveResults) && liveResults.length > 0, "Live GIPHY search should return results");
+        assert(isGifUrl(liveResults[0]), `First live result should be a GIF URL: ${liveResults[0]}`);
+        console.log(`PASSED: Live GIPHY returned ${liveResults.length} GIF(s): ${liveResults[0]}`);
+    }
+
     console.log("\nAll GIS tests passed!");
 }
 
