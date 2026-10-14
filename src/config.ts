@@ -76,7 +76,6 @@ export interface Config {
         googleApiKey?: string;
         googleCxId?: string;
         serpapiApiKey?: string;
-        giphyApiKey?: string;
     };
     wikipedia: {
         userAgent: string;
@@ -179,7 +178,6 @@ export const config: Config = {
         googleApiKey: process.env.GOOGLE_API_KEY,
         googleCxId: process.env.GOOGLE_CX_ID,
         serpapiApiKey: process.env.SERPAPI_API_KEY,
-        giphyApiKey: process.env.GIPHY_API_KEY,
     },
     wikipedia: {
         userAgent: 'GemBot/1.0 (https://github.com/carmex/GemBot; carmex@gmail.com)',

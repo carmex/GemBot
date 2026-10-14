@@ -2,7 +2,7 @@
  * GemBot: GIS Command Test Suite
  */
 
-import { isGifUrl, isGifResult, buildGoogleSearchParams, searchGiphy } from '../src/commands/gis';
+import { isGifUrl, isGifResult, buildGoogleSearchParams, quoteQuery } from '../src/commands/gis';
 
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
@@ -244,35 +244,28 @@ async function runTests() {
     assert(isGifResult({ link: "https://example.com/image", fileFormat: "image/gif" }) === true, "Result with fileFormat image/gif should be true");
     assert(isGifResult({ link: "https://example.com/image.jpg", mime: "image/jpeg" }) === false, "Result with JPEG should be false");
 
+    console.log("\nRunning quoteQuery Helper Tests...");
+    assert(quoteQuery("have you tried simply turning off the tv") === "\"have you tried simply turning off the tv\"", "Unquoted query should be wrapped in quotes");
+    assert(quoteQuery("\"already quoted\"") === "\"already quoted\"", "Double quoted query should not be double quoted");
+    assert(quoteQuery("'already single quoted'") === "'already single quoted'", "Single quoted query should not be double quoted");
+    assert(quoteQuery("  dancing  ") === "\"dancing\"", "Whitespace should be trimmed before quoting");
+    assert(quoteQuery("") === "", "Empty string should return empty string");
+
     console.log("\nRunning Google Search Params Tests for GIF Mod...");
     const paramsRegular = buildGoogleSearchParams("cats", undefined);
+    assert(paramsRegular.q === "cats", "q should remain unquoted for regular search");
     assert(paramsRegular.num === "10", "num should be 10 for regular search");
     assert(paramsRegular.fileType === undefined, "fileType should not be set for regular search");
     assert(paramsRegular.imgType === undefined, "imgType should not be set for regular search");
 
     const paramsGif = buildGoogleSearchParams("dancing", "a");
-    assert(paramsGif.q === "dancing", "q should be 'dancing' without 'animated gif'");
+    assert(paramsGif.q === "\"dancing\"", "q should be quoted '\"dancing\"' for 'a' mod");
     assert(paramsGif.num === "10", "num should be 10 for 'a' mod search");
     assert(paramsGif.fileType === "gif", "fileType should be 'gif' for 'a' mod");
     assert(paramsGif.imgType === "animated", "imgType should be 'animated' for 'a' mod");
 
-    console.log("\nRunning GIPHY Search Helper Tests...");
-    let giphyErrorThrown = false;
-    try {
-        await searchGiphy("dancing", 5, "");
-    } catch (err: any) {
-        giphyErrorThrown = true;
-        assert(err.message.includes("GIPHY API key is not configured"), "searchGiphy should throw clear error when API key is missing");
-    }
-    assert(giphyErrorThrown, "searchGiphy should throw when no API key provided");
-
-    if (process.env.GIPHY_API_KEY) {
-        console.log("Testing live GIPHY search with configured GIPHY_API_KEY...");
-        const liveResults = await searchGiphy("dancing", 2);
-        assert(Array.isArray(liveResults) && liveResults.length > 0, "Live GIPHY search should return results");
-        assert(isGifUrl(liveResults[0]), `First live result should be a GIF URL: ${liveResults[0]}`);
-        console.log(`PASSED: Live GIPHY returned ${liveResults.length} GIF(s): ${liveResults[0]}`);
-    }
+    const paramsGifPreQuoted = buildGoogleSearchParams("\"have you tried simply turning off the tv\"", "a");
+    assert(paramsGifPreQuoted.q === "\"have you tried simply turning off the tv\"", "Already quoted string should stay quoted without doubling");
 
     console.log("\nAll GIS tests passed!");
 }
