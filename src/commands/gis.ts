@@ -379,16 +379,71 @@ const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url
 const BadDomains =
     /(reddit\.com)|(redd\.it)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
 
-interface GoogleImageResult {
+export interface GoogleImageResult {
     link: string;
-    image: {
+    mime?: string;
+    fileFormat?: string;
+    image?: {
         width: number;
         height: number;
     };
 }
 
-interface GoogleSearchResult {
+export interface GoogleSearchResult {
     items?: GoogleImageResult[];
+}
+
+export function isGifUrl(urlStr: string): boolean {
+    if (!urlStr) return false;
+    try {
+        const parsed = new URL(urlStr);
+        if (parsed.pathname.toLowerCase().endsWith('.gif')) {
+            return true;
+        }
+        for (const val of parsed.searchParams.values()) {
+            if (val.toLowerCase().endsWith('.gif')) return true;
+            try {
+                const nested = new URL(val);
+                if (nested.pathname.toLowerCase().endsWith('.gif')) return true;
+            } catch {
+                // Ignore nested URL parsing error
+            }
+        }
+    } catch {
+        const clean = urlStr.split(/[?#]/)[0];
+        if (clean.toLowerCase().endsWith('.gif')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+export function isGifResult(item: GoogleImageResult): boolean {
+    if (!item || !item.link) return false;
+    const mime = (item.mime || '').toLowerCase().trim();
+    const fileFormat = (item.fileFormat || '').toLowerCase().trim();
+    if (mime === 'image/gif' || fileFormat === 'image/gif' || fileFormat === 'gif') {
+        return true;
+    }
+    return isGifUrl(item.link);
+}
+
+export function buildGoogleSearchParams(query: string, mod?: Mod): Record<string, string> {
+    const searchParams: Record<string, string> = {
+        key: config.search.googleApiKey || '',
+        cx: config.search.googleCxId || '',
+        q: query,
+        searchType: 'image',
+        num: '10',
+    };
+
+    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
+    if (normalizedMod === 'a') {
+        searchParams.fileType = 'gif';
+        searchParams.imgType = 'animated';
+    }
+
+    return searchParams;
 }
 
 export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
@@ -411,6 +466,7 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
         }
 
         const mod = context.matches[1] as Mod;
+        const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
         const idxStr = context.matches[2];
         const search = (context.matches[3] ?? '').replace(/&amp;/g, '&').trim();
         const index = idxStr ? parseInt(idxStr, 10) : 1;
@@ -430,7 +486,7 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
             'a': ' animated gif',
             'm': ' meme',
             'l': ' sexy ladies',
-        }[String(mod).toLowerCase()];
+        }[String(mod).toLowerCase()] ?? '';
 
         const query = `${search}${modSuffix}`;
         const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
@@ -438,12 +494,8 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
         try {
             const startTime = Date.now();
             const baseUrl = 'https://www.googleapis.com/customsearch/v1';
-            const params = new URLSearchParams({
-                key: config.search.googleApiKey!,
-                cx: config.search.googleCxId!,
-                q: query,
-                searchType: 'image',
-            });
+            const searchParams = buildGoogleSearchParams(query, normalizedMod);
+            const params = new URLSearchParams(searchParams);
 
             const url = `${baseUrl}?${params.toString()}`;
             const response = await fetch(url);
@@ -458,8 +510,9 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
             const items = json.items ?? [];
 
             const filteredItems = items.filter(item => {
+                if (!item || !item.link) return false;
                 const isBadDomain = BadDomains.test(item.link);
-                const matchesMod = mod === 'a' ? item.link.toLowerCase().endsWith('.gif') : true;
+                const matchesMod = normalizedMod === 'a' ? isGifResult(item) : true;
                 return !isBadDomain && matchesMod;
             });
 

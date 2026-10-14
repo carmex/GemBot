@@ -2,6 +2,8 @@
  * GemBot: GIS Command Test Suite
  */
 
+import { isGifUrl, isGifResult, buildGoogleSearchParams } from '../src/commands/gis';
+
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
 function assert(condition: boolean, message: string) {
@@ -226,6 +228,32 @@ async function runTests() {
     assert(re.test("!gembot gis upload") === false, "Search regex should NOT match '!gembot gis upload'");
     assert(modeRe.test("gis cute cat") === false, "Mode regex should NOT match search query 'gis cute cat'");
     assert(modeRe.test("!gis random query here") === false, "Mode regex should NOT match invalid '!gis random query here'");
+
+    console.log("\nRunning GIF URL and MIME Detection Tests...");
+    assert(isGifUrl("https://example.com/cat.gif") === true, "Direct .gif should be identified as GIF");
+    assert(isGifUrl("https://example.com/CAT.GIF") === true, "Uppercase .GIF should be identified as GIF");
+    assert(isGifUrl("https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif?cid=abc&rid=giphy.gif") === true, "GIF with query params should be identified as GIF");
+    assert(isGifUrl("https://npr.brightspotcdn.com/dims3/resize/?url=http%3A%2F%2Fother.com%2Flk-feet.gif") === true, "Nested CDN .gif in query param should be identified as GIF");
+    assert(isGifUrl("https://example.com/cat.jpg") === false, "JPG should NOT be identified as GIF");
+    assert(isGifUrl("https://example.com/cat.png?search=gift") === false, "URL with 'gift' in query param should NOT be identified as GIF");
+    assert(isGifUrl("") === false, "Empty URL should return false");
+
+    console.log("\nRunning Google Image Result GIF Detection Tests...");
+    assert(isGifResult({ link: "https://example.com/anim.gif" }) === true, "Result with .gif link should be true");
+    assert(isGifResult({ link: "https://example.com/image", mime: "image/gif" }) === true, "Result with mime image/gif should be true");
+    assert(isGifResult({ link: "https://example.com/image", fileFormat: "image/gif" }) === true, "Result with fileFormat image/gif should be true");
+    assert(isGifResult({ link: "https://example.com/image.jpg", mime: "image/jpeg" }) === false, "Result with JPEG should be false");
+
+    console.log("\nRunning Google Search Params Tests for GIF Mod...");
+    const paramsRegular = buildGoogleSearchParams("cats", undefined);
+    assert(paramsRegular.num === "10", "num should be 10 for regular search");
+    assert(paramsRegular.fileType === undefined, "fileType should not be set for regular search");
+    assert(paramsRegular.imgType === undefined, "imgType should not be set for regular search");
+
+    const paramsGif = buildGoogleSearchParams("dancing animated gif", "a");
+    assert(paramsGif.num === "10", "num should be 10 for 'a' mod search");
+    assert(paramsGif.fileType === "gif", "fileType should be 'gif' for 'a' mod");
+    assert(paramsGif.imgType === "animated", "imgType should be 'animated' for 'a' mod");
 
     console.log("\nAll GIS tests passed!");
 }
