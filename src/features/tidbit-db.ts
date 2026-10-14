@@ -17,9 +17,9 @@
  */
 
 import Database from 'better-sqlite3';
-import path from 'path';
+import { getDataPath } from '../utils/data-dir';
 
-const dbPath = path.join(__dirname, '..', '..', 'tidbits.db');
+const dbPath = getDataPath('tidbits.db');
 const db = new Database(dbPath);
 
 export interface TidbitSubscription {

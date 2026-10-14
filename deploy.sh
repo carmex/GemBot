@@ -65,6 +65,30 @@ elif [ -f "../../../gcloud-credentials.json" ]; then
     cp "../../../gcloud-credentials.json" gcloud-credentials.json
 fi
 
+# FIX: Ensure persistent volume exists, migrate any host data, and ensure UID 1001 ownership
+echo "🔧 [Deploy] Preparing persistent volume slackbot-data..."
+docker volume create slackbot-data
+
+docker run --rm -v slackbot-data:/data -v "$(pwd):/host" node:20-bookworm-slim bash -c '
+    for f in threads.db feature_requests.db market_data.db reminders.db tidbits.db gis-mode.json enabled-channels.json disabled-threads.json rpg-enabled-channels.json thread-summaries.json usage.json db.json; do
+        if [ -f "/host/$f" ] && [ ! -f "/data/$f" ]; then
+            cp "/host/$f" "/data/$f"
+            echo "✅ [Deploy] Migrated legacy $f into slackbot-data volume"
+        fi
+    done
+    chown -R 1001:1001 /data
+'
+
+# Clean up any legacy directory artifacts on host created by previous Docker bind mounts
+if [ -d "threads.db" ]; then
+    echo "🧹 [Deploy] Cleaning up legacy threads.db directory artifact..."
+    docker run --rm -v "$(pwd):/host" node:20-bookworm-slim rm -rf /host/threads.db 2>/dev/null || true
+fi
+if [ -d "feature_requests.db" ]; then
+    echo "🧹 [Deploy] Cleaning up legacy feature_requests.db directory artifact..."
+    docker run --rm -v "$(pwd):/host" node:20-bookworm-slim rm -rf /host/feature_requests.db 2>/dev/null || true
+fi
+
 # 2. Build the containers
 echo "📦 [Deploy] Building containers..."
 $COMPOSE_CMD build

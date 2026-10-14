@@ -31,6 +31,7 @@ pids
 *.pid
 *.seed
 *.pid.lock
+data/
 rpg-context-*.json
 disabled-threads.json
 gis-mode.json
@@ -94,6 +95,7 @@ temp/
 # Editor directories and files
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~

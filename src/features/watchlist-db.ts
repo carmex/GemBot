@@ -18,6 +18,7 @@
 
 import {JSONFilePreset} from 'lowdb/node';
 import {Low} from 'lowdb';
+import {getDataPath} from '../utils/data-dir';
 
 type WatchlistEntry = {
     userId: string;
@@ -36,7 +37,7 @@ const defaultData: Schema = {
 };
 
 // Use a promise-based approach to avoid top-level await
-const dbPromise: Promise<Low<Schema>> = JSONFilePreset<Schema>('db.json', defaultData);
+const dbPromise: Promise<Low<Schema>> = JSONFilePreset<Schema>(getDataPath('db.json'), defaultData);
 
 export const addToWatchlist = async (entry: WatchlistEntry): Promise<void> => {
     const db = await dbPromise;

@@ -13,6 +13,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { SynthIdChecker } from './synthid-checker';
 import { createReminder } from './reminder-db';
 import { isRestrictedLink } from './utils';
+import { getDataPath } from '../utils/data-dir';
 
 export async function googleCustomSearch(query: string): Promise<string> {
     const apiKey = config.search.googleApiKey;
@@ -227,7 +228,7 @@ export async function executeTool(
             });
             if (context) {
                 try {
-                    const filePath = path.join(__dirname, `../../rpg-context-${channelId}.json`);
+                    const filePath = getDataPath(`rpg-context-${channelId}.json`);
                     fs.writeFileSync(filePath, JSON.stringify(context, null, 2), 'utf-8');
                     console.log(`[RPG] Context saved for channel ${channelId}.`);
                     return { functionResponse: { name: name, response: { success: true } } }
