@@ -33,6 +33,27 @@ export const GIS_CONFIG_FILE = path.join(__dirname, '../../gis-mode.json');
 
 let currentMode: GisMode = 'url';
 
+export function getNsfwScoreEmoji(score: number): string {
+    if (score === 0) {
+        return ':+1:';
+    }
+
+    const emojis: Record<number, string> = {
+        1: ':_charles_green5:',
+        2: ':_charles_green4:',
+        3: ':_charles_green3:',
+        4: ':_charles_green2:',
+        5: ':_charles_green1:',
+        6: ':_charles_red1:',
+        7: ':_charles_red2:',
+        8: ':_charles_red3:',
+        9: ':_charles_red4:',
+        10: ':_charles_red5:',
+    };
+
+    return emojis[score] || ':_charles_red5:';
+}
+
 export function loadGisMode(): GisMode {
     try {
         const dbSetting = getBotSetting('gis_mode');
@@ -316,7 +337,8 @@ export async function fetchAndUploadImage({
             }
 
             if (typeof rating === 'number' && rating >= 0 && rating <= 10) {
-                const scoreTag = `[${rating}/10]`;
+                const emoji = getNsfwScoreEmoji(rating);
+                const scoreTag = `[${rating}/10 ${emoji}]`;
                 finalComment = `${initialComment} ${scoreTag}`;
                 if (explanation && rating > 0) {
                     finalComment = `${finalComment}\n> ${explanation}`;
@@ -360,7 +382,7 @@ export async function fetchAndUploadImage({
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
 const BadDomains =
-    /(reddit\.com)|(redd\.it)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
+    /(reddit\.com)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
 
 export interface GoogleImageResult {
     link: string;
@@ -411,25 +433,16 @@ export function isGifResult(item: GoogleImageResult): boolean {
     return isGifUrl(item.link);
 }
 
-export function quoteQuery(query: string): string {
-    const trimmed = query.trim();
-    if (!trimmed) return trimmed;
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-        return trimmed;
-    }
-    return `"${trimmed}"`;
-}
-
 export function buildGoogleSearchParams(query: string, mod?: Mod): Record<string, string> {
-    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
     const searchParams: Record<string, string> = {
         key: config.search.googleApiKey || '',
         cx: config.search.googleCxId || '',
-        q: normalizedMod === 'a' ? quoteQuery(query) : query,
+        q: query,
         searchType: 'image',
         num: '10',
     };
 
+    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
     if (normalizedMod === 'a') {
         searchParams.fileType = 'gif';
         searchParams.imgType = 'animated';

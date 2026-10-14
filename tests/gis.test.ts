@@ -2,7 +2,7 @@
  * GemBot: GIS Command Test Suite
  */
 
-import { isGifUrl, isGifResult, buildGoogleSearchParams, quoteQuery } from '../src/commands/gis';
+import { isGifUrl, isGifResult, buildGoogleSearchParams, getNsfwScoreEmoji } from '../src/commands/gis';
 
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
@@ -244,28 +244,64 @@ async function runTests() {
     assert(isGifResult({ link: "https://example.com/image", fileFormat: "image/gif" }) === true, "Result with fileFormat image/gif should be true");
     assert(isGifResult({ link: "https://example.com/image.jpg", mime: "image/jpeg" }) === false, "Result with JPEG should be false");
 
-    console.log("\nRunning quoteQuery Helper Tests...");
-    assert(quoteQuery("have you tried simply turning off the tv") === "\"have you tried simply turning off the tv\"", "Unquoted query should be wrapped in quotes");
-    assert(quoteQuery("\"already quoted\"") === "\"already quoted\"", "Double quoted query should not be double quoted");
-    assert(quoteQuery("'already single quoted'") === "'already single quoted'", "Single quoted query should not be double quoted");
-    assert(quoteQuery("  dancing  ") === "\"dancing\"", "Whitespace should be trimmed before quoting");
-    assert(quoteQuery("") === "", "Empty string should return empty string");
-
     console.log("\nRunning Google Search Params Tests for GIF Mod...");
     const paramsRegular = buildGoogleSearchParams("cats", undefined);
-    assert(paramsRegular.q === "cats", "q should remain unquoted for regular search");
+    assert(paramsRegular.q === "cats", "q should remain 'cats' for regular search");
     assert(paramsRegular.num === "10", "num should be 10 for regular search");
     assert(paramsRegular.fileType === undefined, "fileType should not be set for regular search");
     assert(paramsRegular.imgType === undefined, "imgType should not be set for regular search");
 
     const paramsGif = buildGoogleSearchParams("dancing", "a");
-    assert(paramsGif.q === "\"dancing\"", "q should be quoted '\"dancing\"' for 'a' mod");
+    assert(paramsGif.q === "dancing", "q should be 'dancing' without 'animated gif' or forced quotes");
     assert(paramsGif.num === "10", "num should be 10 for 'a' mod search");
     assert(paramsGif.fileType === "gif", "fileType should be 'gif' for 'a' mod");
     assert(paramsGif.imgType === "animated", "imgType should be 'animated' for 'a' mod");
 
-    const paramsGifPreQuoted = buildGoogleSearchParams("\"have you tried simply turning off the tv\"", "a");
-    assert(paramsGifPreQuoted.q === "\"have you tried simply turning off the tv\"", "Already quoted string should stay quoted without doubling");
+    const paramsGifQuoted = buildGoogleSearchParams("\"exact phrase\"", "a");
+    assert(paramsGifQuoted.q === "\"exact phrase\"", "Explicit quotes from user should be preserved");
+
+    console.log("\nRunning GIS NSFW Score Emoji Tests...");
+    // Score 0 -> :+1:
+    assert(getNsfwScoreEmoji(0) === ':+1:', "getNsfwScoreEmoji(0) should return ':+1:'");
+
+    // Score 1 -> least urgent colored box (:_charles_green5:)
+    assert(getNsfwScoreEmoji(1) === ':_charles_green5:', "getNsfwScoreEmoji(1) should return least urgent colored box ':_charles_green5:'");
+
+    // Score 10 -> bright red box (:_charles_red5:)
+    assert(getNsfwScoreEmoji(10) === ':_charles_red5:', "getNsfwScoreEmoji(10) should return ':_charles_red5:'");
+
+    // Individual score checks for 1-10
+    assert(getNsfwScoreEmoji(2) === ':_charles_green4:', "getNsfwScoreEmoji(2) should return ':_charles_green4:'");
+    assert(getNsfwScoreEmoji(3) === ':_charles_green3:', "getNsfwScoreEmoji(3) should return ':_charles_green3:'");
+    assert(getNsfwScoreEmoji(4) === ':_charles_green2:', "getNsfwScoreEmoji(4) should return ':_charles_green2:'");
+    assert(getNsfwScoreEmoji(5) === ':_charles_green1:', "getNsfwScoreEmoji(5) should return ':_charles_green1:'");
+    assert(getNsfwScoreEmoji(6) === ':_charles_red1:', "getNsfwScoreEmoji(6) should return ':_charles_red1:'");
+    assert(getNsfwScoreEmoji(7) === ':_charles_red2:', "getNsfwScoreEmoji(7) should return ':_charles_red2:'");
+    assert(getNsfwScoreEmoji(8) === ':_charles_red3:', "getNsfwScoreEmoji(8) should return ':_charles_red3:'");
+    assert(getNsfwScoreEmoji(9) === ':_charles_red4:', "getNsfwScoreEmoji(9) should return ':_charles_red4:'");
+
+    // Scores 1 through 10 decrease monotonically in urgency
+    const expectedUrgencyScale = [
+        ':_charles_green5:',
+        ':_charles_green4:',
+        ':_charles_green3:',
+        ':_charles_green2:',
+        ':_charles_green1:',
+        ':_charles_red1:',
+        ':_charles_red2:',
+        ':_charles_red3:',
+        ':_charles_red4:',
+        ':_charles_red5:',
+    ];
+    for (let s = 1; s <= 10; s++) {
+        assert(getNsfwScoreEmoji(s) === expectedUrgencyScale[s - 1], `Score ${s} should match expected urgency scale emoji '${expectedUrgencyScale[s - 1]}'`);
+    }
+
+    // Fallback for unknown / boundary scores defaults to :_charles_red5:
+    assert(getNsfwScoreEmoji(-1) === ':_charles_red5:', "Score -1 fallback should return ':_charles_red5:'");
+    assert(getNsfwScoreEmoji(11) === ':_charles_red5:', "Score 11 fallback should return ':_charles_red5:'");
+    assert(getNsfwScoreEmoji(999) === ':_charles_red5:', "Unknown score 999 fallback should return ':_charles_red5:'");
+    assert(getNsfwScoreEmoji(NaN) === ':_charles_red5:', "NaN score fallback should return ':_charles_red5:'");
 
     console.log("\nAll GIS tests passed!");
 }
