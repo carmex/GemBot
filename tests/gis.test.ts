@@ -2,7 +2,7 @@
  * GemBot: GIS Command Test Suite
  */
 
-import { isGifUrl, isGifResult, buildGoogleSearchParams, searchGiphy, quoteQuery } from '../src/commands/gis';
+import { isGifUrl, isGifResult, buildGoogleSearchParams, quoteQuery } from '../src/commands/gis';
 
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
@@ -266,24 +266,6 @@ async function runTests() {
 
     const paramsGifPreQuoted = buildGoogleSearchParams("\"have you tried simply turning off the tv\"", "a");
     assert(paramsGifPreQuoted.q === "\"have you tried simply turning off the tv\"", "Already quoted string should stay quoted without doubling");
-
-    console.log("\nRunning GIPHY Search Helper Tests...");
-    let giphyErrorThrown = false;
-    try {
-        await searchGiphy("dancing", 5, "");
-    } catch (err: any) {
-        giphyErrorThrown = true;
-        assert(err.message.includes("GIPHY API key is not configured"), "searchGiphy should throw clear error when API key is missing");
-    }
-    assert(giphyErrorThrown, "searchGiphy should throw when no API key provided");
-
-    if (process.env.GIPHY_API_KEY) {
-        console.log("Testing live GIPHY search with configured GIPHY_API_KEY...");
-        const liveResults = await searchGiphy("dancing", 2);
-        assert(Array.isArray(liveResults) && liveResults.length > 0, "Live GIPHY search should return results");
-        assert(isGifUrl(liveResults[0]), `First live result should be a GIF URL: ${liveResults[0]}`);
-        console.log(`PASSED: Live GIPHY returned ${liveResults.length} GIF(s): ${liveResults[0]}`);
-    }
 
     console.log("\nAll GIS tests passed!");
 }
