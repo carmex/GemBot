@@ -382,7 +382,7 @@ export async function fetchAndUploadImage({
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
 const BadDomains =
-    /(reddit\.com)|(redd\.it)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
+    /(reddit\.com)|(alamy\.com)|(depositphotos\.com)|(shutterstock\.com)|(maps\.google\.com)|(fbsbx.*\.com)|(memegenerator.*\.net)|(gstatic.*\.com)|(instagram.*\.com)|(tiktok.*\.com)|(yarn\.co)/i;
 
 export interface GoogleImageResult {
     link: string;
@@ -433,25 +433,16 @@ export function isGifResult(item: GoogleImageResult): boolean {
     return isGifUrl(item.link);
 }
 
-export function quoteQuery(query: string): string {
-    const trimmed = query.trim();
-    if (!trimmed) return trimmed;
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-        return trimmed;
-    }
-    return `"${trimmed}"`;
-}
-
 export function buildGoogleSearchParams(query: string, mod?: Mod): Record<string, string> {
-    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
     const searchParams: Record<string, string> = {
         key: config.search.googleApiKey || '',
         cx: config.search.googleCxId || '',
-        q: normalizedMod === 'a' ? quoteQuery(query) : query,
+        q: query,
         searchType: 'image',
         num: '10',
     };
 
+    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
     if (normalizedMod === 'a') {
         searchParams.fileType = 'gif';
         searchParams.imgType = 'animated';
