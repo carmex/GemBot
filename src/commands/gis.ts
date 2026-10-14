@@ -411,16 +411,25 @@ export function isGifResult(item: GoogleImageResult): boolean {
     return isGifUrl(item.link);
 }
 
+export function quoteQuery(query: string): string {
+    const trimmed = query.trim();
+    if (!trimmed) return trimmed;
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed;
+    }
+    return `"${trimmed}"`;
+}
+
 export function buildGoogleSearchParams(query: string, mod?: Mod): Record<string, string> {
+    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
     const searchParams: Record<string, string> = {
         key: config.search.googleApiKey || '',
         cx: config.search.googleCxId || '',
-        q: query,
+        q: normalizedMod === 'a' ? quoteQuery(query) : query,
         searchType: 'image',
         num: '10',
     };
 
-    const normalizedMod = mod ? (String(mod).toLowerCase() as Mod) : undefined;
     if (normalizedMod === 'a') {
         searchParams.fileType = 'gif';
         searchParams.imgType = 'animated';
@@ -540,73 +549,6 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
 
         const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
 
-        // If 'a' flag is requested, use GIPHY directly without fallback
-        if (normalizedMod === 'a') {
-            if (!config.search.giphyApiKey) {
-                await say({
-                    text: '⚠️ GIPHY search failed: `GIPHY_API_KEY` is not configured. Please add `GIPHY_API_KEY` to your environment.',
-                    thread_ts: threadTs,
-                });
-                return;
-            }
-
-            try {
-                const startTime = Date.now();
-                const giphyUrls = await searchGiphy(search, Math.max(10, index));
-
-                if (giphyUrls.length < index) {
-                    await say({
-                        text: `¯\\_(ツ)_/¯ (No GIF results found on GIPHY for "${search}")`,
-                        thread_ts: threadTs,
-                    });
-                    return;
-                }
-
-                const selectedUrl = giphyUrls[index - 1];
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                const sanitizedUrl = selectedUrl
-                    .replace(/%25/g, '%')
-                    .replace(/\\u003d/g, '=')
-                    .replace(/\\u0026/g, '&');
-                const commentText = `${sanitizedUrl} (${elapsed} sec)`;
-
-                if (getGisMode() === 'upload') {
-                    let uploaded = false;
-                    if ('channel' in message && message.channel) {
-                        uploaded = await fetchAndUploadImage({
-                            client,
-                            channel: message.channel,
-                            threadTs,
-                            imageUrl: sanitizedUrl,
-                            query: search,
-                            initialComment: commentText,
-                            aiHandler,
-                            say,
-                        });
-                    }
-                    if (!uploaded) {
-                        await say({
-                            text: commentText,
-                            thread_ts: threadTs,
-                        });
-                    }
-                } else {
-                    await say({
-                        text: commentText,
-                        thread_ts: threadTs,
-                    });
-                }
-                return;
-            } catch (error: any) {
-                console.error('[GIS] GIPHY search error:', error);
-                await say({
-                    text: `⚠️ GIPHY search failed: ${error.message || error}`,
-                    thread_ts: threadTs,
-                });
-                return;
-            }
-        }
-
         if (!config.search.googleApiKey || !config.search.googleCxId) {
             await say('Google Search API key or Search Engine ID is not configured.');
             return;
@@ -644,8 +586,9 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
 
             const filteredItems = items.filter(item => {
                 if (!item || !item.link) return false;
-                const isBadDomain = BadDomains.test(item.link);
-                return !isBadDomain;
+                if (BadDomains.test(item.link)) return false;
+                if (normalizedMod === 'a' && !isGifResult(item)) return false;
+                return true;
             });
 
             const result = filteredItems[index - 1];
