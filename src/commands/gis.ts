@@ -33,6 +33,27 @@ export const GIS_CONFIG_FILE = path.join(__dirname, '../../gis-mode.json');
 
 let currentMode: GisMode = 'url';
 
+export function getNsfwScoreEmoji(score: number): string {
+    if (score === 0) {
+        return ':+1:';
+    }
+
+    const emojis: Record<number, string> = {
+        1: ':_charles_green5:',
+        2: ':_charles_green4:',
+        3: ':_charles_green3:',
+        4: ':_charles_green2:',
+        5: ':_charles_green1:',
+        6: ':_charles_red1:',
+        7: ':_charles_red2:',
+        8: ':_charles_red3:',
+        9: ':_charles_red4:',
+        10: ':_charles_red5:',
+    };
+
+    return emojis[score] || ':_charles_red5:';
+}
+
 export function loadGisMode(): GisMode {
     try {
         const dbSetting = getBotSetting('gis_mode');
@@ -316,7 +337,8 @@ export async function fetchAndUploadImage({
             }
 
             if (typeof rating === 'number' && rating >= 0 && rating <= 10) {
-                const scoreTag = `[${rating}/10]`;
+                const emoji = getNsfwScoreEmoji(rating);
+                const scoreTag = `[${rating}/10 ${emoji}]`;
                 finalComment = `${initialComment} ${scoreTag}`;
                 if (explanation && rating > 0) {
                     finalComment = `${finalComment}\n> ${explanation}`;
