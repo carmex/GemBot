@@ -2,7 +2,7 @@
  * GemBot: GIS Command Test Suite
  */
 
-import { isGifUrl, isGifResult, buildGoogleSearchParams } from '../src/commands/gis';
+import { isGifUrl, isGifResult, buildGoogleSearchParams, searchGiphy } from '../src/commands/gis';
 
 const re = /^gis([gtiaml])?(\d+)?\s+(?!(?:mode|upload|status)(?:\s+(?:upload|url|on|off|status))?$)(.+)/i;
 
@@ -28,10 +28,10 @@ function parseGisInput(messageText: string) {
         'g': ' girls',
         't': ' then and now',
         'i': ' infographic',
-        'a': ' animated gif',
+        'a': '',
         'm': ' meme',
         'l': ' sexy ladies',
-    }[String(mod).toLowerCase()];
+    }[String(mod).toLowerCase()] ?? '';
 
     const query = `${search}${modSuffix}`;
 
@@ -49,13 +49,13 @@ async function runTests() {
     assert(test1?.search === "cat", "Test 1: search should be 'cat'");
     assert(test1?.query === "cat", "Test 1: query should be 'cat'");
 
-    // 2. gis with mod 'a'
+    // 2. gis with mod 'a' (no 'animated gif' appended)
     const test2 = parseGisInput("gisa dancing");
     assert(test2 !== null, "Test 2: Should parse successfully");
     assert(test2?.mod === 'a', "Test 2: mod should be 'a'");
     assert(test2?.index === 1, "Test 2: index should be 1");
     assert(test2?.search === "dancing", "Test 2: search should be 'dancing'");
-    assert(test2?.query === "dancing animated gif", "Test 2: query should be 'dancing animated gif'");
+    assert(test2?.query === "dancing", "Test 2: query should be 'dancing'");
 
     // 3. gis with index
     const test3 = parseGisInput("gis5 mountains");
@@ -250,10 +250,21 @@ async function runTests() {
     assert(paramsRegular.fileType === undefined, "fileType should not be set for regular search");
     assert(paramsRegular.imgType === undefined, "imgType should not be set for regular search");
 
-    const paramsGif = buildGoogleSearchParams("dancing animated gif", "a");
+    const paramsGif = buildGoogleSearchParams("dancing", "a");
+    assert(paramsGif.q === "dancing", "q should be 'dancing' without 'animated gif'");
     assert(paramsGif.num === "10", "num should be 10 for 'a' mod search");
     assert(paramsGif.fileType === "gif", "fileType should be 'gif' for 'a' mod");
     assert(paramsGif.imgType === "animated", "imgType should be 'animated' for 'a' mod");
+
+    console.log("\nRunning GIPHY Search Helper Tests...");
+    let giphyErrorThrown = false;
+    try {
+        await searchGiphy("dancing", 5, "");
+    } catch (err: any) {
+        giphyErrorThrown = true;
+        assert(err.message.includes("GIPHY API key is not configured"), "searchGiphy should throw clear error when API key is missing");
+    }
+    assert(giphyErrorThrown, "searchGiphy should throw when no API key provided");
 
     console.log("\nAll GIS tests passed!");
 }

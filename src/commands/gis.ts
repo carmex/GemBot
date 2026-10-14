@@ -429,6 +429,88 @@ export function buildGoogleSearchParams(query: string, mod?: Mod): Record<string
     return searchParams;
 }
 
+export interface GiphyImageFormat {
+    url?: string;
+    width?: string;
+    height?: string;
+    size?: string;
+}
+
+export interface GiphyItem {
+    id: string;
+    title?: string;
+    url?: string;
+    images?: {
+        original?: GiphyImageFormat;
+        downsized?: GiphyImageFormat;
+        fixed_height?: GiphyImageFormat;
+        [key: string]: GiphyImageFormat | undefined;
+    };
+}
+
+export interface GiphySearchResponse {
+    data?: GiphyItem[];
+    meta?: {
+        status: number;
+        msg: string;
+    };
+}
+
+export async function searchGiphy(
+    query: string,
+    limit: number = 10,
+    apiKey?: string
+): Promise<string[]> {
+    const key = apiKey !== undefined ? apiKey : config.search.giphyApiKey;
+    if (!key) {
+        throw new Error('GIPHY API key is not configured. Please set GIPHY_API_KEY in your environment.');
+    }
+
+    const baseUrl = 'https://api.giphy.com/v1/gifs/search';
+    const params = new URLSearchParams({
+        api_key: key,
+        q: query,
+        limit: String(Math.max(1, limit)),
+        rating: 'r',
+    });
+
+    const response = await fetch(`${baseUrl}?${params.toString()}`);
+    if (!response.ok) {
+        let errorDetail = response.statusText;
+        try {
+            const errJson: any = await response.json();
+            if (errJson?.meta?.msg) {
+                errorDetail = errJson.meta.msg;
+            } else if (errJson?.message) {
+                errorDetail = errJson.message;
+            }
+        } catch {
+            // ignore json parse error
+        }
+
+        if (response.status === 429) {
+            throw new Error(`GIPHY rate limit exceeded (HTTP 429): ${errorDetail}`);
+        } else if (response.status === 401 || response.status === 403) {
+            throw new Error(`GIPHY API key is invalid or unauthorized (HTTP ${response.status}): ${errorDetail}`);
+        } else {
+            throw new Error(`GIPHY API error (HTTP ${response.status}): ${errorDetail}`);
+        }
+    }
+
+    const json = (await response.json()) as GiphySearchResponse;
+    const items = json.data || [];
+    const urls: string[] = [];
+
+    for (const item of items) {
+        const gifUrl = item.images?.original?.url || item.images?.downsized?.url || item.images?.fixed_height?.url;
+        if (gifUrl) {
+            urls.push(gifUrl);
+        }
+    }
+
+    return urls;
+}
+
 export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
     app.message(/^!?gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i, async ({ message, context, say }) => {
         if (!('user' in message) || !message.user) {
@@ -456,6 +538,75 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
 
         if (!search) return;
 
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+
+        // If 'a' flag is requested, use GIPHY directly without fallback
+        if (normalizedMod === 'a') {
+            if (!config.search.giphyApiKey) {
+                await say({
+                    text: '⚠️ GIPHY search failed: `GIPHY_API_KEY` is not configured. Please add `GIPHY_API_KEY` to your environment.',
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            try {
+                const startTime = Date.now();
+                const giphyUrls = await searchGiphy(search, Math.max(10, index));
+
+                if (giphyUrls.length < index) {
+                    await say({
+                        text: `¯\\_(ツ)_/¯ (No GIF results found on GIPHY for "${search}")`,
+                        thread_ts: threadTs,
+                    });
+                    return;
+                }
+
+                const selectedUrl = giphyUrls[index - 1];
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+                const sanitizedUrl = selectedUrl
+                    .replace(/%25/g, '%')
+                    .replace(/\\u003d/g, '=')
+                    .replace(/\\u0026/g, '&');
+                const commentText = `${sanitizedUrl} (${elapsed} sec)`;
+
+                if (getGisMode() === 'upload') {
+                    let uploaded = false;
+                    if ('channel' in message && message.channel) {
+                        uploaded = await fetchAndUploadImage({
+                            client,
+                            channel: message.channel,
+                            threadTs,
+                            imageUrl: sanitizedUrl,
+                            query: search,
+                            initialComment: commentText,
+                            aiHandler,
+                            say,
+                        });
+                    }
+                    if (!uploaded) {
+                        await say({
+                            text: commentText,
+                            thread_ts: threadTs,
+                        });
+                    }
+                } else {
+                    await say({
+                        text: commentText,
+                        thread_ts: threadTs,
+                    });
+                }
+                return;
+            } catch (error: any) {
+                console.error('[GIS] GIPHY search error:', error);
+                await say({
+                    text: `⚠️ GIPHY search failed: ${error.message || error}`,
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+        }
+
         if (!config.search.googleApiKey || !config.search.googleCxId) {
             await say('Google Search API key or Search Engine ID is not configured.');
             return;
@@ -466,13 +617,12 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
             'g': ' girls',
             't': ' then and now',
             'i': ' infographic',
-            'a': ' animated gif',
+            'a': '',
             'm': ' meme',
             'l': ' sexy ladies',
         }[String(mod).toLowerCase()] ?? '';
 
         const query = `${search}${modSuffix}`;
-        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
 
         try {
             const startTime = Date.now();
@@ -495,8 +645,7 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
             const filteredItems = items.filter(item => {
                 if (!item || !item.link) return false;
                 const isBadDomain = BadDomains.test(item.link);
-                const matchesMod = normalizedMod === 'a' ? isGifResult(item) : true;
-                return !isBadDomain && matchesMod;
+                return !isBadDomain;
             });
 
             const result = filteredItems[index - 1];
