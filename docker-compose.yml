@@ -6,9 +6,11 @@ services:
       - "${API_PORT:-3000}:${API_PORT:-3000}"
     env_file:
       - .env
+    environment:
+      - DATA_DIR=/app/data
     volumes:
-      - ./threads.db:/app/threads.db
-      - ./feature_requests.db:/app/feature_requests.db
+      # Persistent data directory (SQLite databases, JSON configs, state)
+      - slackbot-data:/app/data
       - ./logs:/app/logs
       # Optional: Mount Google Cloud credentials if used
       - ./gcloud-credentials.json:/app/gcloud-credentials.json:ro
@@ -26,3 +28,6 @@ services:
       - /var/log/journal:/var/log/journal:ro
       - /run/systemd/journal:/run/systemd/journal:ro
       - /etc/machine-id:/etc/machine-id:ro
+
+volumes:
+  slackbot-data:

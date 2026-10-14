@@ -17,10 +17,10 @@
  */
 
 import Database from 'better-sqlite3';
-import path from 'path';
 import { Split } from '../types';
+import { getDataPath } from '../utils/data-dir';
 
-const dbPath = path.join(__dirname, '..', '..', 'market_data.db');
+const dbPath = getDataPath('market_data.db');
 const db = new Database(dbPath);
 
 /**

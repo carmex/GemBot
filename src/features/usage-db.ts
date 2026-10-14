@@ -18,7 +18,7 @@
 
 import {Low} from 'lowdb';
 import {JSONFile} from 'lowdb/node';
-import path from 'path';
+import {getDataPath} from '../utils/data-dir';
 
 interface DailyUsage {
     date: string; // YYYY-MM-DD
@@ -40,7 +40,7 @@ interface UsageData {
 }
 
 // Path to the JSON file
-const dbPath = path.join(__dirname, '../../usage.json');
+const dbPath = getDataPath('usage.json');
 
 // Configure lowdb
 const adapter = new JSONFile<UsageData>(dbPath);

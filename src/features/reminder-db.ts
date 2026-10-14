@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
-import path from 'path';
+import { getDataPath } from '../utils/data-dir';
 
 // Determine the correct directory for the database
-const dbPath = path.join(__dirname, '..', '..', 'reminders.db');
+const dbPath = getDataPath('reminders.db');
 
 const db = new Database(dbPath);
 

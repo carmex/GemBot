@@ -43,6 +43,7 @@ import {
 } from './usage-db';
 import { initializeThreadDatabase } from './thread-db';
 import { initializeMarketDataDatabase } from './market-data-db';
+import { getDataPath } from '../utils/data-dir';
 import { config } from '../config';
 import { createProvider } from './llm/provider-factory';
 import { HistoryBuilder } from './history-builder';
@@ -95,10 +96,10 @@ export class AIHandler {
             console.error('[MCP] Error initializing MCP Client Manager:', err);
         });
 
-        this.disabledThreadsFilePath = path.join(__dirname, '../../disabled-threads.json');
-        this.enabledChannelsFilePath = path.join(__dirname, '../../enabled-channels.json');
-        this.rpgEnabledChannelsFilePath = path.join(__dirname, '../../rpg-enabled-channels.json');
-        this.threadSummariesFilePath = path.join(__dirname, '../../thread-summaries.json');
+        this.disabledThreadsFilePath = getDataPath('disabled-threads.json');
+        this.enabledChannelsFilePath = getDataPath('enabled-channels.json');
+        this.rpgEnabledChannelsFilePath = getDataPath('rpg-enabled-channels.json');
+        this.threadSummariesFilePath = getDataPath('thread-summaries.json');
 
         const promptFilePath = path.join(__dirname, '../prompts/gemini-system-prompt.txt');
         try {
@@ -927,7 +928,7 @@ If the user asks for a summary or current state, base it ONLY on the saved RPG c
     }
 
     public loadRpgContext(channelId: string): any {
-        const filePath = path.join(__dirname, `../../rpg-context-${channelId}.json`);
+        const filePath = getDataPath(`rpg-context-${channelId}.json`);
         if (fs.existsSync(filePath)) {
             try {
                 const data = fs.readFileSync(filePath, 'utf-8');

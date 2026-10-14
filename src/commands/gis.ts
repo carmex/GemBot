@@ -25,11 +25,12 @@ import sharp from 'sharp';
 import { rateImageNsfw, NsfwRatingResult } from '../features/nsfw-rater';
 import { AIHandler } from '../features/ai-handler';
 import { getBotSetting, setBotSetting } from '../features/thread-db';
+import { getDataPath } from '../utils/data-dir';
 
 export type Mod = 'g' | 't' | 'i' | 'a' | 'm' | 'l' | undefined;
 export type GisMode = 'url' | 'upload';
 
-export const GIS_CONFIG_FILE = path.join(__dirname, '../../gis-mode.json');
+export const GIS_CONFIG_FILE = getDataPath('gis-mode.json');
 
 let currentMode: GisMode = 'url';
 
