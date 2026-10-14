@@ -429,6 +429,84 @@ export function buildGoogleSearchParams(query: string, mod?: Mod): Record<string
     return searchParams;
 }
 
+export interface TenorMediaFormat {
+    url: string;
+    dims?: [number, number];
+    duration?: number;
+    size?: number;
+}
+
+export interface TenorResultItem {
+    id: string;
+    title?: string;
+    content_description?: string;
+    itemurl?: string;
+    url?: string;
+    media_formats?: {
+        gif?: TenorMediaFormat;
+        mediumgif?: TenorMediaFormat;
+        tinymediumgif?: TenorMediaFormat;
+        nanomediumgif?: TenorMediaFormat;
+        mp4?: TenorMediaFormat;
+    };
+    media?: Array<{
+        gif?: {
+            url: string;
+            dims?: [number, number];
+            size?: number;
+        };
+    }>;
+}
+
+export interface TenorSearchResponse {
+    results?: TenorResultItem[];
+    next?: string;
+}
+
+export async function searchTenor(
+    query: string,
+    limit: number = 10,
+    apiKey?: string
+): Promise<string[]> {
+    const key = apiKey !== undefined ? apiKey : (config.search.tenorApiKey || config.search.googleApiKey);
+    if (!key) {
+        return [];
+    }
+
+    const baseUrl = 'https://tenor.googleapis.com/v2/search';
+    const params = new URLSearchParams({
+        q: query,
+        key,
+        client_key: 'slack-ai-bot',
+        limit: String(Math.max(1, limit)),
+        media_filter: 'gif',
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}?${params.toString()}`);
+        if (!response.ok) {
+            console.warn(`[GIS] Tenor API error: HTTP ${response.status} ${response.statusText}`);
+            return [];
+        }
+
+        const data = (await response.json()) as TenorSearchResponse;
+        const items = data.results || [];
+        const urls: string[] = [];
+
+        for (const item of items) {
+            const gifUrl = item.media_formats?.gif?.url || item.media?.[0]?.gif?.url;
+            if (gifUrl) {
+                urls.push(gifUrl);
+            }
+        }
+
+        return urls;
+    } catch (err) {
+        console.warn('[GIS] Failed to fetch from Tenor API:', err);
+        return [];
+    }
+}
+
 export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
     app.message(/^!?gis(?:\s+(mode|upload))?(?:\s+(upload|url|on|off|status))?$/i, async ({ message, context, say }) => {
         if (!('user' in message) || !message.user) {
@@ -456,7 +534,15 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
 
         if (!search) return;
 
-        if (!config.search.googleApiKey || !config.search.googleCxId) {
+        const hasGoogleConfig = !!(config.search.googleApiKey && config.search.googleCxId);
+        const hasTenorConfig = !!(config.search.tenorApiKey || config.search.googleApiKey);
+
+        if (normalizedMod === 'a') {
+            if (!hasTenorConfig && !hasGoogleConfig) {
+                await say('Tenor API key or Google Search API key is not configured.');
+                return;
+            }
+        } else if (!hasGoogleConfig) {
             await say('Google Search API key or Search Engine ID is not configured.');
             return;
         }
@@ -466,7 +552,7 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
             'g': ' girls',
             't': ' then and now',
             'i': ' infographic',
-            'a': ' animated gif',
+            'a': '',
             'm': ' meme',
             'l': ' sexy ladies',
         }[String(mod).toLowerCase()] ?? '';
@@ -476,38 +562,56 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
 
         try {
             const startTime = Date.now();
-            const baseUrl = 'https://www.googleapis.com/customsearch/v1';
-            const searchParams = buildGoogleSearchParams(query, normalizedMod);
-            const params = new URLSearchParams(searchParams);
+            let selectedUrl: string | undefined;
 
-            const url = `${baseUrl}?${params.toString()}`;
-            const response = await fetch(url);
-
-            if (!response.ok) {
-                console.error(`Google Search API error: ${response.status} ${response.statusText}`);
-                await say({ text: '¯\\_(ツ)_/¯', thread_ts: threadTs });
-                return;
+            if (normalizedMod === 'a' && hasTenorConfig) {
+                try {
+                    const tenorUrls = await searchTenor(query, Math.max(10, index));
+                    if (tenorUrls.length >= index) {
+                        selectedUrl = tenorUrls[index - 1];
+                    }
+                } catch (tenorErr) {
+                    console.warn('[GIS] Error searching Tenor, falling back to Google Custom Search:', tenorErr);
+                }
             }
 
-            const json = (await response.json()) as GoogleSearchResult;
-            const items = json.items ?? [];
+            if (!selectedUrl && hasGoogleConfig) {
+                const baseUrl = 'https://www.googleapis.com/customsearch/v1';
+                const searchParams = buildGoogleSearchParams(query, normalizedMod);
+                const params = new URLSearchParams(searchParams);
 
-            const filteredItems = items.filter(item => {
-                if (!item || !item.link) return false;
-                const isBadDomain = BadDomains.test(item.link);
-                const matchesMod = normalizedMod === 'a' ? isGifResult(item) : true;
-                return !isBadDomain && matchesMod;
-            });
+                const url = `${baseUrl}?${params.toString()}`;
+                const response = await fetch(url);
 
-            const result = filteredItems[index - 1];
+                if (!response.ok) {
+                    console.error(`Google Search API error: ${response.status} ${response.statusText}`);
+                    await say({ text: '¯\\_(ツ)_/¯', thread_ts: threadTs });
+                    return;
+                }
 
-            if (!result) {
+                const json = (await response.json()) as GoogleSearchResult;
+                const items = json.items ?? [];
+
+                const filteredItems = items.filter(item => {
+                    if (!item || !item.link) return false;
+                    const isBadDomain = BadDomains.test(item.link);
+                    const matchesMod = normalizedMod === 'a' ? isGifResult(item) : true;
+                    return !isBadDomain && matchesMod;
+                });
+
+                const result = filteredItems[index - 1];
+                if (result) {
+                    selectedUrl = result.link;
+                }
+            }
+
+            if (!selectedUrl) {
                 await say({ text: '¯\\_(ツ)_/¯', thread_ts: threadTs });
                 return;
             }
 
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-            const sanitizedUrl = result.link
+            const sanitizedUrl = selectedUrl
                 .replace(/%25/g, '%')
                 .replace(/\\u003d/g, '=')
                 .replace(/\\u0026/g, '&');
