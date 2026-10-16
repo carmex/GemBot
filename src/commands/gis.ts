@@ -212,6 +212,60 @@ export function determineFilename(
     return `${base}${ext}`;
 }
 
+export interface UploadCacheEntry {
+    timestamp: number;
+    scoreTag?: string;
+}
+
+export const DEFAULT_UPLOAD_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+const uploadedImageCache = new Map<string, UploadCacheEntry>();
+
+export function isImageUploaded(url: string, ttlMs: number = DEFAULT_UPLOAD_CACHE_TTL_MS): boolean {
+    const entry = uploadedImageCache.get(url);
+    if (!entry) return false;
+    if (Date.now() - entry.timestamp > ttlMs) {
+        uploadedImageCache.delete(url);
+        return false;
+    }
+    return true;
+}
+
+export function getCachedUploadedImage(url: string, ttlMs: number = DEFAULT_UPLOAD_CACHE_TTL_MS): UploadCacheEntry | undefined {
+    const entry = uploadedImageCache.get(url);
+    if (!entry) return undefined;
+    if (Date.now() - entry.timestamp > ttlMs) {
+        uploadedImageCache.delete(url);
+        return undefined;
+    }
+    return entry;
+}
+
+export function recordUploadedImage(url: string, scoreTag?: string): void {
+    pruneUploadedImageCache();
+    uploadedImageCache.set(url, {
+        timestamp: Date.now(),
+        scoreTag,
+    });
+}
+
+export function clearUploadedImageCache(): void {
+    uploadedImageCache.clear();
+}
+
+export function getUploadedImageCacheSize(): number {
+    return uploadedImageCache.size;
+}
+
+export function pruneUploadedImageCache(ttlMs: number = DEFAULT_UPLOAD_CACHE_TTL_MS): void {
+    const now = Date.now();
+    for (const [url, entry] of uploadedImageCache.entries()) {
+        if (now - entry.timestamp > ttlMs) {
+            uploadedImageCache.delete(url);
+        }
+    }
+}
+
 export interface FetchAndUploadImageOptions {
     client: any;
     channel: string;
@@ -222,6 +276,8 @@ export interface FetchAndUploadImageOptions {
     nsfwRater?: (buffer: Buffer) => Promise<number | null | NsfwRatingResult>;
     aiHandler?: any;
     say?: (args: any) => Promise<any>;
+    checkCache?: boolean;
+    cacheTtlMs?: number;
 }
 
 export async function fetchAndUploadImage({
@@ -234,7 +290,25 @@ export async function fetchAndUploadImage({
     nsfwRater,
     aiHandler,
     say,
+    checkCache,
+    cacheTtlMs,
 }: FetchAndUploadImageOptions): Promise<boolean> {
+    if (checkCache && isImageUploaded(imageUrl, cacheTtlMs)) {
+        const cached = getCachedUploadedImage(imageUrl, cacheTtlMs);
+        const scoreTagStr = cached?.scoreTag && !initialComment.includes(cached.scoreTag)
+            ? ` ${cached.scoreTag}`
+            : '';
+        const finalComment = `${initialComment}${scoreTagStr}`;
+        if (say) {
+            await say({ text: finalComment, thread_ts: threadTs });
+            return true;
+        } else if (client?.chat?.postMessage) {
+            await client.chat.postMessage({ channel, thread_ts: threadTs, text: finalComment });
+            return true;
+        }
+        return false;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -358,6 +432,7 @@ export async function fetchAndUploadImage({
                 filename,
                 initial_comment: finalComment,
             });
+            recordUploadedImage(imageUrl, `[0/10 ${getNsfwScoreEmoji(0)}]`);
             return true;
         }
 
@@ -551,6 +626,7 @@ export const registerGisCommands = (app: App, aiHandler?: AIHandler) => {
                         initialComment: commentText,
                         aiHandler,
                         say,
+                        checkCache: true,
                     });
                 }
                 if (!uploaded) {
