@@ -16,6 +16,13 @@ import {
     GIS_MODE_UPLOAD_MSG,
     GIS_MODE_URL_MSG,
     formatGisModeStatus,
+    isImageUploaded,
+    getCachedUploadedImage,
+    recordUploadedImage,
+    clearUploadedImageCache,
+    getUploadedImageCacheSize,
+    pruneUploadedImageCache,
+    DEFAULT_UPLOAD_CACHE_TTL_MS,
 } from '../src/commands/gis';
 import { getBotSetting, setBotSetting, deleteBotSetting } from '../src/features/thread-db';
 
@@ -965,6 +972,170 @@ async function runTests() {
             lastMessageSaid.text === 'https://example.com/beach.png (0.10 sec) [2/10 :_charles_green4:]\n> Suggestive bikini pose on beach.',
             `Rating 2 from aiHandler should format with green4 emoji and explanation blockquote, got: '${lastMessageSaid.text}'`
         );
+
+        // ==========================================
+        // 7. GIS Upload Duplicate Cache & 4-Hour TTL Tests
+        // ==========================================
+        console.log('\n--- 7. GIS Upload Duplicate Cache & 4-Hour TTL Tests ---');
+
+        // Verify DEFAULT_UPLOAD_CACHE_TTL_MS is 4 hours
+        assert(DEFAULT_UPLOAD_CACHE_TTL_MS === 4 * 60 * 60 * 1000, 'DEFAULT_UPLOAD_CACHE_TTL_MS must equal 4 hours (14,400,000 ms)');
+
+        // Clear cache before testing
+        clearUploadedImageCache();
+        assert(getUploadedImageCacheSize() === 0, 'Cache should be empty after clearUploadedImageCache()');
+
+        const testUrl1 = `${serverUrl}/image.png`;
+        const testUrl2 = `${serverUrl}/animated.gif`;
+
+        // 7a: Initial request with checkCache: true calls files.uploadV2 and records in cache
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const upload1Res = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            threadTs: 'T1',
+            imageUrl: testUrl1,
+            query: 'go go gadget car',
+            initialComment: 'https://example.com/gadget.png (0.45 sec)',
+            nsfwRater: mockSafeRater,
+            say: testSay,
+            checkCache: true,
+        });
+        assert(upload1Res === true, 'Initial request should return true');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called exactly once on initial request');
+        assert(lastMessageSaid === null, 'say() should not be called when initial upload succeeds');
+        assert(isImageUploaded(testUrl1) === true, 'isImageUploaded should return true for uploaded URL');
+        assert(getUploadedImageCacheSize() === 1, 'Cache size should be 1');
+        const entry1 = getCachedUploadedImage(testUrl1);
+        assert(entry1 !== undefined && typeof entry1.timestamp === 'number', 'Cache entry should have timestamp');
+        assert(entry1?.scoreTag === '[0/10 :+1:]', 'Cache entry should have scoreTag [0/10 :+1:]');
+
+        // 7b: Second request with same URL within TTL and checkCache: true suppresses uploadV2 and sends URL + score tag via say()
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const dupRes = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            threadTs: 'T1',
+            imageUrl: testUrl1,
+            query: 'inspector gadget car traffic animated series',
+            initialComment: 'https://example.com/gadget.png (0.12 sec)',
+            nsfwRater: mockSafeRater,
+            say: testSay,
+            checkCache: true,
+        });
+        assert(dupRes === true, 'Duplicate request should return true');
+        assert(uploadCalls.length === 0, 'files.uploadV2 should NOT be called for duplicate within TTL');
+        assert(lastMessageSaid !== null, 'say() should be called for duplicate request');
+        assert(
+            lastMessageSaid.text === 'https://example.com/gadget.png (0.12 sec) [0/10 :+1:]',
+            `say() text should include URL, elapsed time, and [0/10 :+1:], got: '${lastMessageSaid.text}'`
+        );
+        assert(lastMessageSaid.thread_ts === 'T1', 'say() should preserve thread_ts');
+
+        // 7c: Request without checkCache (or checkCache: false) does NOT suppress upload
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const noCheckRes = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            threadTs: 'T1',
+            imageUrl: testUrl1,
+            query: 'gadget car forced upload',
+            initialComment: 'https://example.com/gadget.png (0.15 sec)',
+            nsfwRater: mockSafeRater,
+            say: testSay,
+            checkCache: false,
+        });
+        assert(noCheckRes === true, 'Request with checkCache: false should return true');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called when checkCache is false');
+
+        // 7d: Expiration with short TTL (e.g. 25ms TTL, wait 35ms)
+        clearUploadedImageCache();
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: testUrl2,
+            query: 'short ttl test',
+            initialComment: 'https://example.com/short.gif (0.20 sec)',
+            nsfwRater: mockSafeRater,
+            say: testSay,
+            checkCache: true,
+            cacheTtlMs: 25,
+        });
+        assert(uploadCalls.length === 1, 'Initial upload with short TTL should call uploadV2');
+        assert(isImageUploaded(testUrl2, 25) === true, 'Image should be cached immediately');
+
+        // Wait 35ms for TTL to expire
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        assert(isImageUploaded(testUrl2, 25) === false, 'isImageUploaded should return false after TTL expiration');
+        assert(getCachedUploadedImage(testUrl2, 25) === undefined, 'getCachedUploadedImage should return undefined after TTL expiration');
+
+        uploadCalls.length = 0;
+        lastMessageSaid = null;
+        const expiredRes = await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: testUrl2,
+            query: 'short ttl re-upload',
+            initialComment: 'https://example.com/short.gif (0.18 sec)',
+            nsfwRater: mockSafeRater,
+            say: testSay,
+            checkCache: true,
+            cacheTtlMs: 25,
+        });
+        assert(expiredRes === true, 'Re-upload after expiration should succeed');
+        assert(uploadCalls.length === 1, 'files.uploadV2 should be called again after TTL expiration');
+
+        // 7e: Prune cache function
+        clearUploadedImageCache();
+        recordUploadedImage('https://example.com/item1.png', '[0/10 :+1:]');
+        recordUploadedImage('https://example.com/item2.png', '[0/10 :+1:]');
+        assert(getUploadedImageCacheSize() === 2, 'Cache size should be 2 after recording 2 items');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        pruneUploadedImageCache(10); // prune items older than 10ms
+        assert(getUploadedImageCacheSize() === 0, 'pruneUploadedImageCache should remove expired entries');
+
+        // 7f: Gated images (rating 1-10) are NOT recorded in cache
+        clearUploadedImageCache();
+        uploadCalls.length = 0;
+        const gatedUrl = `${serverUrl}/image.png`;
+        await fetchAndUploadImage({
+            client: mockClient,
+            channel: 'C1',
+            imageUrl: gatedUrl,
+            query: 'gated image test',
+            initialComment: 'https://example.com/gated.png (0.30 sec)',
+            nsfwRater: async () => 4,
+            say: testSay,
+            checkCache: true,
+        });
+        assert(uploadCalls.length === 0, 'Gated image should not call uploadV2');
+        assert(isImageUploaded(gatedUrl) === false, 'Gated image should NOT be added to uploadedImageCache');
+        assert(getUploadedImageCacheSize() === 0, 'Cache should remain empty for gated images');
+
+        // 7g: Failed uploads are NOT recorded in cache
+        clearUploadedImageCache();
+        await fetchAndUploadImage({
+            client: throwingClient,
+            channel: 'C1',
+            imageUrl: `${serverUrl}/image.png`,
+            query: 'failed upload test',
+            initialComment: 'https://example.com/fail.png (0.30 sec)',
+            nsfwRater: mockSafeRater,
+            checkCache: true,
+        });
+        assert(getUploadedImageCacheSize() === 0, 'Failed upload should NOT be recorded in cache');
+
+        // 7h: clearUploadedImageCache() clears all entries
+        recordUploadedImage('https://example.com/a.png');
+        recordUploadedImage('https://example.com/b.png');
+        assert(getUploadedImageCacheSize() === 2, 'Cache size should be 2');
+        clearUploadedImageCache();
+        assert(getUploadedImageCacheSize() === 0, 'Cache should be empty after clearUploadedImageCache()');
 
         // Close mock server
         await new Promise<void>((resolve) => server.close(() => resolve()));
