@@ -5,8 +5,13 @@
  * Unit and integration tests for "Gembo's tidbits of the day" subscription service.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { getDataDir } from '../src/utils/data-dir';
 import {
     initTidbitDb,
+    setDatabase,
+    getDatabase,
     upsertSubscription,
     getSubscription,
     getAllSubscriptions,
@@ -14,7 +19,9 @@ import {
     updateLastSentDate,
     isTidbitDuplicate,
     recordDeliveredTidbits,
-    clearTidbitHistory
+    clearTidbitHistory,
+    getRecentTidbitHistory,
+    seedTidbitHistory
 } from '../src/features/tidbit-db';
 import * as cron from 'node-cron';
 import { config } from '../src/config';
@@ -26,13 +33,20 @@ import {
     getRecipeIdea,
     getInspirationalQuote,
     computeTidbitHash,
+    normalizeTidbitText,
+    parseTidbitsFromSlackMessage,
     _setFetch,
     _resetFetch,
     _setFetchStockNews,
     _resetFetchStockNews
 } from '../src/features/tidbit-generator';
 import fetch from 'node-fetch';
-import { getUserLocalDateTime, sendChannelTidbits } from '../src/features/tidbit-worker';
+import {
+    getUserLocalDateTime,
+    sendChannelTidbits,
+    syncChannelTidbitHistory
+} from '../src/features/tidbit-worker';
+import { _setCreateProvider, _resetCreateProvider } from '../src/features/tidbit-ai';
 
 async function runTidbitsTests() {
     console.log("=== Running Tidbits Feature Tests ===");
@@ -50,9 +64,13 @@ async function runTidbitsTests() {
     }
 
     try {
+        // --- Database Isolation: Use tidbits.test.db for test suite execution ---
+        const testDbName = 'tidbits.test.db';
+        setDatabase(testDbName);
+        initTidbitDb();
+
         // --- 1. Database Unit & Concurrency Tests ---
         console.log("\n1. Testing Database Operations (WAL Mode, CRUD, Deduplication Helpers)...");
-        initTidbitDb();
 
         const testUser = 'U99999_TEST';
         const testChannel = 'C99999_TEST';
@@ -379,6 +397,330 @@ async function runTidbitsTests() {
         _resetFetch();
         assert(true, "All web fallbacks successfully recovered and verified");
 
+
+        // --- 10. Canonical Text Normalization & Hashing Tests ---
+        console.log("\n10. Testing Canonical Text Normalization & Hashing...");
+
+        // Case insensitivity
+        const hashLower = computeTidbitHash('fact', 'reindeer like to eat bananas');
+        const hashUpper = computeTidbitHash('fact', 'REINDEER LIKE TO EAT BANANAS');
+        assert(hashLower === hashUpper, "computeTidbitHash is case insensitive");
+
+        // Punctuation stripping
+        const hashNoPunct = computeTidbitHash('fact', 'Reindeer like to eat bananas');
+        const hashPeriod = computeTidbitHash('fact', 'Reindeer like to eat bananas.');
+        const hashExclamation = computeTidbitHash('fact', 'Reindeer like to eat bananas!');
+        const hashQuestion = computeTidbitHash('fact', 'Reindeer like to eat bananas?');
+        assert(hashNoPunct === hashPeriod, "computeTidbitHash strips trailing periods (Oct 18 vs Oct 12 bug fix)");
+        assert(hashNoPunct === hashExclamation, "computeTidbitHash strips trailing exclamation marks");
+        assert(hashNoPunct === hashQuestion, "computeTidbitHash strips trailing question marks");
+
+        // Markdown formatting stripping
+        const hashBold = computeTidbitHash('recipe', '*Garlic Butter Shrimp*');
+        const hashPlainRecipe = computeTidbitHash('recipe', 'Garlic Butter Shrimp');
+        assert(hashBold === hashPlainRecipe, "computeTidbitHash strips markdown asterisks");
+
+        const hashMarkdownMix = computeTidbitHash('fact', '*Reindeer* like to _eat_ `bananas`~.');
+        assert(hashMarkdownMix === hashNoPunct, "computeTidbitHash strips mixed markdown and trailing punctuation");
+
+        // Typographic quote normalization
+        const hashSmartQuotes = computeTidbitHash('quote', '“Stay hungry, stay foolish.”');
+        const hashAsciiQuotes = computeTidbitHash('quote', '"Stay hungry, stay foolish"');
+        assert(hashSmartQuotes === hashAsciiQuotes, "computeTidbitHash normalizes curly quotes to standard ASCII quotes");
+
+        // Whitespace collapsing and trimming
+        const hashExtraSpaces = computeTidbitHash('news', '   Major   breakthrough   in   AI   ');
+        const hashCleanSpaces = computeTidbitHash('news', 'Major breakthrough in AI');
+        assert(hashExtraSpaces === hashCleanSpaces, "computeTidbitHash collapses multiple whitespaces and trims");
+
+
+        // --- 11. Slack Message Parsing Tests ---
+        console.log("\n11. Testing parseTidbitsFromSlackMessage...");
+
+        const sampleSlackMessage = `*Gembo's Tidbits of the Day* ☀️
+
+• 📰 *Today's Top News*: NASA telescope discovers habitable exoplanet - _Reuters_ (<https://example.com/exoplanet|Read More>)
+
+• 💡 *Fun Factoid*: Reindeer like to eat bananas.
+
+• 📜 *Historical Fact on This Day*: In 1969, Neil Armstrong walked on the Moon.
+
+• 🍳 *Recipe Idea*: *Shakshuka* (North African) - Poached eggs in spiced tomato sauce. (<https://example.com/shakshuka|Recipe>)
+
+• 💬 *Inspirational Quote*: "The journey of a thousand miles begins with a single step." — *Lao Tzu*`;
+
+        const parsedBullets = parseTidbitsFromSlackMessage(sampleSlackMessage);
+        assert(parsedBullets.length === 5, "parseTidbitsFromSlackMessage parsed exactly 5 bullet items");
+
+        const newsParsed = parsedBullets.find(b => b.category === 'news');
+        assert(newsParsed !== undefined && newsParsed.contentIdentifier.includes('NASA telescope discovers'), "Parsed news bullet and extracted headline");
+        assert(newsParsed?.itemHash === computeTidbitHash('news', newsParsed!.contentIdentifier), "Parsed news canonical hash matches");
+
+        const factParsed = parsedBullets.find(b => b.category === 'fact');
+        assert(factParsed !== undefined && factParsed.contentIdentifier === 'Reindeer like to eat bananas.', "Parsed fun fact bullet");
+        assert(factParsed?.itemHash === computeTidbitHash('fact', 'Reindeer like to eat bananas'), "Parsed fact hash matches canonical fact hash (punctuation stripped)");
+
+        const historyParsed = parsedBullets.find(b => b.category === 'history');
+        assert(historyParsed !== undefined && historyParsed.contentIdentifier.startsWith('1969:'), "Parsed historical fact bullet with year:text format");
+        assert(historyParsed?.itemHash === computeTidbitHash('history', historyParsed!.contentIdentifier), "Parsed history hash matches canonical hash");
+
+        const recipeParsed = parsedBullets.find(b => b.category === 'recipe');
+        assert(recipeParsed !== undefined && recipeParsed.contentIdentifier === 'Shakshuka', "Parsed recipe bullet and extracted dish name");
+        assert(recipeParsed?.itemHash === computeTidbitHash('recipe', 'Shakshuka'), "Parsed recipe hash matches canonical hash");
+
+        const quoteParsed = parsedBullets.find(b => b.category === 'quote');
+        assert(quoteParsed !== undefined && quoteParsed.contentIdentifier.includes('journey of a thousand miles'), "Parsed quote bullet and extracted quote text");
+        assert(quoteParsed?.itemHash === computeTidbitHash('quote', quoteParsed!.contentIdentifier), "Parsed quote hash matches canonical hash");
+
+        const nonTidbitParsed = parseTidbitsFromSlackMessage("Hello team, remember our standup at 10 AM!");
+        assert(nonTidbitParsed.length === 0, "parseTidbitsFromSlackMessage returns empty array for non-tidbit message");
+
+
+        // --- 12. Database History Seeding & Constraints Tests ---
+        console.log("\n12. Testing Database History Seeding & getRecentTidbitHistory...");
+
+        const testSeedRecipient = 'C_SEED_TEST_CHANNEL';
+        clearTidbitHistory(testSeedRecipient);
+
+        const itemsToSeed = [
+            { category: 'fact', itemHash: computeTidbitHash('fact', 'Wombats produce cube-shaped poop.'), contentIdentifier: 'Wombats produce cube-shaped poop.' },
+            { category: 'recipe', itemHash: computeTidbitHash('recipe', 'Birria Tacos'), contentIdentifier: 'Birria Tacos' },
+            { category: 'quote', itemHash: computeTidbitHash('quote', 'Knowledge is power.'), contentIdentifier: 'Knowledge is power.' },
+        ];
+
+        const seededCount = seedTidbitHistory(testSeedRecipient, itemsToSeed);
+        assert(seededCount === 3, "seedTidbitHistory inserted 3 new historical records");
+
+        const reseededCount = seedTidbitHistory(testSeedRecipient, itemsToSeed);
+        assert(reseededCount === 0, "seedTidbitHistory with INSERT OR IGNORE correctly ignored existing records");
+
+        assert(isTidbitDuplicate(testSeedRecipient, computeTidbitHash('fact', 'Wombats produce cube-shaped poop')), "isTidbitDuplicate returns true for seeded fact");
+        assert(isTidbitDuplicate(testSeedRecipient, computeTidbitHash('recipe', 'Birria Tacos')), "isTidbitDuplicate returns true for seeded recipe");
+
+        const recentRecipes = getRecentTidbitHistory(testSeedRecipient, 'recipe', 10);
+        assert(recentRecipes.includes('Birria Tacos'), "getRecentTidbitHistory returns seeded dish name for prompt exclusion");
+
+        const recentFacts = getRecentTidbitHistory(testSeedRecipient, 'fact', 10);
+        assert(recentFacts.some(f => f.includes('Wombats')), "getRecentTidbitHistory returns seeded fact for prompt exclusion");
+
+        clearTidbitHistory(testSeedRecipient);
+
+
+        // --- 13. Channel Self-Healing History Sync Tests ---
+        console.log("\n13. Testing syncChannelTidbitHistory (Slack API Channel Backfill)...");
+
+        const syncTestChannel = 'C_SELF_HEALING_CHANNEL';
+        clearTidbitHistory(syncTestChannel);
+
+        const mockSlackAppForSync: any = {
+            client: {
+                conversations: {
+                    history: async ({ channel, limit }: { channel: string; limit: number }) => {
+                        return {
+                            ok: true,
+                            messages: [
+                                { text: 'Good morning everyone!', user: 'U1234', ts: '1729252000.000100' },
+                                { text: sampleSlackMessage, bot_id: 'B_GEMBOT', ts: '1729252800.000200' },
+                            ]
+                        };
+                    }
+                }
+            }
+        };
+
+        await syncChannelTidbitHistory(mockSlackAppForSync, syncTestChannel);
+
+        assert(isTidbitDuplicate(syncTestChannel, computeTidbitHash('fact', 'Reindeer like to eat bananas')), "Self-healing sync backfilled fun fact from Slack history");
+        assert(isTidbitDuplicate(syncTestChannel, computeTidbitHash('recipe', 'Shakshuka')), "Self-healing sync backfilled recipe from Slack history");
+        assert(isTidbitDuplicate(syncTestChannel, computeTidbitHash('history', '1969:Neil Armstrong walked on the Moon.')), "Self-healing sync backfilled historical fact from Slack history");
+        assert(isTidbitDuplicate(syncTestChannel, computeTidbitHash('quote', 'The journey of a thousand miles begins with a single step.')), "Self-healing sync backfilled quote from Slack history");
+        assert(isTidbitDuplicate(syncTestChannel, computeTidbitHash('news', 'NASA telescope discovers habitable exoplanet')), "Self-healing sync backfilled news from Slack history");
+
+        clearTidbitHistory(syncTestChannel);
+
+
+        // --- 14. AI Fallback Escalation Under 100% Collision Tests ---
+        console.log("\n14. Testing AI Fallback Escalation When Web Sources Collide 100%...");
+
+        const collisionRecipient = 'U_COLLISION_TEST_USER';
+        clearTidbitHistory(collisionRecipient);
+
+        // A. Fun Fact Escalation to AI
+        const duplicateFact = 'Reindeer like to eat bananas.';
+        recordDeliveredTidbits(collisionRecipient, [{
+            category: 'fact',
+            itemHash: computeTidbitHash('fact', duplicateFact),
+            contentIdentifier: duplicateFact,
+        }]);
+
+        // Web APIs return the duplicate fact 100% of the time
+        _setFetch(async (url: string) => {
+            if (url.includes('uselessfacts')) {
+                return { ok: true, json: async () => ({ text: duplicateFact }) };
+            }
+            if (url.includes('catfact')) {
+                return { ok: true, json: async () => ({ fact: duplicateFact }) };
+            }
+            return fetch(url);
+        });
+
+        // AI Provider mock returns a fresh, novel fact
+        let aiPromptCaptured = '';
+        _setCreateProvider(() => ({
+            name: () => 'mock-gemini',
+            chat: async (prompt: string) => {
+                aiPromptCaptured = prompt;
+                return { text: 'Bananas are naturally slightly radioactive because of potassium-40.' };
+            },
+            countTokens: async () => 10,
+        }));
+
+        const freshAiFact = await getFunFact(collisionRecipient);
+        assert(freshAiFact.text.includes('radioactive'), "getFunFact smoothly escalated to AI when web sources collided");
+        assert(!isTidbitDuplicate(collisionRecipient, freshAiFact.hash), "AI-generated fun fact is not a duplicate");
+        assert(aiPromptCaptured.includes('Negative constraints'), "AI prompt included negative constraints from history");
+
+        // B. Recipe Escalation to AI
+        const duplicateRecipe = 'Spaghetti Carbonara';
+        recordDeliveredTidbits(collisionRecipient, [{
+            category: 'recipe',
+            itemHash: computeTidbitHash('recipe', duplicateRecipe),
+            contentIdentifier: duplicateRecipe,
+        }]);
+
+        _setFetch(async (url: string) => {
+            if (url.includes('themealdb')) {
+                return { ok: true, json: async () => ({ meals: [{ strMeal: duplicateRecipe, strInstructions: 'Cook pasta.' }] }) };
+            }
+            if (url.includes('dummyjson.com/recipes')) {
+                return { ok: true, json: async () => ({ recipes: [{ name: duplicateRecipe, instructions: 'Cook pasta.' }] }) };
+            }
+            return fetch(url);
+        });
+
+        _setCreateProvider(() => ({
+            name: () => 'mock-gemini',
+            chat: async () => ({
+                text: JSON.stringify({
+                    name: 'Peruvian Ceviche',
+                    cuisine: 'Peruvian',
+                    snippet: 'Fresh sea bass cured in vibrant lime juice with red onions and cilantro.',
+                    query: 'peruvian ceviche recipe'
+                })
+            }),
+            countTokens: async () => 10,
+        }));
+
+        const freshAiRecipe = await getRecipeIdea(collisionRecipient);
+        assert(freshAiRecipe.text.includes('Ceviche'), "getRecipeIdea smoothly escalated to AI when web sources collided");
+        assert(!isTidbitDuplicate(collisionRecipient, freshAiRecipe.hash), "AI-generated recipe idea is not a duplicate");
+
+        // C. Quote Escalation to AI
+        const duplicateQuote = 'To be or not to be.';
+        recordDeliveredTidbits(collisionRecipient, [{
+            category: 'quote',
+            itemHash: computeTidbitHash('quote', duplicateQuote),
+            contentIdentifier: duplicateQuote,
+        }]);
+
+        _setFetch(async (url: string) => {
+            if (url.includes('zenquotes')) {
+                return { ok: true, json: async () => [{ q: duplicateQuote, a: 'William Shakespeare' }] };
+            }
+            if (url.includes('dummyjson.com/quotes')) {
+                return { ok: true, json: async () => ({ quote: duplicateQuote, author: 'William Shakespeare' }) };
+            }
+            return fetch(url);
+        });
+
+        _setCreateProvider(() => ({
+            name: () => 'mock-gemini',
+            chat: async () => ({
+                text: JSON.stringify({
+                    quote: 'Imagination is more important than knowledge.',
+                    author: 'Albert Einstein'
+                })
+            }),
+            countTokens: async () => 10,
+        }));
+
+        const freshAiQuote = await getInspirationalQuote(collisionRecipient);
+        assert(freshAiQuote.text.includes('Imagination is more important'), "getInspirationalQuote smoothly escalated to AI when web sources collided");
+        assert(!isTidbitDuplicate(collisionRecipient, freshAiQuote.hash), "AI-generated quote is not a duplicate");
+
+        // D. History Escalation to AI
+        const duplicateHistory = 'Battle of Hastings';
+        recordDeliveredTidbits(collisionRecipient, [{
+            category: 'history',
+            itemHash: computeTidbitHash('history', `1066:${duplicateHistory}`),
+            contentIdentifier: `1066:${duplicateHistory}`,
+        }]);
+
+        _setFetch(async (url: string) => {
+            if (url.includes('/feed/onthisday/')) {
+                return { ok: true, json: async () => ({ events: [{ year: 1066, text: duplicateHistory }] }) };
+            }
+            return fetch(url);
+        });
+
+        _setCreateProvider(() => ({
+            name: () => 'mock-gemini',
+            chat: async () => ({
+                text: JSON.stringify({
+                    year: 1977,
+                    text: 'Voyager 1 was launched by NASA to explore the outer solar system.'
+                })
+            }),
+            countTokens: async () => 10,
+        }));
+
+        const freshAiHistory = await getHistoricalFact(collisionRecipient);
+        assert(freshAiHistory.text.includes('Voyager 1'), "getHistoricalFact smoothly escalated to AI when web feeds collided");
+        assert(!isTidbitDuplicate(collisionRecipient, freshAiHistory.hash), "AI-generated historical fact is not a duplicate");
+
+        _resetFetch();
+        _resetCreateProvider();
+        clearTidbitHistory(collisionRecipient);
+
+
+        // --- 15. End-to-End Simulation: Consecutive Daily Delivery Zero-Duplicate Guarantee ---
+        console.log("\n15. Testing Multi-Run Channel Delivery Simulation (Zero Duplicate Guarantee)...");
+
+        const simulationChannel = 'C_SIMULATION_CHANNEL';
+        clearTidbitHistory(simulationChannel);
+        const deliveredHashes = new Set<string>();
+        let simulationDuplicates = 0;
+
+        // Perform 10 consecutive daily delivery runs (5 items each = 50 total items)
+        for (let run = 1; run <= 10; run++) {
+            const deliveryMessage = await generateTidbits(5, simulationChannel);
+            const bullets = parseTidbitsFromSlackMessage(deliveryMessage);
+            for (const b of bullets) {
+                if (deliveredHashes.has(b.itemHash)) {
+                    simulationDuplicates++;
+                }
+                deliveredHashes.add(b.itemHash);
+            }
+        }
+
+        assert(simulationDuplicates === 0, `Across 10 consecutive delivery runs (50 items), exactly 0 duplicate items were generated (found ${simulationDuplicates})`);
+        clearTidbitHistory(simulationChannel);
+
+
+        // --- Cleanup Isolated Test Database ---
+        try {
+            getDatabase().close();
+            const dataDir = getDataDir();
+            for (const suffix of ['', '-wal', '-shm']) {
+                const target = path.join(dataDir, `${testDbName}${suffix}`);
+                if (fs.existsSync(target)) {
+                    fs.unlinkSync(target);
+                }
+            }
+            console.log("\n[TestCleanup] Successfully cleaned up isolated test database files.");
+        } catch (cleanupError) {
+            console.warn("[TestCleanup] Notice during test DB cleanup:", cleanupError);
+        }
 
         console.log(`\n===================================`);
         console.log(`Test Execution Summary: ${passed} passed, ${failed} failed.`);

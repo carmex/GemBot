@@ -20,11 +20,26 @@ import crypto from 'crypto';
 import fetch from 'node-fetch';
 import { fetchStockNews } from './finnhub-api';
 import { isTidbitDuplicate, recordDeliveredTidbits } from './tidbit-db';
+import {
+    generateAiFunFact,
+    generateAiHistoricalFact,
+    generateAiQuote,
+    generateAiRecipeIdea,
+    generateAiTopNews,
+} from './tidbit-ai';
 
 export interface TidbitItem {
     text: string;
     hash: string;
     category: string;
+    contentIdentifier?: string;
+}
+
+export interface ParsedSlackTidbit {
+    category: string;
+    itemHash: string;
+    contentIdentifier: string;
+    text: string;
 }
 
 const DEFAULT_FETCH_HEADERS = {
@@ -42,10 +57,35 @@ export function _setFetchStockNews(fn: any) { _fetchStockNews = fn; }
 export function _resetFetchStockNews() { _fetchStockNews = fetchStockNews; }
 
 /**
- * Computes a deterministic SHA-256 hash for a tidbit item to prevent repetitive deliveries.
+ * Normalizes text for canonical hashing by stripping markdown, converting typographic quotes,
+ * stripping trailing punctuation, collapsing whitespaces, and lowercasing.
+ */
+export function normalizeTidbitText(text: string): string {
+    if (!text) return '';
+    let normalized = text
+        // Normalize typographic quotes and apostrophes to standard ASCII (' and ")
+        .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+        .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+        // Strip markdown formatting (*, _, ~, `)
+        .replace(/[*_~`]/g, '');
+
+    // Strip trailing periods, commas, and punctuation marks (even before closing quotes)
+    normalized = normalized
+        .replace(/[.,!?;:]+(?=["']*$)/g, '')
+        .replace(/[.,!?;:]+$/g, '');
+
+    return normalized
+        // Collapse multiple whitespaces and trim
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+/**
+ * Computes a deterministic canonical SHA-256 hash for a tidbit item to prevent repetitive deliveries.
  */
 export function computeTidbitHash(category: string, contentIdentifier: string): string {
-    const normalized = `${category}:${contentIdentifier.trim().toLowerCase()}`;
+    const normalized = `${category.trim().toLowerCase()}:${normalizeTidbitText(contentIdentifier)}`;
     return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
@@ -64,8 +104,138 @@ function decodeHtmlEntities(str: string): string {
 }
 
 /**
+ * Parses a single bullet from Gembo's tidbit message.
+ */
+function parseSingleBullet(bulletText: string): ParsedSlackTidbit | null {
+    // 1. Fun Factoid: 💡 *Fun Factoid*: ...
+    if (bulletText.includes('Fun Factoid')) {
+        const match = bulletText.match(/(?:💡\s*)?\*?Fun Factoid\*?:\s*([\s\S]*)/i);
+        if (match) {
+            const raw = match[1].trim();
+            return {
+                category: 'fact',
+                contentIdentifier: raw,
+                itemHash: computeTidbitHash('fact', raw),
+                text: bulletText,
+            };
+        }
+    }
+
+    // 2. Recipe Idea: 🍳 *Recipe Idea*: *Name* (Cuisine) - Snippet (<Link|Recipe>)
+    if (bulletText.includes('Recipe Idea')) {
+        const match = bulletText.match(/(?:🍳\s*)?\*?Recipe Idea\*?:\s*([\s\S]*)/i);
+        if (match) {
+            const raw = match[1].trim();
+            const nameMatch = raw.match(/^\*([^*]+)\*/);
+            let name = nameMatch ? nameMatch[1].trim() : '';
+            if (!name) {
+                name = raw.split(/\s*[-—–(]/)[0].trim();
+            }
+            return {
+                category: 'recipe',
+                contentIdentifier: name,
+                itemHash: computeTidbitHash('recipe', name),
+                text: bulletText,
+            };
+        }
+    }
+
+    // 3. Historical Fact: 📜 *Historical Fact on This Day*: In Year, Event
+    if (bulletText.includes('Historical Fact')) {
+        const match = bulletText.match(/(?:📜\s*)?\*?Historical Fact(?: on This Day)?\*?:\s*([\s\S]*)/i);
+        if (match) {
+            const raw = match[1].trim();
+            const histMatch = raw.match(/^In\s+(\d+)[,:]?\s*([\s\S]*)/i);
+            const contentId = histMatch ? `${histMatch[1]}:${histMatch[2].trim()}` : raw;
+            return {
+                category: 'history',
+                contentIdentifier: contentId,
+                itemHash: computeTidbitHash('history', contentId),
+                text: bulletText,
+            };
+        }
+    }
+
+    // 4. Inspirational Quote: 💬 *Inspirational Quote*: "Quote" — *Author*
+    if (bulletText.includes('Inspirational Quote')) {
+        const match = bulletText.match(/(?:💬\s*)?\*?Inspirational Quote\*?:\s*([\s\S]*)/i);
+        if (match) {
+            const raw = match[1].trim();
+            const quoteMatch = raw.match(/^["“](.*?)["”]\s*[—–-]/s);
+            let quoteText = quoteMatch ? quoteMatch[1].trim() : '';
+            if (!quoteText) {
+                const parts = raw.split(/\s*[—–-]\s*\*/);
+                quoteText = parts[0].replace(/^["“]|["”]$/g, '').trim();
+            }
+            return {
+                category: 'quote',
+                contentIdentifier: quoteText,
+                itemHash: computeTidbitHash('quote', quoteText),
+                text: bulletText,
+            };
+        }
+    }
+
+    // 5. Today's Top News: 📰 *Today's Top News*: Headline - _Source_ (<Link|Read More>)
+    if (bulletText.includes("Today's Top News") || bulletText.includes('Top News')) {
+        const match = bulletText.match(/(?:📰\s*)?\*?Today's Top News\*?:\s*([\s\S]*)/i);
+        if (match) {
+            let raw = match[1].trim();
+            raw = raw.replace(/\s*\(<[^>]+>\)\s*$/, '').trim();
+            raw = raw.replace(/\s*-\s*_[^_]+_\s*$/, '').trim();
+            return {
+                category: 'news',
+                contentIdentifier: raw,
+                itemHash: computeTidbitHash('news', raw),
+                text: bulletText,
+            };
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Parses message text containing Gembo's Tidbits of the Day and extracts individual
+ * bullets, identifying categories and computing canonical hashes for deduplication.
+ */
+export function parseTidbitsFromSlackMessage(messageText: string): ParsedSlackTidbit[] {
+    if (!messageText || !messageText.includes("*Gembo's Tidbits of the Day*")) {
+        return [];
+    }
+
+    const items: ParsedSlackTidbit[] = [];
+    const lines = messageText.split('\n');
+    let currentBullet: string[] = [];
+
+    for (const line of lines) {
+        if (line.trim().startsWith('• ')) {
+            if (currentBullet.length > 0) {
+                const bulletText = currentBullet.join('\n').trim();
+                const parsed = parseSingleBullet(bulletText);
+                if (parsed) items.push(parsed);
+                currentBullet = [];
+            }
+            currentBullet.push(line.trim().substring(2).trim());
+        } else if (currentBullet.length > 0) {
+            if (line.trim().length > 0) {
+                currentBullet.push(line.trim());
+            }
+        }
+    }
+
+    if (currentBullet.length > 0) {
+        const bulletText = currentBullet.join('\n').trim();
+        const parsed = parseSingleBullet(bulletText);
+        if (parsed) items.push(parsed);
+    }
+
+    return items;
+}
+
+/**
  * Category 1: Today's Top News
- * Dynamically sources from Finnhub Stock News with live Google News RSS fallback.
+ * Dynamically sources from Finnhub Stock News with live Google News RSS and Gemini AI fallbacks.
  */
 export async function getTopNews(recipientId?: string): Promise<TidbitItem> {
     // Primary: Finnhub General Stock News
@@ -76,18 +246,20 @@ export async function getTopNews(recipientId?: string): Promise<TidbitItem> {
                 ? news.filter(a => !isTidbitDuplicate(recipientId, computeTidbitHash('news', a.headline)))
                 : news;
 
-            const pool = unusedArticles.length > 0 ? unusedArticles : news;
-            const article = pool[Math.floor(Math.random() * pool.length)];
-            const headline = decodeHtmlEntities(article.headline.trim());
-            const source = decodeHtmlEntities(article.source?.trim() || 'Finnhub');
-            const url = article.url?.trim() || 'https://finnhub.io';
-            const hash = computeTidbitHash('news', article.headline);
+            if (unusedArticles.length > 0) {
+                const article = unusedArticles[Math.floor(Math.random() * unusedArticles.length)];
+                const headline = decodeHtmlEntities(article.headline.trim());
+                const source = decodeHtmlEntities(article.source?.trim() || 'Finnhub');
+                const url = article.url?.trim() || 'https://finnhub.io';
+                const hash = computeTidbitHash('news', article.headline);
 
-            return {
-                text: `📰 *Today's Top News*: ${headline} - _${source}_ (<${url}|Read More>)`,
-                hash,
-                category: 'news',
-            };
+                return {
+                    text: `📰 *Today's Top News*: ${headline} - _${source}_ (<${url}|Read More>)`,
+                    hash,
+                    category: 'news',
+                    contentIdentifier: article.headline,
+                };
+            }
         }
     } catch (err) {
         console.warn('[TidbitGenerator] Finnhub news fetch failed, trying Google News RSS fallback:', err);
@@ -134,19 +306,29 @@ export async function getTopNews(recipientId?: string): Promise<TidbitItem> {
                     ? parsedItems.filter(item => !isTidbitDuplicate(recipientId, computeTidbitHash('news', item.headline)))
                     : parsedItems;
 
-                const pool = candidates.length > 0 ? candidates : parsedItems;
-                const chosen = pool[Math.floor(Math.random() * pool.length)];
-                const hash = computeTidbitHash('news', chosen.headline);
+                if (candidates.length > 0) {
+                    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+                    const hash = computeTidbitHash('news', chosen.headline);
 
-                return {
-                    text: `📰 *Today's Top News*: ${chosen.headline} - _${chosen.source}_ (<${chosen.link}|Read More>)`,
-                    hash,
-                    category: 'news',
-                };
+                    return {
+                        text: `📰 *Today's Top News*: ${chosen.headline} - _${chosen.source}_ (<${chosen.link}|Read More>)`,
+                        hash,
+                        category: 'news',
+                        contentIdentifier: chosen.headline,
+                    };
+                }
             }
         }
     } catch (err) {
         console.warn('[TidbitGenerator] Google News RSS fetch failed:', err);
+    }
+
+    // AI Fallback: Generate novel top news via Gemini
+    try {
+        console.log('[TidbitGenerator] Escalating top news to AI generation fallback...');
+        return await generateAiTopNews(recipientId);
+    } catch (aiErr) {
+        console.warn('[TidbitGenerator] AI top news generation failed:', aiErr);
     }
 
     throw new Error('All top news sources failed');
@@ -154,13 +336,11 @@ export async function getTopNews(recipientId?: string): Promise<TidbitItem> {
 
 /**
  * Category 2: Fun Factoid
- * Sourced dynamically from UselessFacts API with live Cat Facts API fallback.
+ * Sourced dynamically from UselessFacts API with live Cat Facts API and Gemini AI fallbacks.
  */
 export async function getFunFact(recipientId?: string): Promise<TidbitItem> {
-    let lastUselessFact: { text: string; hash: string } | null = null;
-
-    // Primary: UselessFacts API (retry up to 3 times if duplicate)
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Primary: UselessFacts API (retry up to 10 times if duplicate)
+    for (let attempt = 0; attempt < 10; attempt++) {
         try {
             const response = await _fetch('https://uselessfacts.jsph.pl/api/v2/facts/random', {
                 signal: AbortSignal.timeout(6000),
@@ -171,13 +351,13 @@ export async function getFunFact(recipientId?: string): Promise<TidbitItem> {
                 if (data?.text) {
                     const factText = decodeHtmlEntities(data.text.trim());
                     const hash = computeTidbitHash('fact', factText);
-                    lastUselessFact = { text: factText, hash };
 
                     if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
                         return {
                             text: `💡 *Fun Factoid*: ${factText}`,
                             hash,
                             category: 'fact',
+                            contentIdentifier: factText,
                         };
                     }
                 }
@@ -188,34 +368,40 @@ export async function getFunFact(recipientId?: string): Promise<TidbitItem> {
         }
     }
 
-    // Web Fallback: Cat Facts API
-    try {
-        const response = await _fetch('https://catfact.ninja/fact', {
-            signal: AbortSignal.timeout(6000),
-            headers: DEFAULT_FETCH_HEADERS,
-        });
-        if (response.ok) {
-            const data = (await response.json()) as { fact?: string };
-            if (data?.fact) {
-                const factText = decodeHtmlEntities(data.fact.trim());
-                const hash = computeTidbitHash('fact', factText);
-                return {
-                    text: `💡 *Fun Factoid*: ${factText}`,
-                    hash,
-                    category: 'fact',
-                };
+    // Web Fallback: Cat Facts API (strict duplicate check)
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            const response = await _fetch('https://catfact.ninja/fact', {
+                signal: AbortSignal.timeout(6000),
+                headers: DEFAULT_FETCH_HEADERS,
+            });
+            if (response.ok) {
+                const data = (await response.json()) as { fact?: string };
+                if (data?.fact) {
+                    const factText = decodeHtmlEntities(data.fact.trim());
+                    const hash = computeTidbitHash('fact', factText);
+                    if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                        return {
+                            text: `💡 *Fun Factoid*: ${factText}`,
+                            hash,
+                            category: 'fact',
+                            contentIdentifier: factText,
+                        };
+                    }
+                }
             }
+        } catch (err) {
+            console.warn(`[TidbitGenerator] Cat Facts attempt ${attempt + 1} failed:`, err);
+            break;
         }
-    } catch (err) {
-        console.warn('[TidbitGenerator] Cat Facts fallback failed:', err);
     }
 
-    if (lastUselessFact) {
-        return {
-            text: `💡 *Fun Factoid*: ${lastUselessFact.text}`,
-            hash: lastUselessFact.hash,
-            category: 'fact',
-        };
+    // AI Fallback: Generate novel verified fact via Gemini
+    try {
+        console.log('[TidbitGenerator] Escalating fun fact to AI generation fallback...');
+        return await generateAiFunFact(recipientId);
+    } catch (aiErr) {
+        console.warn('[TidbitGenerator] AI fun fact generation failed:', aiErr);
     }
 
     throw new Error('All fun fact sources failed');
@@ -223,7 +409,7 @@ export async function getFunFact(recipientId?: string): Promise<TidbitItem> {
 
 /**
  * Category 3: Historical Fact on This Day
- * Sourced dynamically from Wikipedia On This Day API with selected feed fallback.
+ * Sourced dynamically from Wikipedia On This Day API with selected feed and Gemini AI fallbacks.
  */
 export async function getHistoricalFact(recipientId?: string): Promise<TidbitItem> {
     const now = new Date();
@@ -251,25 +437,37 @@ export async function getHistoricalFact(recipientId?: string): Promise<TidbitIte
     };
 
     let events = await fetchWikipediaFeed('events');
-    if (!events || events.length === 0) {
-        events = await fetchWikipediaFeed('selected');
+    let unusedEvents = events && recipientId
+        ? events.filter(e => !isTidbitDuplicate(recipientId, computeTidbitHash('history', `${e.year}:${decodeHtmlEntities(e.text.trim())}`)))
+        : (events || []);
+
+    if (unusedEvents.length === 0) {
+        const selected = await fetchWikipediaFeed('selected');
+        unusedEvents = selected && recipientId
+            ? selected.filter(e => !isTidbitDuplicate(recipientId, computeTidbitHash('history', `${e.year}:${decodeHtmlEntities(e.text.trim())}`)))
+            : (selected || []);
     }
 
-    if (events && events.length > 0) {
-        const unused = recipientId
-            ? events.filter(e => !isTidbitDuplicate(recipientId, computeTidbitHash('history', `${e.year}:${e.text}`)))
-            : events;
-
-        const pool = unused.length > 0 ? unused : events;
-        const chosen = pool[Math.floor(Math.random() * pool.length)];
+    if (unusedEvents.length > 0) {
+        const chosen = unusedEvents[Math.floor(Math.random() * unusedEvents.length)];
         const eventText = decodeHtmlEntities(chosen.text.trim());
-        const hash = computeTidbitHash('history', `${chosen.year}:${chosen.text}`);
+        const contentIdentifier = `${chosen.year}:${eventText}`;
+        const hash = computeTidbitHash('history', contentIdentifier);
 
         return {
             text: `📜 *Historical Fact on This Day*: In ${chosen.year}, ${eventText}`,
             hash,
             category: 'history',
+            contentIdentifier,
         };
+    }
+
+    // AI Fallback: Generate novel historical event via Gemini
+    try {
+        console.log('[TidbitGenerator] Escalating historical fact to AI generation fallback...');
+        return await generateAiHistoricalFact(month, day, recipientId);
+    } catch (aiErr) {
+        console.warn('[TidbitGenerator] AI historical fact generation failed:', aiErr);
     }
 
     throw new Error('All historical fact sources failed');
@@ -277,13 +475,11 @@ export async function getHistoricalFact(recipientId?: string): Promise<TidbitIte
 
 /**
  * Category 4: Recipe Ideas
- * Sourced dynamically from TheMealDB API with live DummyJSON Recipes fallback.
+ * Sourced dynamically from TheMealDB API with live DummyJSON Recipes and Gemini AI fallbacks.
  */
 export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
-    let lastMeal: { name: string; cuisine: string; snippet: string; sourceUrl: string; hash: string } | null = null;
-
-    // Primary: TheMealDB random meal (retry up to 3 times if duplicate)
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Primary: TheMealDB random meal (retry up to 10 times if duplicate)
+    for (let attempt = 0; attempt < 10; attempt++) {
         try {
             const response = await _fetch('https://www.themealdb.com/api/json/v1/1/random.php', {
                 signal: AbortSignal.timeout(6000),
@@ -294,27 +490,27 @@ export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
                 const meal = data?.meals?.[0];
                 if (meal?.strMeal) {
                     const name = decodeHtmlEntities(meal.strMeal.trim());
-                    const cuisine = decodeHtmlEntities(
-                        meal.strArea?.trim() && meal.strArea !== 'Unknown'
-                            ? meal.strArea.trim()
-                            : meal.strCategory?.trim() || 'Delicious'
-                    );
-                    const cleanInstructions = decodeHtmlEntities(
-                        meal.strInstructions?.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim() || ''
-                    );
-                    const snippet = cleanInstructions.length > 140
-                        ? cleanInstructions.slice(0, 140).trim() + '...'
-                        : cleanInstructions;
-                    const sourceUrl = meal.strSource?.trim() || meal.strYoutube?.trim() || `https://www.themealdb.com/meal/${meal.idMeal}`;
                     const hash = computeTidbitHash('recipe', name);
 
-                    lastMeal = { name, cuisine, snippet, sourceUrl, hash };
-
                     if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                        const cuisine = decodeHtmlEntities(
+                            meal.strArea?.trim() && meal.strArea !== 'Unknown'
+                                ? meal.strArea.trim()
+                                : meal.strCategory?.trim() || 'Delicious'
+                        );
+                        const cleanInstructions = decodeHtmlEntities(
+                            meal.strInstructions?.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim() || ''
+                        );
+                        const snippet = cleanInstructions.length > 140
+                            ? cleanInstructions.slice(0, 140).trim() + '...'
+                            : cleanInstructions;
+                        const sourceUrl = meal.strSource?.trim() || meal.strYoutube?.trim() || `https://www.themealdb.com/meal/${meal.idMeal}`;
+
                         return {
                             text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
                             hash,
                             category: 'recipe',
+                            contentIdentifier: name,
                         };
                     }
                 }
@@ -338,33 +534,35 @@ export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
                     ? data.recipes.filter(r => !isTidbitDuplicate(recipientId, computeTidbitHash('recipe', r.name)))
                     : data.recipes;
 
-                const pool = candidates.length > 0 ? candidates : data.recipes;
-                const chosen = pool[Math.floor(Math.random() * pool.length)];
-                const name = decodeHtmlEntities(chosen.name.trim());
-                const cuisine = decodeHtmlEntities(chosen.cuisine?.trim() || 'General');
-                const rawInstructions = Array.isArray(chosen.instructions) ? chosen.instructions.join(' ') : String(chosen.instructions || '');
-                const cleanInstructions = decodeHtmlEntities(rawInstructions.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim());
-                const snippet = cleanInstructions.length > 140 ? cleanInstructions.slice(0, 140).trim() + '...' : cleanInstructions;
-                const sourceUrl = `https://dummyjson.com/recipes/${chosen.id}`;
-                const hash = computeTidbitHash('recipe', name);
+                if (candidates.length > 0) {
+                    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+                    const name = decodeHtmlEntities(chosen.name.trim());
+                    const cuisine = decodeHtmlEntities(chosen.cuisine?.trim() || 'General');
+                    const rawInstructions = Array.isArray(chosen.instructions) ? chosen.instructions.join(' ') : String(chosen.instructions || '');
+                    const cleanInstructions = decodeHtmlEntities(rawInstructions.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim());
+                    const snippet = cleanInstructions.length > 140 ? cleanInstructions.slice(0, 140).trim() + '...' : cleanInstructions;
+                    const sourceUrl = `https://dummyjson.com/recipes/${chosen.id}`;
+                    const hash = computeTidbitHash('recipe', name);
 
-                return {
-                    text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
-                    hash,
-                    category: 'recipe',
-                };
+                    return {
+                        text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
+                        hash,
+                        category: 'recipe',
+                        contentIdentifier: name,
+                    };
+                }
             }
         }
     } catch (err) {
         console.warn('[TidbitGenerator] DummyJSON recipes fallback failed:', err);
     }
 
-    if (lastMeal) {
-        return {
-            text: `🍳 *Recipe Idea*: *${lastMeal.name}* (${lastMeal.cuisine}) - ${lastMeal.snippet} (<${lastMeal.sourceUrl}|Recipe>)`,
-            hash: lastMeal.hash,
-            category: 'recipe',
-        };
+    // AI Fallback: Generate unique world cuisine recipe via Gemini
+    try {
+        console.log('[TidbitGenerator] Escalating recipe idea to AI generation fallback...');
+        return await generateAiRecipeIdea(recipientId);
+    } catch (aiErr) {
+        console.warn('[TidbitGenerator] AI recipe generation failed:', aiErr);
     }
 
     throw new Error('All recipe sources failed');
@@ -372,13 +570,11 @@ export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
 
 /**
  * Category 5: Inspirational Quotes
- * Sourced dynamically from ZenQuotes API with live DummyJSON Quotes fallback.
+ * Sourced dynamically from ZenQuotes API with live DummyJSON Quotes and Gemini AI fallbacks.
  */
 export async function getInspirationalQuote(recipientId?: string): Promise<TidbitItem> {
-    let lastQuote: { quote: string; author: string; hash: string } | null = null;
-
-    // Primary: ZenQuotes API (retry up to 3 times if duplicate)
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Primary: ZenQuotes API (retry up to 10 times if duplicate)
+    for (let attempt = 0; attempt < 10; attempt++) {
         try {
             const response = await _fetch('https://zenquotes.io/api/random', {
                 signal: AbortSignal.timeout(6000),
@@ -391,13 +587,13 @@ export async function getInspirationalQuote(recipientId?: string): Promise<Tidbi
                     const quoteText = decodeHtmlEntities(first.q.trim());
                     const author = decodeHtmlEntities(first.a.trim());
                     const hash = computeTidbitHash('quote', quoteText);
-                    lastQuote = { quote: quoteText, author, hash };
 
                     if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
                         return {
                             text: `💬 *Inspirational Quote*: "${quoteText}" — *${author}*`,
                             hash,
                             category: 'quote',
+                            contentIdentifier: quoteText,
                         };
                     }
                 }
@@ -408,35 +604,42 @@ export async function getInspirationalQuote(recipientId?: string): Promise<Tidbi
         }
     }
 
-    // Web Fallback: DummyJSON Quotes API
-    try {
-        const response = await _fetch('https://dummyjson.com/quotes/random', {
-            signal: AbortSignal.timeout(6000),
-            headers: DEFAULT_FETCH_HEADERS,
-        });
-        if (response.ok) {
-            const data = (await response.json()) as { quote?: string; author?: string };
-            if (data?.quote && data?.author) {
-                const quoteText = decodeHtmlEntities(data.quote.trim());
-                const author = decodeHtmlEntities(data.author.trim());
-                const hash = computeTidbitHash('quote', quoteText);
-                return {
-                    text: `💬 *Inspirational Quote*: "${quoteText}" — *${author}*`,
-                    hash,
-                    category: 'quote',
-                };
+    // Web Fallback: DummyJSON Quotes API (strict duplicate check)
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            const response = await _fetch('https://dummyjson.com/quotes/random', {
+                signal: AbortSignal.timeout(6000),
+                headers: DEFAULT_FETCH_HEADERS,
+            });
+            if (response.ok) {
+                const data = (await response.json()) as { quote?: string; author?: string };
+                if (data?.quote && data?.author) {
+                    const quoteText = decodeHtmlEntities(data.quote.trim());
+                    const author = decodeHtmlEntities(data.author.trim());
+                    const hash = computeTidbitHash('quote', quoteText);
+
+                    if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                        return {
+                            text: `💬 *Inspirational Quote*: "${quoteText}" — *${author}*`,
+                            hash,
+                            category: 'quote',
+                            contentIdentifier: quoteText,
+                        };
+                    }
+                }
             }
+        } catch (err) {
+            console.warn(`[TidbitGenerator] DummyJSON quotes fallback failed:`, err);
+            break;
         }
-    } catch (err) {
-        console.warn('[TidbitGenerator] DummyJSON quotes fallback failed:', err);
     }
 
-    if (lastQuote) {
-        return {
-            text: `💬 *Inspirational Quote*: "${lastQuote.quote}" — *${lastQuote.author}*`,
-            hash: lastQuote.hash,
-            category: 'quote',
-        };
+    // AI Fallback: Generate inspiring quote via Gemini
+    try {
+        console.log('[TidbitGenerator] Escalating inspirational quote to AI generation fallback...');
+        return await generateAiQuote(recipientId);
+    } catch (aiErr) {
+        console.warn('[TidbitGenerator] AI quote generation failed:', aiErr);
     }
 
     throw new Error('All inspirational quote sources failed');
@@ -471,7 +674,11 @@ export async function generateTidbits(n: number, recipientId?: string): Promise<
     if (recipientId && results.length > 0) {
         recordDeliveredTidbits(
             recipientId,
-            results.map(r => ({ category: r.category, itemHash: r.hash }))
+            results.map(r => ({
+                category: r.category,
+                itemHash: r.hash,
+                contentIdentifier: r.contentIdentifier,
+            }))
         );
     }
 
