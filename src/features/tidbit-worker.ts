@@ -19,8 +19,8 @@
 import { App } from '@slack/bolt';
 import * as cron from 'node-cron';
 import { config } from '../config';
-import { getAllSubscriptions, updateLastSentDate } from './tidbit-db';
-import { generateTidbits } from './tidbit-generator';
+import { getAllSubscriptions, seedTidbitHistory, updateLastSentDate } from './tidbit-db';
+import { generateTidbits, parseTidbitsFromSlackMessage } from './tidbit-generator';
 
 /**
  * Computes the local date (YYYY-MM-DD) and local hour (0-23) for a given IANA timezone.
@@ -60,6 +60,67 @@ export function getUserLocalDateTime(timezoneStr: string, dateObj: Date = new Da
 }
 
 /**
+ * Self-healing history sync: inspects recent Slack channel history,
+ * extracts previously delivered tidbit bullets, and seeds them into tidbit_history.
+ * This prevents repeated tidbits across restarts, migrations, or database recreations.
+ */
+export async function syncChannelTidbitHistory(app: App, channelId: string): Promise<void> {
+    try {
+        if (!app?.client?.conversations?.history) {
+            return;
+        }
+
+        console.log(`[TidbitWorker] Syncing channel tidbit history for ${channelId}...`);
+        const result = await app.client.conversations.history({
+            channel: channelId,
+            limit: 100,
+        });
+
+        if (!result.messages || result.messages.length === 0) {
+            console.log(`[TidbitWorker] No messages found in channel ${channelId} to sync.`);
+            return;
+        }
+
+        const tidbitMessages = result.messages.filter(msg =>
+            msg.text && msg.text.includes("*Gembo's Tidbits of the Day*")
+        );
+
+        console.log(`[TidbitWorker] Found ${tidbitMessages.length} tidbit message(s) in channel ${channelId}`);
+
+        const allItems: { category: string; itemHash: string; deliveredAt?: string; contentIdentifier?: string }[] = [];
+
+        for (const msg of tidbitMessages) {
+            if (!msg.text) continue;
+            const parsed = parseTidbitsFromSlackMessage(msg.text);
+
+            let deliveredAt: string | undefined = undefined;
+            if (msg.ts) {
+                const tsNum = parseFloat(msg.ts);
+                if (!isNaN(tsNum)) {
+                    deliveredAt = new Date(tsNum * 1000).toISOString().replace('T', ' ').replace('Z', '').split('.')[0];
+                }
+            }
+
+            for (const item of parsed) {
+                allItems.push({
+                    category: item.category,
+                    itemHash: item.itemHash,
+                    contentIdentifier: item.contentIdentifier,
+                    deliveredAt,
+                });
+            }
+        }
+
+        if (allItems.length > 0) {
+            const seededCount = seedTidbitHistory(channelId, allItems);
+            console.log(`[TidbitWorker] Successfully seeded ${seededCount} historical tidbit(s) from channel ${channelId}`);
+        }
+    } catch (error) {
+        console.warn(`[TidbitWorker] Failed to sync channel history for ${channelId}:`, error);
+    }
+}
+
+/**
  * Sends n daily tidbits to a Slack channel.
  */
 export async function sendChannelTidbits(
@@ -68,6 +129,9 @@ export async function sendChannelTidbits(
     n: number = 5
 ): Promise<void> {
     try {
+        // Sync channel history before generation to ensure cold starts are healed
+        await syncChannelTidbitHistory(app, channelId);
+
         console.log(`[TidbitWorker] Generating ${n} tidbits for channel ${channelId}...`);
         const tidbitText = await generateTidbits(n, channelId);
         await app.client.chat.postMessage({
@@ -91,6 +155,11 @@ export function startTidbitWorker(app: App): void {
     const channelId = config.slack.tidbitChannelId || 'C0BT3T88PME';
     const schedule = config.tidbitSchedule || '0 8 * * *';
     console.log(`[TidbitWorker] Scheduling daily tidbits for channel ${channelId} with schedule "${schedule}" (America/New_York)...`);
+
+    // Self-healing: sync channel history on worker boot
+    syncChannelTidbitHistory(app, channelId).catch(err => {
+        console.warn('[TidbitWorker] Startup channel history sync failed:', err);
+    });
 
     cron.schedule(schedule, async () => {
         await sendChannelTidbits(app, channelId, 5);
