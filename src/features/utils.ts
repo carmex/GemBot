@@ -146,6 +146,66 @@ export async function formatQuote(ticker: string, displayName?: string): Promise
     return result.text;
 }
 
+/**
+ * Checks whether an article is blacklisted from Google News by source or URL.
+ */
+export function isGoogleNewsArticle(article: {source?: string; url?: string} | null | undefined): boolean {
+    if (!article) return false;
+
+    // Check source name
+    if (article.source && typeof article.source === 'string') {
+        if (article.source.trim().toLowerCase() === 'google news') {
+            return true;
+        }
+    }
+
+    // Check URL
+    if (article.url && typeof article.url === 'string') {
+        const lowerUrl = article.url.trim().toLowerCase();
+
+        // Defensive fallback: check if raw url string contains news.google.com or google.com/news
+        if (lowerUrl.includes('news.google.com') || lowerUrl.includes('google.com/news')) {
+            return true;
+        }
+
+        try {
+            const parsedUrl = new URL(article.url);
+            const hostname = parsedUrl.hostname.toLowerCase();
+
+            if (
+                hostname === 'news.google.com' ||
+                hostname.endsWith('.news.google.com') ||
+                hostname === 'google.com' ||
+                hostname.endsWith('.google.com')
+            ) {
+                return true;
+            }
+        } catch {
+            // Safely handle malformed URLs without throwing exceptions
+            if (lowerUrl.includes('news.google.com') || lowerUrl.includes('google.com/news')) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Alias for isGoogleNewsArticle to identify blacklisted articles.
+ */
+export const isBlacklistedArticle = isGoogleNewsArticle;
+
+/**
+ * Filters out Google News articles from morning greeting news candidates.
+ */
+export function filterMorningGreetingArticles<T extends {source?: string; url?: string}>(articles: T[]): T[] {
+    if (!Array.isArray(articles)) {
+        return [];
+    }
+    return articles.filter(article => !isGoogleNewsArticle(article));
+}
+
 // Function to send the morning greeting
 export async function sendMorningGreeting(app: App, channelId: string) {
     try {
@@ -154,14 +214,14 @@ export async function sendMorningGreeting(app: App, channelId: string) {
         if (config.finnhubApiKey) {
             const articles = await fetchStockNews();
             if (articles && articles.length > 0) {
-                const filteredArticles = articles.filter(
-                    (article: {source: string}) => article.source.toLowerCase() !== 'google news'
-                );
-                const formattedArticles = filteredArticles
-                    .slice(0, 5)
-                    .map((article: {url: string}) => `<${article.url}|.>`)
-                    .join(' ');
-                text += `\n\nHere are the latest general headlines: ${formattedArticles}`;
+                const filteredArticles = filterMorningGreetingArticles(articles);
+                if (filteredArticles.length > 0) {
+                    const formattedArticles = filteredArticles
+                        .slice(0, 5)
+                        .map((article: {url: string}) => `<${article.url}|.>`)
+                        .join(' ');
+                    text += `\n\nHere are the latest general headlines: ${formattedArticles}`;
+                }
             }
         }
 
