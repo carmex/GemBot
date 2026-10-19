@@ -32,7 +32,7 @@ import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlac
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, getCryptoCandles, generateChart } from '../features/stock-charts';
 import { fetchUrbanDefinitions } from '../features/urban-dictionary';
-import { fetchDictionaryEntry, generateDictionaryImagePrompt } from '../features/dictionary';
+import { fetchDictionaryEntry, generateDictionaryImagePrompt, formatDictionaryEntry } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
 import { upsertSubscription, removeSubscription, updateLastSentDate } from '../features/tidbit-db';
 import { generateTidbits } from '../features/tidbit-generator';
@@ -802,27 +802,11 @@ ${formatInventory(character.inventory)}
                 return;
             }
 
-            let responseText = `*Dictionary: ${entry.word}*\n\n`;
-
-            const pronStr = entry.pronunciation && entry.pronunciation !== 'N/A'
-                ? `/${entry.pronunciation}/`
-                : 'N/A';
-
-            responseText += `*Pronunciation:* ${pronStr}\n`;
-            responseText += `*Etymology:* ${entry.etymology}\n`;
-            responseText += `*Demonym:* ${entry.demonym}\n\n`;
-            responseText += `*Definitions:*\n`;
-
-            for (const def of entry.definitions) {
-                responseText += `• *(${def.partOfSpeech})* ${def.definition}\n`;
-                if (def.example) {
-                    responseText += `  _Example: "${def.example}"_\n`;
-                }
-            }
+            const responseText = formatDictionaryEntry(entry);
 
             await client.chat.postMessage({
                 channel: message.channel,
-                text: responseText.trim(),
+                text: responseText,
                 thread_ts: threadTs,
             });
         } catch (error) {
@@ -854,27 +838,11 @@ ${formatInventory(character.inventory)}
                 return;
             }
 
-            let responseText = `*Dictionary: ${entry.word}*\n\n`;
-
-            const pronStr = entry.pronunciation && entry.pronunciation !== 'N/A'
-                ? `/${entry.pronunciation}/`
-                : 'N/A';
-
-            responseText += `*Pronunciation:* ${pronStr}\n`;
-            responseText += `*Etymology:* ${entry.etymology}\n`;
-            responseText += `*Demonym:* ${entry.demonym}\n\n`;
-            responseText += `*Definitions:*\n`;
-
-            for (const def of entry.definitions) {
-                responseText += `• *(${def.partOfSpeech})* ${def.definition}\n`;
-                if (def.example) {
-                    responseText += `  _Example: "${def.example}"_\n`;
-                }
-            }
+            const responseText = formatDictionaryEntry(entry);
 
             await client.chat.postMessage({
                 channel: message.channel,
-                text: responseText.trim(),
+                text: responseText,
                 thread_ts: threadTs,
             });
 

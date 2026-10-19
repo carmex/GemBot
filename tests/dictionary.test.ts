@@ -2,7 +2,7 @@
  * GemBot: An intelligent Slack assistant with AI capabilities.
  */
 
-import { fetchDictionaryEntry, generateDictionaryImagePrompt, DictionaryEntry } from '../src/features/dictionary';
+import { fetchDictionaryEntry, generateDictionaryImagePrompt, DictionaryEntry, formatDictionaryEntry } from '../src/features/dictionary';
 
 async function runTests() {
     console.log("Running Dictionary Tests...\n");
@@ -156,6 +156,98 @@ async function runTests() {
     }
 
     console.log("PASSED: Prompt negative constraints verification\n");
+
+    // 8. Testing formatDictionaryEntry
+    console.log("8. Testing formatDictionaryEntry...");
+
+    // Test 8.1: Multiple Definitions Test
+    const multiEntry: DictionaryEntry = {
+        word: "testword",
+        pronunciation: "test-wurd",
+        etymology: "From Old English",
+        demonym: "Testian",
+        definitions: [
+            {
+                partOfSpeech: "noun",
+                definition: "An examination or trial.",
+                example: "She passed the difficult test."
+            },
+            {
+                partOfSpeech: "verb",
+                definition: "To take measures in order to discover quality or effectiveness.",
+                example: "They test the software thoroughly."
+            }
+        ]
+    };
+
+    const multiFormatted = formatDictionaryEntry(multiEntry);
+
+    if (!multiFormatted.includes("1. *(noun)* An examination or trial.")) {
+        console.error("FAILED: Missing or incorrect first definition formatting (1. *(noun)* ...)");
+        process.exit(1);
+    }
+    if (!multiFormatted.includes('  _Example: "She passed the difficult test."_')) {
+        console.error("FAILED: Missing or incorrect example formatting for definition 1");
+        process.exit(1);
+    }
+    if (!multiFormatted.includes("2. *(verb)* To take measures in order to discover quality or effectiveness.")) {
+        console.error("FAILED: Missing or incorrect second definition formatting (2. *(verb)* ...)");
+        process.exit(1);
+    }
+    if (!multiFormatted.includes('  _Example: "They test the software thoroughly."_')) {
+        console.error("FAILED: Missing or incorrect example formatting for definition 2");
+        process.exit(1);
+    }
+
+    // Test 8.2: Bullet Check
+    if (multiFormatted.includes("•")) {
+        console.error("FAILED: Formatted output contains bullet character ('•')");
+        process.exit(1);
+    }
+
+    // Verify pronunciation, etymology, demonym headers
+    if (!multiFormatted.includes("*Dictionary: testword*") ||
+        !multiFormatted.includes("*Pronunciation:* /test-wurd/") ||
+        !multiFormatted.includes("*Etymology:* From Old English") ||
+        !multiFormatted.includes("*Demonym:* Testian") ||
+        !multiFormatted.includes("*Definitions:*")) {
+        console.error("FAILED: Missing header, pronunciation, etymology, demonym, or definitions label");
+        process.exit(1);
+    }
+
+    // Test 8.3: Single Definition Test
+    const singleEntry: DictionaryEntry = {
+        word: "singleword",
+        pronunciation: "N/A",
+        etymology: "N/A",
+        demonym: "N/A",
+        definitions: [
+            {
+                partOfSpeech: "adjective",
+                definition: "Only one; not one of several."
+            }
+        ]
+    };
+
+    const singleFormatted = formatDictionaryEntry(singleEntry);
+    if (!singleFormatted.includes("1. *(adjective)* Only one; not one of several.")) {
+        console.error("FAILED: Missing or incorrect single definition formatting (1. *(adjective)* ...)");
+        process.exit(1);
+    }
+    if (singleFormatted.includes("2.")) {
+        console.error("FAILED: Single definition entry should not have a second item");
+        process.exit(1);
+    }
+    if (singleFormatted.includes("•")) {
+        console.error("FAILED: Single definition formatted output contains bullet character ('•')");
+        process.exit(1);
+    }
+    if (!singleFormatted.includes("*Pronunciation:* N/A")) {
+        console.error("FAILED: Pronunciation N/A formatting failed");
+        process.exit(1);
+    }
+
+    console.log("PASSED: formatDictionaryEntry verification\n");
 
     console.log("ALL DICTIONARY TESTS PASSED SUCCESSFULLY!");
 }

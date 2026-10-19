@@ -222,3 +222,29 @@ Strict Prompting Rules:
     return fallbackPrompt;
 }
 
+/**
+ * Formats a DictionaryEntry object into a Slack-friendly markdown string with numbered definitions.
+ */
+export function formatDictionaryEntry(entry: DictionaryEntry): string {
+    let responseText = `*Dictionary: ${entry.word}*\n\n`;
+
+    const pronStr = entry.pronunciation && entry.pronunciation !== 'N/A'
+        ? `/${entry.pronunciation}/`
+        : 'N/A';
+
+    responseText += `*Pronunciation:* ${pronStr}\n`;
+    responseText += `*Etymology:* ${entry.etymology}\n`;
+    responseText += `*Demonym:* ${entry.demonym}\n\n`;
+    responseText += `*Definitions:*\n`;
+
+    const defs = entry.definitions || [];
+    defs.forEach((def, index) => {
+        responseText += `${index + 1}. *(${def.partOfSpeech})* ${def.definition}\n`;
+        if (def.example) {
+            responseText += `  _Example: "${def.example}"_\n`;
+        }
+    });
+
+    return responseText.trim();
+}
+
