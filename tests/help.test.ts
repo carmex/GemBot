@@ -113,6 +113,7 @@ function runTests() {
         '!w <search term>',
         '!ud <term>',
         '!urban <term>',
+        '!up <term>',
         '!dict <word>',
         '!dictionary <word>',
         '!dp <word>',
