@@ -1,5 +1,7 @@
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
+import { createProvider } from './llm/provider-factory';
+import { markdownToSlack } from './utils';
 
 export interface UrbanDefinition {
     word: string;
@@ -102,4 +104,77 @@ export async function fetchUrbanDefinitions(term: string): Promise<UrbanDefiniti
         console.error('Error fetching Urban Dictionary definitions:', error);
         throw error;
     }
+}
+
+/**
+ * Formats Urban Dictionary definitions into a Slack-friendly markdown string.
+ */
+export function formatUrbanDefinitions(searchTerm: string, definitions: UrbanDefinition[]): string {
+    let responseText = `*Urban Dictionary: ${searchTerm}*\n\n`;
+
+    for (const item of definitions) {
+        // Remove Urban Dictionary cross-reference brackets [word] -> word
+        const cleanDefinition = item.definition.replace(/\[/g, '').replace(/\]/g, '');
+        const cleanExample = item.example.replace(/\[/g, '').replace(/\]/g, '');
+
+        responseText += `*${item.word}*\n`;
+        responseText += `${markdownToSlack(cleanDefinition)}\n`;
+        if (cleanExample) {
+            responseText += `_Example: ${markdownToSlack(cleanExample)}_\n`;
+        }
+        responseText += `👍 ${item.thumbs_up}  👎 ${item.thumbs_down}\n\n`;
+    }
+
+    return responseText.trim();
+}
+
+/**
+ * Generates an image prompt depicting a visual scene based on an Urban Dictionary entry.
+ * Uses LLM prompt engineering to focus on living scenes and prevent depicting the target word itself or printing the literal definition.
+ */
+export async function generateUrbanImagePrompt(searchTerm: string, definitions: UrbanDefinition[]): Promise<string> {
+    const topDef = definitions[0];
+    const primaryWord = topDef?.word || searchTerm;
+    const primaryDefinition = topDef?.definition
+        ? topDef.definition.replace(/\[/g, '').replace(/\]/g, '').trim()
+        : primaryWord;
+
+    const fallbackPrompt = `A vivid visual scene portraying: ${primaryDefinition}, artistic style, dynamic environment, do not include the word itself or print the literal definition in the image`;
+
+    try {
+        const provider = createProvider();
+        const definitionsStr = definitions.slice(0, 3).map((d, index) => {
+            const cleanDef = d.definition.replace(/\[/g, '').replace(/\]/g, '').trim();
+            const cleanEx = d.example ? ` (Example: ${d.example.replace(/\[/g, '').replace(/\]/g, '').trim()})` : '';
+            return `${index + 1}. ${cleanDef}${cleanEx}`;
+        }).join('\n');
+
+        const prompt = `You are an expert prompt engineer for AI image generation.
+Generate a detailed image prompt depicting a living visual scene that demonstrates the slang or colloquial meaning of the term "${primaryWord}".
+
+Urban Dictionary details:
+- Term: ${primaryWord}
+- Top Definitions & Examples:
+${definitionsStr}
+
+Strict Prompting Rules:
+1. NEGATIVE CONSTRAINTS: ABSOLUTELY NO including the target word itself, written text of the word, or printing the literal definition in the image description.
+2. POSITIVE CONSTRAINTS: Focus entirely on an action, environment, or characters actively demonstrating the concept or situation in a living, dynamic scene.
+3. ARTISTIC FREEDOM: Feel free to use artistic license (cinematic, humor, surrealism, painterly, vibrant digital art, or realistic).
+4. OUTPUT FORMAT: Output ONLY the raw image prompt text. Do not include quotes, intro/outro text, labels, or markdown formatting.`;
+
+        const res = await provider.chat(prompt, { temperature: 0.7 });
+        if (res && res.text) {
+            let cleaned = res.text.trim();
+            cleaned = cleaned.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+            cleaned = cleaned.replace(/^["']|["']$/g, '').trim();
+            if (cleaned.length > 0) {
+                return cleaned;
+            }
+        }
+    } catch (err) {
+        console.warn(`Failed to generate LLM urban dictionary image prompt for "${primaryWord}":`, (err as Error).message);
+    }
+
+    return fallbackPrompt;
 }

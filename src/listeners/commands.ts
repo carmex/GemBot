@@ -31,7 +31,7 @@ import Roll from 'roll';
 import {formatQuote, getColoredTileEmoji, buildUserPrompt, sleep, markdownToSlack} from "../features/utils";
 import {sendMorningGreeting} from '../features/utils';
 import { getStockCandles, getCryptoCandles, generateChart } from '../features/stock-charts';
-import { fetchUrbanDefinitions } from '../features/urban-dictionary';
+import { fetchUrbanDefinitions, formatUrbanDefinitions, generateUrbanImagePrompt } from '../features/urban-dictionary';
 import { fetchDictionaryEntry, generateDictionaryImagePrompt, formatDictionaryEntry } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
 import { upsertSubscription, removeSubscription, updateLastSentDate } from '../features/tidbit-db';
@@ -753,28 +753,117 @@ ${formatInventory(character.inventory)}
                 return;
             }
 
-            let responseText = `*Urban Dictionary: ${searchTerm}*\n\n`;
-
-            for (const item of definitions) {
-                // Remove Urban Dictionary cross-reference brackets [word] -> word
-                const cleanDefinition = item.definition.replace(/\[/g, '').replace(/\]/g, '');
-                const cleanExample = item.example.replace(/\[/g, '').replace(/\]/g, '');
-
-                responseText += `*${item.word}*\n`;
-                responseText += `${markdownToSlack(cleanDefinition)}\n`;
-                if (cleanExample) {
-                    responseText += `_Example: ${markdownToSlack(cleanExample)}_\n`;
-                }
-                responseText += `👍 ${item.thumbs_up}  👎 ${item.thumbs_down}\n\n`;
-            }
+            const responseText = formatUrbanDefinitions(searchTerm, definitions);
 
             await client.chat.postMessage({
                 channel: message.channel,
-                text: responseText.trim(),
+                text: responseText,
                 thread_ts: threadTs,
             });
         } catch (error) {
             console.error('Error in !ud handler:', error);
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: `Sorry, I couldn't fetch the Urban Dictionary definition for "${searchTerm}".`,
+                thread_ts: threadTs,
+            });
+        }
+    });
+
+    app.message(/^!up\s+(.+)/i, async ({message, context, client}) => {
+        if (!('user' in message) || !message.user) {
+            return;
+        }
+        const searchTerm = context.matches[1].trim();
+        const threadTs = 'thread_ts' in message ? message.thread_ts : undefined;
+
+        try {
+            const definitions = await fetchUrbanDefinitions(searchTerm);
+
+            if (definitions.length === 0) {
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: `No definitions found for *${searchTerm}* on Urban Dictionary.`,
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            const responseText = formatUrbanDefinitions(searchTerm, definitions);
+
+            await client.chat.postMessage({
+                channel: message.channel,
+                text: responseText,
+                thread_ts: threadTs,
+            });
+
+            if (!config.vertex.projectId) {
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: 'The image generation feature is not configured. A Google Cloud Project ID is required for Vertex AI.',
+                    thread_ts: threadTs,
+                });
+                return;
+            }
+
+            const displayWord = definitions[0]?.word || searchTerm;
+
+            const workingMessage = await client.chat.postMessage({
+                channel: message.channel,
+                text: `Generating an image for *${displayWord}*...`,
+                thread_ts: threadTs,
+            });
+
+            try {
+                const imagePrompt = await generateUrbanImagePrompt(searchTerm, definitions);
+                const result = await aiHandler.generateImage(imagePrompt);
+                if (workingMessage.ts) {
+                    await client.chat.delete({
+                        channel: message.channel,
+                        ts: workingMessage.ts,
+                    });
+                }
+                if (result.imageBase64) {
+                    await client.files.uploadV2({
+                        channel_id: message.channel,
+                        initial_comment: `Here is an image related to *${displayWord}*:`,
+                        file: Buffer.from(result.imageBase64, 'base64'),
+                        filename: `${displayWord}.png`,
+                        thread_ts: threadTs,
+                    });
+                    trackImageInvocation(message.user);
+                } else if (result.filteredReason) {
+                    await client.chat.postMessage({
+                        channel: message.channel,
+                        text: `Sorry, I can't generate that image. It was blocked for the following reason: *${result.filteredReason}*`,
+                        thread_ts: threadTs,
+                    });
+                } else {
+                    await client.chat.postMessage({
+                        channel: message.channel,
+                        text: `Sorry, I couldn't generate an image for an unknown reason.`,
+                        thread_ts: threadTs,
+                    });
+                }
+            } catch (imageError) {
+                console.error(`Error generating image for !up command "${displayWord}":`, imageError);
+                if (workingMessage.ts) {
+                    try {
+                        await client.chat.delete({
+                            channel: message.channel,
+                            ts: workingMessage.ts,
+                        });
+                    } catch {}
+                }
+                const errorMessage = (imageError as any)?.apiError?.message || (imageError as Error).message;
+                await client.chat.postMessage({
+                    channel: message.channel,
+                    text: `An error occurred while generating the image: ${errorMessage}`,
+                    thread_ts: threadTs,
+                });
+            }
+        } catch (error) {
+            console.error(`Error in !up handler for "${searchTerm}":`, error);
             await client.chat.postMessage({
                 channel: message.channel,
                 text: `Sorry, I couldn't fetch the Urban Dictionary definition for "${searchTerm}".`,
@@ -1028,6 +1117,7 @@ ${formatInventory(character.inventory)}
 • \`!gis mode <upload|url>\`: Switch GIS mode between uploading image files (only if rated 0 for safety) or posting URLs.
 • \`!w <search term>\`: Look up a Wikipedia entry for the given term.
 • \`!ud <term>\` or \`!urban <term>\`: Get definitions from Urban Dictionary.
+• \`!up <term>\`: Get definitions from Urban Dictionary, and generate a related image.
 • \`!dict <word>\` or \`!dictionary <word>\`: Look up definition, pronunciation, etymology, and demonym for a word.
 • \`!dp <word>\`: Look up definition, pronunciation, etymology, and demonym for a word, and generate a related image.
 • \`!pollen <zip_code>\`: Fetches 30-day pollen history and generates a chart.
