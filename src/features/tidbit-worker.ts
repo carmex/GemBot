@@ -20,7 +20,7 @@ import { App } from '@slack/bolt';
 import * as cron from 'node-cron';
 import { config } from '../config';
 import { getAllSubscriptions, seedTidbitHistory, updateLastSentDate } from './tidbit-db';
-import { generateTidbits, parseTidbitsFromSlackMessage } from './tidbit-generator';
+import { generateTidbitsWithBlocks, parseTidbitsFromSlackMessage } from './tidbit-generator';
 
 /**
  * Computes the local date (YYYY-MM-DD) and local hour (0-23) for a given IANA timezone.
@@ -133,11 +133,27 @@ export async function sendChannelTidbits(
         await syncChannelTidbitHistory(app, channelId);
 
         console.log(`[TidbitWorker] Generating ${n} tidbits for channel ${channelId}...`);
-        const tidbitText = await generateTidbits(n, channelId);
-        await app.client.chat.postMessage({
-            channel: channelId,
-            text: tidbitText,
-        });
+        const { text: tidbitText, blocks } = await generateTidbitsWithBlocks(n, channelId);
+        if (blocks && blocks.length > 0) {
+            try {
+                await app.client.chat.postMessage({
+                    channel: channelId,
+                    text: tidbitText,
+                    blocks,
+                });
+            } catch (blockError) {
+                console.warn(`[TidbitWorker] Failed to send tidbits with blocks to channel ${channelId}, retrying with text only:`, blockError);
+                await app.client.chat.postMessage({
+                    channel: channelId,
+                    text: tidbitText,
+                });
+            }
+        } else {
+            await app.client.chat.postMessage({
+                channel: channelId,
+                text: tidbitText,
+            });
+        }
         console.log(`[TidbitWorker] Successfully sent daily tidbits to channel ${channelId}`);
     } catch (error) {
         console.error(`[TidbitWorker] Error sending tidbits to channel ${channelId}:`, error);
@@ -181,12 +197,28 @@ export function startTidbitWorker(app: App): void {
                     // Trigger at 8:00 AM local time if not already sent today
                     if (localHour === 8 && sub.last_sent_date !== localDateString) {
                         console.log(`[TidbitWorker] Generating and sending ${sub.n} tidbit(s) to user ${sub.user_id} (${sub.timezone})...`);
-                        const tidbitText = await generateTidbits(sub.n, sub.user_id);
+                        const { text: tidbitText, blocks } = await generateTidbitsWithBlocks(sub.n, sub.user_id);
 
-                        await app.client.chat.postMessage({
-                            channel: sub.user_id,
-                            text: tidbitText,
-                        });
+                        if (blocks && blocks.length > 0) {
+                            try {
+                                await app.client.chat.postMessage({
+                                    channel: sub.user_id,
+                                    text: tidbitText,
+                                    blocks,
+                                });
+                            } catch (blockError) {
+                                console.warn(`[TidbitWorker] Failed to send tidbits with blocks to user ${sub.user_id}, retrying with text only:`, blockError);
+                                await app.client.chat.postMessage({
+                                    channel: sub.user_id,
+                                    text: tidbitText,
+                                });
+                            }
+                        } else {
+                            await app.client.chat.postMessage({
+                                channel: sub.user_id,
+                                text: tidbitText,
+                            });
+                        }
 
                         updateLastSentDate(sub.user_id, localDateString);
                         console.log(`[TidbitWorker] Successfully sent tidbits to user ${sub.user_id}`);
