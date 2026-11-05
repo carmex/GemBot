@@ -35,7 +35,7 @@ import { fetchUrbanDefinitions, formatUrbanDefinitions, generateUrbanImagePrompt
 import { fetchDictionaryEntry, generateDictionaryImagePrompt, formatDictionaryEntry } from '../features/dictionary';
 import { userManager } from '../features/user-manager';
 import { upsertSubscription, removeSubscription, updateLastSentDate } from '../features/tidbit-db';
-import { generateTidbits } from '../features/tidbit-generator';
+import { generateTidbitsWithBlocks } from '../features/tidbit-generator';
 import { getUserLocalDateTime } from '../features/tidbit-worker';
 import { getGisMode, setGisMode, handleGisModeCommand } from '../commands/gis';
 
@@ -1042,11 +1042,27 @@ ${formatInventory(character.inventory)}
             });
 
             try {
-                const tidbitText = await generateTidbits(n, message.user);
-                await client.chat.postMessage({
-                    channel: message.user,
-                    text: tidbitText,
-                });
+                const { text: tidbitText, blocks } = await generateTidbitsWithBlocks(n, message.user);
+                if (blocks && blocks.length > 0) {
+                    try {
+                        await client.chat.postMessage({
+                            channel: message.user,
+                            text: tidbitText,
+                            blocks,
+                        });
+                    } catch (blockError) {
+                        console.warn(`Failed to send immediate tidbits with blocks to user ${message.user}, retrying with text only:`, blockError);
+                        await client.chat.postMessage({
+                            channel: message.user,
+                            text: tidbitText,
+                        });
+                    }
+                } else {
+                    await client.chat.postMessage({
+                        channel: message.user,
+                        text: tidbitText,
+                    });
+                }
                 const { localDateString } = getUserLocalDateTime(timezone);
                 updateLastSentDate(message.user, localDateString);
             } catch (deliveryError) {

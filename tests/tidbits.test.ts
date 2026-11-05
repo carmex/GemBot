@@ -27,6 +27,8 @@ import * as cron from 'node-cron';
 import { config } from '../src/config';
 import {
     generateTidbits,
+    generateTidbitsWithBlocks,
+    extractImageFromWebpage,
     getTopNews,
     getFunFact,
     getHistoricalFact,
@@ -705,6 +707,184 @@ async function runTidbitsTests() {
 
         assert(simulationDuplicates === 0, `Across 10 consecutive delivery runs (50 items), exactly 0 duplicate items were generated (found ${simulationDuplicates})`);
         clearTidbitHistory(simulationChannel);
+
+
+        // --- 16. Recipe Picture Extraction & Slack Block Kit Delivery Tests ---
+        console.log("\n16. Testing Recipe Picture Extraction & Slack Block Kit Delivery...");
+
+        // A. extractImageFromWebpage: og:image, twitter:image, JSON-LD Recipe image, relative URLs, and error resilience
+        _setFetch(async (url: string) => {
+            if (url === 'https://example.com/recipe-og') {
+                return {
+                    ok: true,
+                    text: async () => `<html><head><meta property="og:image" content="https://cdn.example.com/og-dish.jpg"></head></html>`
+                };
+            }
+            if (url === 'https://example.com/recipe-twitter-relative') {
+                return {
+                    ok: true,
+                    text: async () => `<html><head><meta content="/images/twitter-dish.png" name="twitter:image"></head></html>`
+                };
+            }
+            if (url === 'https://example.com/recipes/jsonld') {
+                return {
+                    ok: true,
+                    text: async () => `<html><head><script type="application/ld+json">${JSON.stringify({
+                        "@context": "https://schema.org",
+                        "@graph": [
+                            { "@type": "WebPage" },
+                            {
+                                "@type": "Recipe",
+                                "name": "Test Ramen",
+                                "image": [{ "@type": "ImageObject", "url": "/assets/ramen.jpg" }]
+                            }
+                        ]
+                    })}</script></head></html>`
+                };
+            }
+            if (url === 'https://example.com/timeout') {
+                throw new Error('Request timed out');
+            }
+            return { ok: false, text: async () => '' };
+        });
+
+        const ogImg = await extractImageFromWebpage('https://example.com/recipe-og');
+        assert(ogImg === 'https://cdn.example.com/og-dish.jpg', "extractImageFromWebpage extracts og:image URL");
+
+        const twitterImg = await extractImageFromWebpage('https://example.com/recipe-twitter-relative');
+        assert(twitterImg === 'https://example.com/images/twitter-dish.png', "extractImageFromWebpage extracts twitter:image and resolves relative URL");
+
+        const jsonLdImg = await extractImageFromWebpage('https://example.com/recipes/jsonld');
+        assert(jsonLdImg === 'https://example.com/assets/ramen.jpg', "extractImageFromWebpage extracts JSON-LD Recipe image and resolves relative URL");
+
+        const errImg = await extractImageFromWebpage('https://example.com/timeout');
+        assert(errImg === undefined, "extractImageFromWebpage returns undefined on network/timeout error");
+
+        // B. getRecipeIdea returning imageUrl from webpage og:image, TheMealDB strMealThumb, and DummyJSON image
+        _setFetch(async (url: string) => {
+            if (url.includes('themealdb.com/api/json/v1/1/random.php')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        meals: [{
+                            idMeal: '52772',
+                            strMeal: 'Teriyaki Chicken Casserole',
+                            strArea: 'Japanese',
+                            strInstructions: 'Bake chicken with teriyaki sauce.',
+                            strSource: 'https://example.com/teriyaki-source',
+                            strMealThumb: 'https://www.themealdb.com/images/media/meals/wvpsxx1468256321.jpg'
+                        }]
+                    })
+                };
+            }
+            if (url === 'https://example.com/teriyaki-source') {
+                return {
+                    ok: true,
+                    text: async () => `<html><head><meta property="og:image" content="https://example.com/scraped-teriyaki.jpg"></head></html>`
+                };
+            }
+            return { ok: false };
+        });
+
+        const recipeFromOg = await getRecipeIdea();
+        assert(recipeFromOg.imageUrl === 'https://example.com/scraped-teriyaki.jpg', "getRecipeIdea prioritizes scraped og:image from meal.strSource");
+
+        // Fallback to TheMealDB strMealThumb when strSource has no og:image or fails
+        _setFetch(async (url: string) => {
+            if (url.includes('themealdb.com/api/json/v1/1/random.php')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        meals: [{
+                            idMeal: '52773',
+                            strMeal: 'Honey Teriyaki Salmon',
+                            strArea: 'Japanese',
+                            strInstructions: 'Pan-sear salmon and glaze with honey teriyaki.',
+                            strSource: 'https://example.com/unreachable-source',
+                            strMealThumb: 'https://www.themealdb.com/images/media/meals/xxyupu1468262513.jpg'
+                        }]
+                    })
+                };
+            }
+            throw new Error('Source unreachable');
+        });
+
+        const recipeFromThumb = await getRecipeIdea();
+        assert(recipeFromThumb.imageUrl === 'https://www.themealdb.com/images/media/meals/xxyupu1468262513.jpg', "getRecipeIdea falls back to TheMealDB strMealThumb when source page fails");
+
+        // Fallback to DummyJSON chosen.image
+        _setFetch(async (url: string) => {
+            if (url.includes('themealdb')) {
+                throw new Error('TheMealDB down');
+            }
+            if (url.includes('dummyjson.com/recipes')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        recipes: [{
+                            id: 1,
+                            name: 'Classic Margherita Pizza',
+                            cuisine: 'Italian',
+                            instructions: ['Bake dough with tomato and mozzarella.'],
+                            image: 'https://cdn.dummyjson.com/recipe-images/1.webp'
+                        }]
+                    })
+                };
+            }
+            return { ok: false };
+        });
+
+        const recipeFromDummy = await getRecipeIdea();
+        assert(recipeFromDummy.imageUrl === 'https://cdn.dummyjson.com/recipe-images/1.webp', "getRecipeIdea populates imageUrl from DummyJSON recipe image");
+
+        _resetFetch();
+
+        // C. generateTidbitsWithBlocks producing Slack section + image blocks when recipe with imageUrl is included
+        const withBlocksResult = await generateTidbitsWithBlocks(5);
+        assert(typeof withBlocksResult.text === 'string' && withBlocksResult.text.includes("*Gembo's Tidbits of the Day* ☀️"), "generateTidbitsWithBlocks returns formatted text");
+        const recipeItem = withBlocksResult.items.find(i => i.category === 'recipe');
+        assert(recipeItem !== undefined && typeof recipeItem.imageUrl === 'string' && recipeItem.imageUrl.startsWith('http'), "generateTidbitsWithBlocks(5) includes recipe item with valid imageUrl");
+        const imageBlock = withBlocksResult.blocks.find((b: any) => b.type === 'image');
+        assert(imageBlock !== undefined && imageBlock.image_url === recipeItem?.imageUrl, "generateTidbitsWithBlocks constructs Slack image block matching recipe imageUrl");
+
+        // D. sendChannelTidbits passing blocks to chat.postMessage and falling back to text-only if blocks are rejected
+        const blockPayloads: any[] = [];
+        const mockBlockApp: any = {
+            client: {
+                chat: {
+                    postMessage: async (payload: any) => {
+                        blockPayloads.push(payload);
+                        return { ok: true };
+                    }
+                }
+            }
+        };
+
+        await sendChannelTidbits(mockBlockApp, 'C_BLOCK_TEST', 5);
+        assert(blockPayloads.length === 1, "sendChannelTidbits sent 1 message when blocks succeeded");
+        assert(Array.isArray(blockPayloads[0]?.blocks) && blockPayloads[0].blocks.some((b: any) => b.type === 'image'), "sendChannelTidbits passed blocks containing recipe image block to chat.postMessage");
+        clearTidbitHistory('C_BLOCK_TEST');
+
+        const retryPayloads: any[] = [];
+        const mockRejectBlocksApp: any = {
+            client: {
+                chat: {
+                    postMessage: async (payload: any) => {
+                        retryPayloads.push(payload);
+                        if (payload.blocks) {
+                            throw new Error('invalid_blocks: cannot_download_image');
+                        }
+                        return { ok: true };
+                    }
+                }
+            }
+        };
+
+        await sendChannelTidbits(mockRejectBlocksApp, 'C_BLOCK_FALLBACK_TEST', 5);
+        assert(retryPayloads.length === 2, "sendChannelTidbits retried chat.postMessage when blocks payload was rejected");
+        assert(Array.isArray(retryPayloads[0]?.blocks) && retryPayloads[1]?.blocks === undefined, "Second attempt omitted blocks and delivered text-only tidbits");
+        assert(retryPayloads[1]?.text.includes("*Gembo's Tidbits of the Day* ☀️"), "Text-only retry preserved full tidbits message text");
+        clearTidbitHistory('C_BLOCK_FALLBACK_TEST');
 
 
         // --- Cleanup Isolated Test Database ---

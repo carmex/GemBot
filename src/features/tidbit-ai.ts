@@ -18,7 +18,7 @@
 
 import { createProvider } from './llm/provider-factory';
 import { getRecentTidbitHistory, isTidbitDuplicate } from './tidbit-db';
-import { computeTidbitHash, TidbitItem } from './tidbit-generator';
+import { computeTidbitHash, TidbitItem, _fetch } from './tidbit-generator';
 
 export let _createProvider = createProvider;
 export function _setCreateProvider(fn: any) { _createProvider = fn; }
@@ -124,11 +124,29 @@ Rules:
                 const hash = computeTidbitHash('recipe', name);
 
                 if (!recipientId || !isTidbitDuplicate(recipientId, hash)) {
+                    let imageUrl: string | undefined;
+                    try {
+                        const searchUrl = `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(name)}`;
+                        const imgRes = await _fetch(searchUrl, {
+                            signal: AbortSignal.timeout(4000),
+                        });
+                        if (imgRes?.ok) {
+                            const imgData = (await imgRes.json()) as { meals?: any[] };
+                            const thumb = imgData?.meals?.[0]?.strMealThumb?.trim();
+                            if (thumb && /^https?:\/\//i.test(thumb)) {
+                                imageUrl = thumb;
+                            }
+                        }
+                    } catch {
+                        // Fall back to undefined if image lookup fails
+                    }
+
                     return {
                         text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
                         hash,
                         category: 'recipe',
                         contentIdentifier: name,
+                        ...(imageUrl ? { imageUrl } : {}),
                     };
                 }
             }

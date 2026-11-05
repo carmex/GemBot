@@ -33,6 +33,7 @@ export interface TidbitItem {
     hash: string;
     category: string;
     contentIdentifier?: string;
+    imageUrl?: string;
 }
 
 export interface ParsedSlackTidbit {
@@ -473,6 +474,146 @@ export async function getHistoricalFact(recipientId?: string): Promise<TidbitIte
     throw new Error('All historical fact sources failed');
 }
 
+function extractImageUrlFromLdJsonNode(node: any): string | undefined {
+    if (!node || typeof node !== 'object') return undefined;
+
+    if (Array.isArray(node)) {
+        for (const item of node) {
+            const found = extractImageUrlFromLdJsonNode(item);
+            if (found) return found;
+        }
+        return undefined;
+    }
+
+    const typeVal = node['@type'];
+    const isRecipe =
+        (typeof typeVal === 'string' && typeVal.toLowerCase().includes('recipe')) ||
+        (Array.isArray(typeVal) && typeVal.some(t => typeof t === 'string' && t.toLowerCase().includes('recipe')));
+
+    if (isRecipe && node.image) {
+        const img = node.image;
+        if (typeof img === 'string' && img.trim()) {
+            return img.trim();
+        }
+        if (Array.isArray(img)) {
+            for (const entry of img) {
+                if (typeof entry === 'string' && entry.trim()) {
+                    return entry.trim();
+                }
+                if (entry && typeof entry === 'object') {
+                    const candidate = entry.url || entry.contentUrl;
+                    if (typeof candidate === 'string' && candidate.trim()) {
+                        return candidate.trim();
+                    }
+                }
+            }
+        }
+        if (typeof img === 'object') {
+            const candidate = img.url || img.contentUrl;
+            if (typeof candidate === 'string' && candidate.trim()) {
+                return candidate.trim();
+            }
+        }
+    }
+
+    if (node['@graph']) {
+        const found = extractImageUrlFromLdJsonNode(node['@graph']);
+        if (found) return found;
+    }
+
+    return undefined;
+}
+
+/**
+ * Fetches a recipe webpage and extracts the primary recipe image URL from OpenGraph,
+ * Twitter Card, or Schema.org Recipe JSON-LD metadata.
+ */
+export async function extractImageFromWebpage(url: string): Promise<string | undefined> {
+    if (!url || !/^https?:\/\//i.test(url.trim())) {
+        return undefined;
+    }
+    const targetUrl = url.trim();
+
+    const resolveUrl = (rawImgUrl: string): string | undefined => {
+        if (!rawImgUrl) return undefined;
+        const cleaned = decodeHtmlEntities(rawImgUrl.trim());
+        if (!cleaned) return undefined;
+        try {
+            const resolved = new URL(cleaned, targetUrl).href;
+            return /^https?:\/\//i.test(resolved) ? resolved : undefined;
+        } catch {
+            return undefined;
+        }
+    };
+
+    try {
+        const response = await _fetch(targetUrl, {
+            signal: AbortSignal.timeout(4000),
+            headers: {
+                ...DEFAULT_FETCH_HEADERS,
+                Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
+        });
+
+        if (!response || !response.ok) {
+            return undefined;
+        }
+
+        const html = await response.text();
+        if (!html) {
+            return undefined;
+        }
+
+        // 1. Check <meta property="og:image"> / <meta name="og:image">
+        const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+        let twitterCandidate: string | undefined;
+
+        for (const tag of metaTags) {
+            const propMatch = tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i);
+            const contentMatch = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i);
+            if (!propMatch || !contentMatch) continue;
+
+            const propName = propMatch[1].trim().toLowerCase();
+            const contentVal = contentMatch[1].trim();
+            if (!contentVal) continue;
+
+            if (propName === 'og:image' || propName === 'og:image:secure_url' || propName === 'og:image:url') {
+                const resolved = resolveUrl(contentVal);
+                if (resolved) return resolved;
+            } else if (!twitterCandidate && (propName === 'twitter:image' || propName === 'twitter:image:src')) {
+                twitterCandidate = resolveUrl(contentVal);
+            }
+        }
+
+        // 2. Fallback to <meta name="twitter:image">
+        if (twitterCandidate) {
+            return twitterCandidate;
+        }
+
+        // 3. Fallback to application/ld+json Recipe schema image
+        const ldJsonRegex = /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = ldJsonRegex.exec(html)) !== null) {
+            const rawJson = match[1]?.trim();
+            if (!rawJson) continue;
+            try {
+                const parsed = JSON.parse(rawJson);
+                const rawImg = extractImageUrlFromLdJsonNode(parsed);
+                if (rawImg) {
+                    const resolved = resolveUrl(rawImg);
+                    if (resolved) return resolved;
+                }
+            } catch {
+                // Ignore malformed JSON-LD blocks
+            }
+        }
+    } catch {
+        // Ignore network/timeout errors and fall back to API thumbnail
+    }
+
+    return undefined;
+}
+
 /**
  * Category 4: Recipe Ideas
  * Sourced dynamically from TheMealDB API with live DummyJSON Recipes and Gemini AI fallbacks.
@@ -504,13 +645,23 @@ export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
                         const snippet = cleanInstructions.length > 140
                             ? cleanInstructions.slice(0, 140).trim() + '...'
                             : cleanInstructions;
-                        const sourceUrl = meal.strSource?.trim() || meal.strYoutube?.trim() || `https://www.themealdb.com/meal/${meal.idMeal}`;
+                        const rawSource = meal.strSource?.trim();
+                        const sourceUrl = rawSource || meal.strYoutube?.trim() || `https://www.themealdb.com/meal/${meal.idMeal}`;
+
+                        let imageUrl: string | undefined;
+                        if (rawSource && /^https?:\/\//i.test(rawSource)) {
+                            imageUrl = await extractImageFromWebpage(rawSource);
+                        }
+                        if (!imageUrl && meal.strMealThumb?.trim() && /^https?:\/\//i.test(meal.strMealThumb.trim())) {
+                            imageUrl = meal.strMealThumb.trim();
+                        }
 
                         return {
                             text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
                             hash,
                             category: 'recipe',
                             contentIdentifier: name,
+                            ...(imageUrl ? { imageUrl } : {}),
                         };
                     }
                 }
@@ -543,12 +694,16 @@ export async function getRecipeIdea(recipientId?: string): Promise<TidbitItem> {
                     const snippet = cleanInstructions.length > 140 ? cleanInstructions.slice(0, 140).trim() + '...' : cleanInstructions;
                     const sourceUrl = `https://dummyjson.com/recipes/${chosen.id}`;
                     const hash = computeTidbitHash('recipe', name);
+                    const imageUrl = typeof chosen.image === 'string' && /^https?:\/\//i.test(chosen.image.trim())
+                        ? chosen.image.trim()
+                        : undefined;
 
                     return {
                         text: `🍳 *Recipe Idea*: *${name}* (${cuisine}) - ${snippet} (<${sourceUrl}|Recipe>)`,
                         hash,
                         category: 'recipe',
                         contentIdentifier: name,
+                        ...(imageUrl ? { imageUrl } : {}),
                     };
                 }
             }
@@ -646,10 +801,14 @@ export async function getInspirationalQuote(recipientId?: string): Promise<Tidbi
 }
 
 /**
- * Generates `n` random tidbit items (1 <= n <= 5) sampled from 5 dynamically sourced categories.
+ * Generates `n` random tidbit items (1 <= n <= 5) sampled from 5 dynamically sourced categories,
+ * returning both the formatted message text and Slack Block Kit blocks (including recipe images).
  * Records delivered items to the database if recipientId is supplied.
  */
-export async function generateTidbits(n: number, recipientId?: string): Promise<string> {
+export async function generateTidbitsWithBlocks(
+    n: number,
+    recipientId?: string
+): Promise<{ text: string; blocks: any[]; items: TidbitItem[] }> {
     const validN = Math.max(1, Math.min(5, Math.floor(n)));
 
     const categoryHandlers: { [key: string]: (recipient?: string) => Promise<TidbitItem> } = {
@@ -684,6 +843,40 @@ export async function generateTidbits(n: number, recipientId?: string): Promise<
 
     const header = `*Gembo's Tidbits of the Day* ☀️\n\n`;
     const body = results.map(item => `• ${item.text}`).join('\n\n');
+    const text = `${header}${body}`;
 
-    return `${header}${body}`;
+    const blocks: any[] = [];
+    const itemsWithImages = results.filter(item => item.imageUrl && /^https?:\/\//i.test(item.imageUrl));
+    if (itemsWithImages.length > 0) {
+        blocks.push({
+            type: 'section',
+            text: {
+                type: 'mrkdwn',
+                text,
+            },
+        });
+        for (const item of itemsWithImages) {
+            blocks.push({
+                type: 'image',
+                image_url: item.imageUrl,
+                alt_text: item.contentIdentifier || 'Recipe Image',
+                title: {
+                    type: 'plain_text',
+                    text: item.contentIdentifier ? `🍳 ${item.contentIdentifier}` : '🍳 Recipe Idea',
+                    emoji: true,
+                },
+            });
+        }
+    }
+
+    return { text, blocks, items: results };
+}
+
+/**
+ * Generates `n` random tidbit items (1 <= n <= 5) sampled from 5 dynamically sourced categories.
+ * Records delivered items to the database if recipientId is supplied.
+ */
+export async function generateTidbits(n: number, recipientId?: string): Promise<string> {
+    const { text } = await generateTidbitsWithBlocks(n, recipientId);
+    return text;
 }
