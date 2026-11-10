@@ -17,23 +17,27 @@ async function runTests() {
         }
     };
 
-    // Test Case 1: Mention bot in thread with # prefix
-    assert(isCommentedMessage("<@U123> # this is a comment") === true, "Case 1: Should identify mention with # as comment");
+    // Test Case 1: Mention bot in thread with // prefix
+    assert(isCommentedMessage("<@U123> // this is a comment") === true, "Case 1: Should identify mention with // as comment");
 
-    // Test Case 2: Reply in bot thread with # prefix
-    assert(isCommentedMessage("# just taking notes") === true, "Case 2: Should identify message with # as comment");
+    // Test Case 2: Plain comment with // prefix
+    assert(isCommentedMessage("// just taking notes") === true, "Case 2: Should identify message with // as comment");
 
-    // Test Case 3: Message with # but trailing spaces
-    assert(isCommentedMessage("   # drafting some ideas   ") === true, "Case 3: Should identify message with # (with spaces) as comment");
+    // Test Case 3: Message with // and whitespace padding
+    assert(isCommentedMessage("   // drafting some ideas   ") === true, "Case 3: Should identify message with // (with spaces) as comment");
 
-    // Test Case 4: Normal message without #
+    // Test Case 4: Normal message without //
     assert(isCommentedMessage("What is the stock price?") === false, "Case 4: Should NOT identify normal message as comment");
 
-    // Test Case 5: Mention bot with # prefix not in thread
-    assert(isCommentedMessage("<@U123> # new topic") === true, "Case 5: Should identify mention with # as comment");
+    // Test Case 5: Mention bot with // prefix outside thread
+    assert(isCommentedMessage("<@U123> // new topic") === true, "Case 5: Should identify mention with // as comment");
 
-    // Test Case 6: Message with # but NOT at the start
-    assert(isCommentedMessage("Check out #hashtag") === false, "Case 6: Should NOT identify message with mid-text # as comment");
+    // Test Case 6: Mid-text // (e.g. URLs or references)
+    assert(isCommentedMessage("Check out https://google.com") === false, "Case 6a: Should NOT identify message with URL as comment");
+    assert(isCommentedMessage("Mid-sentence // note") === false, "Case 6b: Should NOT identify message with mid-sentence // as comment");
+
+    // Test Case 7: # prefix no longer treated as comment
+    assert(isCommentedMessage("# heading 1 text") === false, "Case 7: Should NOT identify message with # as comment");
 
     if (!passed) {
         process.exit(1);
