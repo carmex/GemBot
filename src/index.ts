@@ -27,6 +27,7 @@ import { startReminderWorker } from './features/reminder-worker';
 import { initTidbitDb } from './features/tidbit-db';
 import { startTidbitWorker } from './features/tidbit-worker';
 import { startJournaldMonitor } from './features/journald-monitor';
+import { createDeduplicationMiddleware } from './middleware/deduplication';
 
 
 // Initialize the receiver
@@ -39,6 +40,9 @@ const app = new App({
     token: config.slack.botToken,
     receiver: receiver,
 });
+
+// Register global deduplication middleware to drop retries and repeated events
+app.use(createDeduplicationMiddleware());
 
 // Reconnection management for Socket Mode
 let reconnectAttempts = 0;
