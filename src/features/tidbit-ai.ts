@@ -18,7 +18,7 @@
 
 import { createProvider } from './llm/provider-factory';
 import { getRecentTidbitHistory, isTidbitDuplicate } from './tidbit-db';
-import { computeTidbitHash, TidbitItem, _fetch } from './tidbit-generator';
+import { computeTidbitHash, normalizeQuoteCasing, TidbitItem, _fetch } from './tidbit-generator';
 
 export let _createProvider = createProvider;
 export function _setCreateProvider(fn: any) { _createProvider = fn; }
@@ -238,7 +238,7 @@ Rules:
             const res = await provider.chat(prompt, { temperature: 0.8 });
             const parsed = parseJsonFromText(res.text);
             if (parsed?.quote && parsed?.author) {
-                const quoteText = parsed.quote.replace(/^["“”]+|["“”]+$/g, '').trim();
+                const quoteText = normalizeQuoteCasing(parsed.quote.replace(/^["“”]+|["“”]+$/g, '').trim());
                 const author = parsed.author.trim();
                 const hash = computeTidbitHash('quote', quoteText);
 
