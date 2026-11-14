@@ -105,6 +105,74 @@ function decodeHtmlEntities(str: string): string {
 }
 
 /**
+ * Fixes capitalization errors where letters after an apostrophe in contractions
+ * and possessives are erroneously capitalized (e.g. "It'S" -> "It's", "You'Ve" -> "You've").
+ * Preserves genuine capitalized names like O'Connor, D'Angelo, etc.
+ */
+export function fixContractionCapitalization(text: string): string {
+    if (!text) return '';
+    // Matches straight (') and curly/typographic (’) apostrophes followed by
+    // standard English contraction/possessive suffixes: s, t, re, ve, m, ll, d.
+    const contractionRegex = /(?<=[a-zA-Z])(['\u2019])(S|T|RE|Re|VE|Ve|M|LL|Ll|D)\b/g;
+    return text.replace(contractionRegex, (_, apostrophe, suffix) => apostrophe + suffix.toLowerCase());
+}
+
+/**
+ * Detects if a quote string is mechanically Title Cased and normalizes it to sentence case.
+ */
+export function normalizeQuoteCasing(text: string): string {
+    if (!text) return '';
+    const cleaned = fixContractionCapitalization(text);
+
+    // Identify words of length >= 2
+    const words = cleaned.match(/[a-zA-Z]+/g) || [];
+    if (words.length < 4) {
+        return cleaned;
+    }
+
+    // Check if >= 70% of words are capitalized (indicative of machine title-casing)
+    const capitalizedCount = words.filter(w => w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase()).length;
+    const isTitleCased = (capitalizedCount / words.length) >= 0.7;
+
+    if (!isTitleCased) {
+        return cleaned;
+    }
+
+    // Split into sentences preserving terminators (. ! ?)
+    const sentenceParts = cleaned.split(/([.!?]+\s*)/);
+    const result: string[] = [];
+
+    for (const part of sentenceParts) {
+        const tokens = part.split(' ');
+        const processedTokens = tokens.map((token, index) => {
+            if (!token) return token;
+
+            // Keep initial word in sentence capitalized
+            if (index === 0) return token;
+
+            // Preserve English pronoun 'I', 'I'm', 'I've', 'I'll', 'I'd'
+            if (/^I(['\u2019][a-z]+)?$/i.test(token)) {
+                return 'I' + (token.length > 1 ? token.slice(1).toLowerCase() : '');
+            }
+
+            // Preserve acronyms of 2+ letters (e.g. NASA, USA, MLB, CNBC)
+            const lettersOnly = token.replace(/[^a-zA-Z]/g, '');
+            if (lettersOnly.length >= 2 && lettersOnly === lettersOnly.toUpperCase()) {
+                return token;
+            }
+
+            // Lowercase first letter of standard title-cased words, preserving any leading punctuation
+            return token.replace(/^([^a-zA-Z]*)([A-Z])(.*)$/, (_, prefix, firstLetter, rest) => {
+                return prefix + firstLetter.toLowerCase() + rest;
+            });
+        });
+        result.push(processedTokens.join(' '));
+    }
+
+    return result.join('');
+}
+
+/**
  * Parses a single bullet from Gembo's tidbit message.
  */
 function parseSingleBullet(bulletText: string): ParsedSlackTidbit | null {
@@ -739,7 +807,7 @@ export async function getInspirationalQuote(recipientId?: string): Promise<Tidbi
                 const data = (await response.json()) as { q?: string; a?: string }[];
                 const first = data?.[0];
                 if (first?.q && first?.a) {
-                    const quoteText = decodeHtmlEntities(first.q.trim());
+                    const quoteText = normalizeQuoteCasing(decodeHtmlEntities(first.q.trim()));
                     const author = decodeHtmlEntities(first.a.trim());
                     const hash = computeTidbitHash('quote', quoteText);
 
@@ -769,7 +837,7 @@ export async function getInspirationalQuote(recipientId?: string): Promise<Tidbi
             if (response.ok) {
                 const data = (await response.json()) as { quote?: string; author?: string };
                 if (data?.quote && data?.author) {
-                    const quoteText = decodeHtmlEntities(data.quote.trim());
+                    const quoteText = normalizeQuoteCasing(decodeHtmlEntities(data.quote.trim()));
                     const author = decodeHtmlEntities(data.author.trim());
                     const hash = computeTidbitHash('quote', quoteText);
 
@@ -829,6 +897,11 @@ export async function generateTidbitsWithBlocks(
 
     const selectedKeys = keys.slice(0, validN);
     const results = await Promise.all(selectedKeys.map(k => categoryHandlers[k](recipientId)));
+
+    // Clean mid-word contraction capitalization across all items
+    for (const item of results) {
+        item.text = fixContractionCapitalization(item.text);
+    }
 
     if (recipientId && results.length > 0) {
         recordDeliveredTidbits(

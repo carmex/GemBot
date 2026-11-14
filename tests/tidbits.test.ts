@@ -37,6 +37,8 @@ import {
     computeTidbitHash,
     normalizeTidbitText,
     parseTidbitsFromSlackMessage,
+    fixContractionCapitalization,
+    normalizeQuoteCasing,
     _setFetch,
     _resetFetch,
     _setFetchStockNews,
@@ -885,6 +887,77 @@ async function runTidbitsTests() {
         assert(Array.isArray(retryPayloads[0]?.blocks) && retryPayloads[1]?.blocks === undefined, "Second attempt omitted blocks and delivered text-only tidbits");
         assert(retryPayloads[1]?.text.includes("*Gembo's Tidbits of the Day* ☀️"), "Text-only retry preserved full tidbits message text");
         clearTidbitHistory('C_BLOCK_FALLBACK_TEST');
+
+        // --- 17. Contraction Capitalization & Quote Casing Normalization Tests ---
+        console.log("\n17. Testing Contraction Capitalization & Quote Casing Normalization...");
+
+        // Unit tests for fixContractionCapitalization
+        assert(fixContractionCapitalization("It'S Not What You'Ve Got") === "It's Not What You've Got", "fixContractionCapitalization fixes standard contractions (It'S, You'Ve)");
+        assert(fixContractionCapitalization("God'S Hands") === "God's Hands", "fixContractionCapitalization fixes possessive God'S");
+        assert(fixContractionCapitalization("Villain'S Mind") === "Villain's Mind", "fixContractionCapitalization fixes possessive Villain'S");
+        assert(fixContractionCapitalization("Earth'S Core") === "Earth's Core", "fixContractionCapitalization fixes possessive Earth'S");
+        assert(fixContractionCapitalization("Don'T") === "Don't", "fixContractionCapitalization fixes negation Don'T");
+        assert(fixContractionCapitalization("Can'T") === "Can't", "fixContractionCapitalization fixes negation Can'T");
+        assert(fixContractionCapitalization("Doesn'T") === "Doesn't", "fixContractionCapitalization fixes negation Doesn'T");
+        assert(fixContractionCapitalization("Didn'T") === "Didn't", "fixContractionCapitalization fixes negation Didn'T");
+        assert(fixContractionCapitalization("Won'T") === "Won't", "fixContractionCapitalization fixes negation Won'T");
+        assert(fixContractionCapitalization("Isn'T") === "Isn't", "fixContractionCapitalization fixes negation Isn'T");
+        assert(fixContractionCapitalization("Couldn'T") === "Couldn't", "fixContractionCapitalization fixes negation Couldn'T");
+        assert(fixContractionCapitalization("I'M") === "I'm", "fixContractionCapitalization fixes pronoun I'M");
+        assert(fixContractionCapitalization("They'Ll") === "They'll", "fixContractionCapitalization fixes pronoun They'Ll");
+        assert(fixContractionCapitalization("We'Re") === "We're", "fixContractionCapitalization fixes pronoun We'Re");
+        assert(fixContractionCapitalization("You'D") === "You'd", "fixContractionCapitalization fixes pronoun You'D");
+        assert(fixContractionCapitalization("It’S") === "It’s", "fixContractionCapitalization fixes typographic curly apostrophe It’S");
+        assert(fixContractionCapitalization("You’Ve") === "You’ve", "fixContractionCapitalization fixes typographic curly apostrophe You’Ve");
+        assert(fixContractionCapitalization("Sandra Day O'Connor") === "Sandra Day O'Connor", "fixContractionCapitalization preserves surname O'Connor");
+        assert(fixContractionCapitalization("D'Angelo") === "D'Angelo", "fixContractionCapitalization preserves surname D'Angelo");
+
+        // Unit tests for normalizeQuoteCasing
+        assert(
+            normalizeQuoteCasing("It'S Not What You'Ve Got, It'S What You Use That Makes A Difference.") === "It's not what you've got, it's what you use that makes a difference.",
+            "normalizeQuoteCasing converts title-cased Zig Ziglar quote to sentence case"
+        );
+        assert(
+            normalizeQuoteCasing("If You Can'T Make It Good, At Least Make It Look Good.") === "If you can't make it good, at least make it look good.",
+            "normalizeQuoteCasing converts title-cased Bill Gates quote to sentence case"
+        );
+        assert(
+            normalizeQuoteCasing("I Don'T Believe In Failure. It Is Not Failure If You Enjoyed The Process.") === "I don't believe in failure. It is not failure if you enjoyed the process.",
+            "normalizeQuoteCasing converts multi-sentence title-cased quote and preserves pronoun I"
+        );
+        assert(
+            normalizeQuoteCasing("Imagination is more important than knowledge.") === "Imagination is more important than knowledge.",
+            "normalizeQuoteCasing preserves already sentence-cased quote"
+        );
+
+        // Integration test mocking DummyJSON quote #1176 in getInspirationalQuote
+        _setFetch(async (url: string, opts: any) => {
+            if (url.includes('zenquotes')) {
+                throw new Error('ZenQuotes service unavailable');
+            }
+            if (url.includes('dummyjson.com/quotes/random')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        id: 1176,
+                        quote: "It'S Not What You'Ve Got, It'S What You Use That Makes A Difference.",
+                        author: "Zig Ziglar"
+                    })
+                };
+            }
+            return fetch(url, opts);
+        });
+
+        const dummyJsonQuote = await getInspirationalQuote();
+        assert(
+            dummyJsonQuote.text === '💬 *Inspirational Quote*: "It\'s not what you\'ve got, it\'s what you use that makes a difference." — *Zig Ziglar*',
+            "getInspirationalQuote end-to-end normalizes DummyJSON quote #1176 into proper sentence case"
+        );
+        assert(
+            dummyJsonQuote.contentIdentifier === "It's not what you've got, it's what you use that makes a difference.",
+            "getInspirationalQuote sets normalized contentIdentifier"
+        );
+        _resetFetch();
 
 
         // --- Cleanup Isolated Test Database ---
