@@ -254,27 +254,221 @@ export function isCommentedMessage(text: string): boolean {
 }
 
 /**
+ * Helper to parse a markdown table row into trimmed cell values,
+ * correctly handling escaped pipe characters.
+ */
+function parseTableRow(line: string): string[] {
+    let trimmed = line.trim();
+    if (trimmed.startsWith('|')) {
+        trimmed = trimmed.slice(1);
+    }
+    if (trimmed.endsWith('|')) {
+        trimmed = trimmed.slice(0, -1);
+    }
+    // Protect escaped pipes \|
+    const safeLine = trimmed.replace(/\\\|/g, '\u0000PIPE\u0000');
+    return safeLine.split('|').map(cell => cell.trim().replace(/\u0000PIPE\u0000/g, '\\|'));
+}
+
+/**
+ * Checks if a line matches a markdown table delimiter row.
+ * E.g., | :--- | :---: | ---: |
+ */
+function isDelimiterRow(line: string): boolean {
+    if (!line.includes('|')) return false;
+    if (!/^\s*\|?(\s*:?-+:?\s*\|?)+\s*$/.test(line)) return false;
+    const cells = parseTableRow(line);
+    if (cells.length === 0) return false;
+    return cells.every(cell => /^:?-+:?$/.test(cell));
+}
+
+/**
+ * Pads a cell's text to a target width based on column alignment.
+ */
+function padTableCell(text: string, width: number, align: 'left' | 'right' | 'center'): string {
+    const totalPad = width - text.length;
+    if (totalPad <= 0) return text;
+    if (align === 'right') {
+        return ' '.repeat(totalPad) + text;
+    } else if (align === 'center') {
+        const padLeft = Math.floor(totalPad / 2);
+        const padRight = totalPad - padLeft;
+        return ' '.repeat(padLeft) + text + ' '.repeat(padRight);
+    } else {
+        return text + ' '.repeat(totalPad);
+    }
+}
+
+/**
+ * Detects markdown tables in text, aligns column widths with padding,
+ * and encloses each table in a Slack monospace code block (```).
+ */
+export function formatMarkdownTables(text: string): string {
+    if (!text || !text.includes('|')) return text;
+
+    // Protect existing code blocks (fenced and inline)
+    const codeBlocks: string[] = [];
+    const salt = Math.random().toString(36).substring(2, 8);
+    let protectedText = text.replace(/\r\n/g, '\n');
+
+    // Fenced code blocks
+    protectedText = protectedText.replace(/```[\s\S]*?```/g, (match) => {
+        const token = `%%CODE_BLOCK_${salt}_${codeBlocks.length}%%`;
+        codeBlocks.push(match);
+        return token;
+    });
+
+    // Inline code
+    protectedText = protectedText.replace(/`[^`\n]+`/g, (match) => {
+        const token = `%%CODE_BLOCK_${salt}_${codeBlocks.length}%%`;
+        codeBlocks.push(match);
+        return token;
+    });
+
+    const lines = protectedText.split('\n');
+    const outputLines: string[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+        if (i + 1 < lines.length && lines[i].includes('|') && isDelimiterRow(lines[i + 1])) {
+            const headerCells = parseTableRow(lines[i]);
+            const delimiterCells = parseTableRow(lines[i + 1]);
+
+            if (headerCells.length > 0 && delimiterCells.length > 0 && headerCells.length === delimiterCells.length) {
+                const numCols = delimiterCells.length;
+                const dataRows: string[][] = [];
+                let j = i + 2;
+
+                while (j < lines.length) {
+                    const rowLine = lines[j];
+                    if (!rowLine.trim() || !rowLine.includes('|')) {
+                        break;
+                    }
+                    const rowCells = parseTableRow(rowLine);
+                    while (rowCells.length < numCols) {
+                        rowCells.push('');
+                    }
+                    dataRows.push(rowCells.slice(0, numCols));
+                    j++;
+                }
+
+                // Determine column alignments
+                const alignments: ('left' | 'right' | 'center')[] = delimiterCells.map(delim => {
+                    if (delim.startsWith(':') && delim.endsWith(':')) return 'center';
+                    if (delim.endsWith(':')) return 'right';
+                    return 'left';
+                });
+
+                // Determine maximum character width for each column across all rows
+                const colWidths: number[] = [];
+                for (let c = 0; c < numCols; c++) {
+                    let maxLen = Math.max(headerCells[c].length, delimiterCells[c].length);
+                    for (const row of dataRows) {
+                        maxLen = Math.max(maxLen, row[c].length);
+                    }
+                    const minLen = alignments[c] === 'center' ? 3 : 2;
+                    colWidths.push(Math.max(maxLen, minLen));
+                }
+
+                // Format header row
+                const formattedHeader = headerCells.map((cell, c) => padTableCell(cell, colWidths[c], alignments[c]));
+
+                // Format delimiter row with matching dashes per column
+                const formattedDelimiter = delimiterCells.map((delim, c) => {
+                    const width = colWidths[c];
+                    const align = alignments[c];
+                    if (align === 'center') {
+                        return ':' + '-'.repeat(Math.max(1, width - 2)) + ':';
+                    } else if (align === 'right') {
+                        return '-'.repeat(Math.max(1, width - 1)) + ':';
+                    } else {
+                        if (delim.startsWith(':')) {
+                            return ':' + '-'.repeat(Math.max(1, width - 1));
+                        } else {
+                            return '-'.repeat(width);
+                        }
+                    }
+                });
+
+                // Format data rows
+                const formattedDataRows = dataRows.map(row =>
+                    row.map((cell, c) => padTableCell(cell, colWidths[c], alignments[c]))
+                );
+
+                const formatRow = (cells: string[]) => `| ${cells.join(' | ')} |`;
+                const tableRows = [
+                    formatRow(formattedHeader),
+                    formatRow(formattedDelimiter),
+                    ...formattedDataRows.map(row => formatRow(row)),
+                ];
+
+                outputLines.push('```');
+                outputLines.push(...tableRows);
+                outputLines.push('```');
+
+                i = j;
+                continue;
+            }
+        }
+
+        outputLines.push(lines[i]);
+        i++;
+    }
+
+    let result = outputLines.join('\n');
+
+    // Restore protected code blocks
+    const tokenRegex = new RegExp(`%%CODE_BLOCK_${salt}_(\\d+)%%`, 'g');
+    result = result.replace(tokenRegex, (_, idx) => codeBlocks[Number(idx)]);
+
+    return result;
+}
+
+/**
  * Converts standard Markdown to Slack-compatible mrkdwn.
  */
 export function markdownToSlack(text: string): string {
     if (!text) return text;
 
-    let out = text;
+    // 1. Format markdown tables into aligned code blocks
+    let out = formatMarkdownTables(text);
 
-    // 1. Headers: # Header -> *Header*
+    // 2. Protect existing code blocks (fenced and inline) before standard transformations
+    const codeBlocks: string[] = [];
+    const salt = Math.random().toString(36).substring(2, 8);
+
+    // Fenced code blocks
+    out = out.replace(/```[\s\S]*?```/g, (match) => {
+        const token = `%%CODE_BLOCK_${salt}_${codeBlocks.length}%%`;
+        codeBlocks.push(match);
+        return token;
+    });
+
+    // Inline code
+    out = out.replace(/`[^`\n]+`/g, (match) => {
+        const token = `%%CODE_BLOCK_${salt}_${codeBlocks.length}%%`;
+        codeBlocks.push(match);
+        return token;
+    });
+
+    // 3. Headers: # Header -> *Header*
     out = out.replace(/^(#{1,6})\s+(.+)$/gm, '*$2*');
 
-    // 2. Bold: **text** -> *text*
+    // 4. Bold: **text** -> *text*
     out = out.replace(/\*\*(.*?)\*\*/g, '*$1*');
 
-    // 3. Italic: __text__ -> _text_
+    // 5. Italic: __text__ -> _text_
     out = out.replace(/__(.*?)__/g, '_$1_');
 
-    // 4. Links: [text](url) or [text](<url>) -> <url|text>
+    // 6. Links: [text](url) or [text](<url>) -> <url|text>
     out = out.replace(/\[([^\]]+)\]\((<?)(https?:\/\/[^\s>)]+)(>?)\)/g, '<$3|$1>');
 
-    // 5. Bullets: * , - , + at the start of a line -> •
+    // 7. Bullets: * , - , + at the start of a line -> •
     out = out.replace(/^(\s*)([*+-])\s+/gm, '$1• ');
+
+    // 8. Restore protected code blocks
+    const tokenRegex = new RegExp(`%%CODE_BLOCK_${salt}_(\\d+)%%`, 'g');
+    out = out.replace(tokenRegex, (_, idx) => codeBlocks[Number(idx)]);
 
     return out;
 }
