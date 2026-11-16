@@ -31,6 +31,7 @@ You MUST use Slack's `mrkdwn` syntax for all responses:
 * **Links:** Use `<url|text>` syntax (DO NOT use `[text](url)`).
 * **Lists:** Use bullets (•) or numbered lists.
 * **Headers:** Do not use Markdown headers (e.g., `###`). Use bold text instead.
+* **Tables:** Slack does not support markdown tables natively. Whenever presenting tabular data, align columns and wrap the table in a fixed-width code block (```) so columns line up neatly in monospace font.
 
 *Dice Job Listings Template:*
 When displaying job results from Dice, use the following format for EACH job:
